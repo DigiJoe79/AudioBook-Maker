@@ -63,7 +63,7 @@ if %errorlevel% neq 0 (
 
 echo.
 echo ========================================
-echo [6/6] Downloading spaCy language models...
+echo [6/6] Downloading models...
 echo ========================================
 echo Installing German language model (de_core_news_sm)...
 python -m pip install https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.7.0/de_core_news_sm-3.7.0-py3-none-any.whl
@@ -75,6 +75,12 @@ echo Installing English language model (en_core_web_sm)...
 python -m pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 if %errorlevel% neq 0 (
     echo WARNING: Failed to install English spaCy model!
+)
+
+echo Installing XTTS model (v.2.0.2)...
+python install_xtts_models.py
+if %errorlevel% neq 0 (
+    echo WARNING: Failed to install XTTS model!
 )
 
 echo.

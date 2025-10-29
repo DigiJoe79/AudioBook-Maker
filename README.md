@@ -118,6 +118,14 @@ cd audiobook-maker
 #### 2. Backend Setup
 
 ```bash
+# Windows quick install
+cd backend
+install_backend.bat
+```
+
+**or**
+
+```bash
 cd backend
 
 # Create virtual environment
@@ -155,6 +163,14 @@ npm install
 ```
 
 #### 4. Start the Backend
+
+```bash
+# Windows quick start
+cd backend
+start_backend.bat
+```
+
+**or**
 
 ```bash
 cd backend
