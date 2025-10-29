@@ -1,0 +1,583 @@
+{
+  "app": {
+    "title": "Audiobook Maker",
+    "projectsTitle": "Projects",
+    "chaptersTitle": "Chapters",
+    "segmentsTitle": "Segments"
+  },
+  "settings": {
+    "title": "Settings",
+    "tabs": {
+      "general": "General",
+      "tts": "Text-to-Speech",
+      "audio": "Audio",
+      "text": "Text",
+      "speakers": "Speakers"
+    },
+    "general": {
+      "theme": "Theme",
+      "themeLight": "Light",
+      "themeDark": "Dark",
+      "themeSystem": "System",
+      "uiLanguage": "Language",
+      "uiLanguageDe": "Deutsch",
+      "uiLanguageEn": "English"
+    },
+    "tts": {
+      "globalSettings": "Global Settings",
+      "defaultEngine": "Default Engine",
+      "defaultModel": "Default Model",
+      "defaultSpeaker": "Default Speaker",
+      "perEngineSettings": "Per-Engine Settings",
+      "defaultLanguage": "Default Language",
+      "engineParameters": "Engine Parameters",
+      "engineParametersComingSoon": "Engine-specific parameters will be shown here in the future",
+      "temperature": "Temperature",
+      "temperatureDesc": "Controls speech output creativity. Higher values = more creative, lower values = more conservative.",
+      "speed": "Speed",
+      "speedDesc": "Speech speed (1.0 = normal, 0.5 = slow, 2.0 = fast)",
+      "lengthPenalty": "Length Penalty",
+      "lengthPenaltyDesc": "Affects the length of generated audio output",
+      "repetitionPenalty": "Repetition Penalty",
+      "repetitionPenaltyDesc": "Prevents repetitions in speech output",
+      "topK": "Top K",
+      "topKDesc": "Number of most likely next tokens",
+      "topP": "Top P",
+      "topPDesc": "Nucleus Sampling - considers most likely tokens",
+      "maxSegmentLength": "Max. Segment Length",
+      "maxSegmentLengthDesc": "Maximum character length per segment (engine limit)",
+      "simulateDelay": "Simulate Delay",
+      "simulateDelayDesc": "Simulated generation delay in seconds (dummy engine only)",
+      "enableTextSplitting": "Enable Text Splitting",
+      "enableTextSplittingDesc": "Automatic splitting of long texts"
+    },
+    "audio": {
+      "defaultFormat": "Default Format",
+      "defaultQuality": "Default Quality",
+      "qualityLow": "Low",
+      "qualityMedium": "Medium",
+      "qualityHigh": "High",
+      "pauseBetweenSegments": "Pause Between Audio-Segments (Export)",
+      "pauseBetweenSegmentsMs": "milliseconds",
+      "defaultDividerDuration": "Default Duration for Pause Segments",
+      "defaultDividerDurationMs": "milliseconds (for new pauses/dividers)",
+      "volumeNormalization": "Volume Normalization",
+      "volumeNormalizationEnabled": "Enabled",
+      "targetLevel": "Target Level (LUFS)",
+      "truePeak": "True Peak (dBFS)"
+    },
+    "text": {
+      "defaultSegmentationMethod": "Default Segmentation Method",
+      "segmentationSentences": "Sentences",
+      "segmentationParagraphs": "Paragraphs",
+      "segmentationSmart": "Smart (recommended)",
+      "segmentationLength": "Length",
+      "preferredMaxSegmentLength": "Preferred Max. Segment Length",
+      "preferredMaxSegmentLengthDesc": "Your preferred maximum length (characters). Combined with engine limits.",
+      "autoCreateSegments": "Auto-create Segments",
+      "autoDetectLanguage": "Auto-detect Language"
+    },
+    "actions": {
+      "save": "Save",
+      "cancel": "Cancel",
+      "reset": "Reset",
+      "resetToDefaults": "Reset to Defaults",
+      "close": "Close"
+    },
+    "messages": {
+      "saved": "Settings saved",
+      "resetSuccess": "Settings reset",
+      "resetConfirm": "Do you really want to reset all settings to default values?",
+      "error": "Error saving settings"
+    }
+  },
+  "speakers": {
+    "title": "Speaker Management",
+    "list": "Speakers",
+    "add": "Add Speaker",
+    "edit": "Edit Speaker",
+    "delete": "Delete Speaker",
+    "details": "Details",
+    "name": "Name",
+    "description": "Description",
+    "gender": "Gender",
+    "genderMale": "Male",
+    "genderFemale": "Female",
+    "genderNeutral": "Neutral",
+    "languages": "Languages",
+    "tags": "Tags",
+    "samples": "Voice Samples",
+    "addSample": "Add Sample",
+    "uploadSample": "Upload Sample",
+    "transcript": "Transcript",
+    "defaultSpeaker": "Default Speaker",
+    "setAsDefault": "Set as Default Speaker",
+    "deleteSample": "Delete Sample",
+    "noSamples": "No voice samples available",
+    "audioSamples": "Audio Voice Samples",
+    "existingSamples": "Existing Samples",
+    "newSamples": "New Samples",
+    "inactive": "Inactive",
+    "actions": {
+      "create": "Create",
+      "save": "Save",
+      "cancel": "Cancel",
+      "delete": "Delete"
+    },
+    "messages": {
+      "created": "Speaker created",
+      "updated": "Speaker updated",
+      "deleted": "Speaker deleted",
+      "sampleUploaded": "Sample uploaded",
+      "sampleDeleted": "Sample deleted",
+      "deleteConfirm": "Do you really want to delete this speaker?",
+      "deleteSampleConfirm": "Do you really want to delete this sample?",
+      "minOneSample": "At least one audio sample is required. Speakers without samples will be automatically marked as inactive.",
+      "error": "Error in speaker management"
+    }
+  },
+  "common": {
+    "yes": "Yes",
+    "no": "No",
+    "ok": "OK",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "create": "Create",
+    "saving": "Saving...",
+    "title": "Title",
+    "description": "Description"
+  },
+  "audioPlayer": {
+    "selectChapter": "Select a chapter to play audio"
+  },
+  "projects": {
+    "title": "Projects",
+    "new": "New Project",
+    "createTitle": "Create New Project",
+    "edit": "Edit Project",
+    "delete": "Delete Project",
+    "noProjects": "No projects yet. Click the + button to create one.",
+    "projectTitle": "Project Title",
+    "projectDescription": "Project Description",
+    "create": {
+      "manual": "Manual",
+      "importMarkdown": "Markdown Import",
+      "ttsSettings": "TTS Settings (for new segments)"
+    },
+    "import": {
+      "selectFile": "Select Markdown File",
+      "helpText": "Import project structure from Markdown file (max 10 MB)",
+      "importing": "Importing...",
+      "failed": "Import failed",
+      "fileTooLarge": "File too large (max 10 MB)",
+      "invalidFileType": "Invalid file type (only .md or .markdown)",
+      "noFileSelected": "No file selected",
+      "format": {
+        "title": "Markdown Format:",
+        "projectTitle": "Project title",
+        "ignored": "Ignored (e.g. Acts)",
+        "chapter": "Chapter (numbering removed)",
+        "divider": "Scene break"
+      }
+    },
+    "messages": {
+      "created": "Project created",
+      "updated": "Project updated",
+      "deleted": "Project deleted",
+      "deleteConfirm": "Do you really want to delete this project?",
+      "error": "Error in project management"
+    }
+  },
+  "chapters": {
+    "title": "Chapters",
+    "new": "New Chapter",
+    "create": "Create New Chapter",
+    "edit": "Edit Chapter",
+    "delete": "Delete Chapter",
+    "chapterTitle": "Chapter Title",
+    "orderIndex": "Order Index",
+    "messages": {
+      "created": "Chapter created",
+      "updated": "Chapter updated",
+      "deleted": "Chapter deleted",
+      "deleteConfirm": "Do you really want to delete this chapter?",
+      "error": "Error in chapter management"
+    }
+  },
+  "chapterList": {
+    "noChapters": "No Chapters",
+    "createFirstChapter": "Create your first chapter using the button above",
+    "segmentsCount": "{{count}} segment",
+    "segmentsCount_plural": "{{count}} segments"
+  },
+  "segments": {
+    "title": "Segments",
+    "create": "Create New Segment",
+    "noSpeaker": "No speaker",
+    "speakerInactive": "Speaker '{{speaker}}' is inactive (no samples)",
+    "edit": "Edit Segment",
+    "editText": "Edit Segment Text",
+    "delete": "Delete Segment",
+    "text": "Text",
+    "segmentText": "Segment Text",
+    "maxLength": "Maximum Length",
+    "characters": "characters",
+    "charactersRemaining": "{{count}} characters remaining",
+    "textTooLong": "Text is too long! Remove {{count}} characters.",
+    "textEmpty": "Text cannot be empty",
+    "placeholder": "Enter segment text...",
+    "description": "Edit the text for this segment. Maximum length is {{maxLength}} characters due to TTS model limitations.",
+    "noSegments": "No segments yet. Drag items from the toolbar above to create segments.",
+    "noAudio": "No audio generated yet",
+    "generating": "Generating...",
+    "textSegmentCreated": "Text segment created",
+    "pauseCreated": "Pause created ({{seconds}}s)",
+    "pauseUpdated": "Pause updated to {{seconds}}s",
+    "pauseUpdateFailed": "Failed to update pause",
+    "status": {
+      "completed": "Completed",
+      "processing": "Processing",
+      "failed": "Failed",
+      "pending": "Pending",
+      "noStatus": "No status"
+    },
+    "actions": {
+      "play": "Play",
+      "pause": "Pause",
+      "regenerate": "Generate/Regenerate audio",
+      "moreActions": "More actions"
+    },
+    "dropZone": {
+      "dropHere": "↓ Drop here",
+      "dropToAppend": "↓ Drop to append at end",
+      "dropHereToAppend": "Drop here to append",
+      "dropToCreate": "↓ Drop here to create segment"
+    },
+    "drag": {
+      "pause": "Pause ({{seconds}}s)",
+      "segment": "Segment {{number}}",
+      "newSegment": "Segment",
+      "newPause": "Pause",
+      "dragging": "Dragging..."
+    },
+    "messages": {
+      "created": "Segment created",
+      "updated": "Segment updated",
+      "deleted": "Segment deleted",
+      "deleteConfirm": "Do you really want to delete this segment?",
+      "error": "Error in segment management",
+      "saveChanges": "Save Changes"
+    },
+    "settings": {
+      "title": "Edit Segment Settings",
+      "description": "Edit the TTS settings for this segment. These settings will be used when generating/regenerating.",
+      "engine": "Engine",
+      "model": "Model",
+      "language": "Language",
+      "speaker": "Speaker",
+      "noSpeaker": "No speaker",
+      "validation": {
+        "allFieldsRequired": "Engine, Model, and Language are required"
+      },
+      "messages": {
+        "error": "Error saving segment settings"
+      }
+    }
+  },
+  "audioGeneration": {
+    "title": "Generate Audio",
+    "generate": "Generate Audio",
+    "generating": "Generating...",
+    "starting": "Starting...",
+    "speaker": "Speaker Voice",
+    "language": "Language",
+    "engine": "Engine",
+    "model": "Model",
+    "forceRegenerate": "Regenerate already completed segments",
+    "usingEngine": "Using Engine:",
+    "usingModel": "Using Model:",
+    "textLimits": "Text limits: {{min}}–{{max}} characters for {{language}}",
+    "changeEngineHint": "Change engine/model in the header dropdown to use different TTS settings.",
+    "languagesSupported": "{{count}} languages supported",
+    "speakersAvailable": "{{count}} speaker voices with samples available",
+    "samplesCount_one": "{{count}} sample",
+    "samplesCount_other": "{{count}} samples",
+    "regenerateCompleted": "Regenerate already completed segments ({{count}} completed)",
+    "willGenerate": "Will generate audio for <strong>{{count}}</strong> of <strong>{{total}}</strong> segments using <strong>{{engine}}</strong>",
+    "regenerateWarning": "⚠️ Regeneration will replace all existing audio files.",
+    "allCompleted": "All segments already generated. Enable regeneration checkbox to replace existing audio.",
+    "noSpeakers": {
+      "title": "No speaker voices with samples found!",
+      "description": "Please add speakers and upload voice samples in the Settings → Speakers tab."
+    },
+    "messages": {
+      "started": "Audio generation started",
+      "failed": "Failed to start audio generation",
+      "error": "Error in audio generation"
+    }
+  },
+  "tts": {
+    "engine": "Engine",
+    "model": "Model",
+    "language": "Language",
+    "speaker": "Speaker",
+    "speakerOptional": "Optional (leave empty for no speaker assignment)"
+  },
+  "export": {
+    "title": "Export Chapter",
+    "export": "Export",
+    "startExport": "Start Export",
+    "cancelExport": "Cancel Export",
+    "download": "Download",
+    "filename": "Filename",
+    "filenameHint": "Filename without extension",
+    "audioFormat": "Audio Format",
+    "quality": "Quality",
+    "sampleRate": "Sample Rate",
+    "formats": {
+      "mp3": "MP3 (Compressed, universal)",
+      "m4a": "M4A/AAC (Compressed, better quality)",
+      "wav": "WAV (Uncompressed, best quality)"
+    },
+    "formatHint": "Choose the audio format for export",
+    "qualityHint": "Quality determines file size and sound quality",
+    "xttsStandard": "(XTTS Standard)",
+    "estimatedSize": "Estimated file size: ~{{size}} MB",
+    "fileSize": "File size: {{size}} MB",
+    "duration": "Duration: {{duration}} seconds",
+    "progress": {
+      "processing": "Processing segments...",
+      "segmentsProcessed": "{{current}}/{{total}} segments processed"
+    },
+    "status": {
+      "completed": "Export completed successfully!",
+      "failed": "Export failed: {{error}}",
+      "fileSaved": "File saved successfully!",
+      "downloadFailed": "Download failed: {{error}}",
+      "downloadCancelled": "Download cancelled by user"
+    },
+    "warnings": {
+      "allSegmentsRequired": "All segments must be generated before the chapter can be exported. ({{completed}}/{{total}} segments completed)"
+    }
+  },
+  "textUpload": {
+    "title": "Upload and Segment Text",
+    "upload": "Upload Text File",
+    "textContent": "Text Content",
+    "placeholder": "Paste or type your text here...",
+    "dragDrop": "Drop text file here or click to select",
+    "fileSelected": "File selected: {{filename}}",
+    "processing": "Processing...",
+    "creating": "Creating...",
+    "preview": "Preview",
+    "createSegments": "Create Segments",
+    "segmentationMethod": "Segmentation Method",
+    "language": "Language",
+    "methods": {
+      "smart": "Smart (Auto-detect)",
+      "sentences": "By Sentences",
+      "paragraphs": "By Paragraphs",
+      "length": "By Length"
+    },
+    "languages": {
+      "de": "German",
+      "en": "English",
+      "es": "Spanish",
+      "fr": "French"
+    },
+    "previewCount": "Preview: {{count}} segments",
+    "segmentNumber": "Segment {{number}}",
+    "andMore": "... and {{count}} more",
+    "autoCreate": "Auto-create segments",
+    "messages": {
+      "success": "Text uploaded and processed successfully",
+      "failed": "Failed to generate preview",
+      "error": "Error creating segments",
+      "noDefaultSpeaker": "No default speaker set. Please set a default speaker in Settings.",
+      "speakerInactive": "Default speaker '{{speaker}}' is inactive (no audio samples). Please add audio samples or choose a different default speaker."
+    }
+  },
+  "chapterView": {
+    "noProjectSelected": "No Project Selected",
+    "selectProjectHint": "Select a project from the sidebar to get started",
+    "overview": "Overview",
+    "selectChapterHint": "Select a chapter from the sidebar or create a new chapter to begin",
+    "segmentsGenerated": "{{completed}} / {{total}} segments generated",
+    "uploadText": "Upload Text",
+    "generating": "Generating...",
+    "generateAllAudio": "Generate All Audio",
+    "regenerateAllAudio": "Regenerate All Audio",
+    "exportChapter": "Export Chapter",
+    "noSegments": "No Segments",
+    "uploadTextHint": "Upload a text file to segment it automatically.",
+    "noSegmentsYet": "This chapter has no segments yet. Upload a text file to segment it automatically.",
+    "failedRegenerateSegment": "Failed to regenerate segment"
+  },
+  "commandToolbar": {
+    "title": "Quick Actions",
+    "textSegment": "Segment",
+    "textSegmentDesc": "Create a new text segment",
+    "pause": "Pause",
+    "pauseDesc": "Insert a pause/scene break",
+    "hint": "💡 Drag items into the segment list to create new segments"
+  },
+  "segmentMenu": {
+    "editText": "Edit Text",
+    "editSettings": "Edit Settings",
+    "editPauseDuration": "Edit Pause Duration",
+    "deleteSegment": "Delete Segment"
+  },
+  "dividerSegment": {
+    "sceneBreak": "Scene Break",
+    "description": "Scene break • {{seconds}}s"
+  },
+  "connection": {
+    "title": "Backend Connection Lost",
+    "tryingToReconnect": "Trying to reconnect to the backend server...",
+    "unableToReconnect": "Unable to reconnect to the backend server.",
+    "reconnectionAttempt": "Reconnection Attempt",
+    "returnToStartPage": "The app will return to the start page if reconnection fails.",
+    "sessionSaved": "Your session has been saved and will be restored when you reconnect.",
+    "disconnectNow": "Disconnect Now",
+    "retryNow": "Retry Now",
+    "redirecting": "Redirecting..."
+  },
+  "disconnect": {
+    "tooltip": "Disconnect from Backend",
+    "confirmTitle": "Disconnect from Backend?",
+    "confirmMessage": "You are currently connected to \"{{name}}\". Your session will be saved and can be restored when you reconnect.",
+    "disconnect": "Disconnect",
+    "unknownBackend": "Unknown Backend"
+  },
+  "appLayout": {
+    "engine": "Engine",
+    "model": "Model",
+    "loading": "Loading...",
+    "loaded": "Loaded",
+    "noEngines": "No engines",
+    "noModels": "No models",
+    "languagesCount": "{{count}} languages",
+    "settings": "Settings",
+    "loadingProjects": "Loading projects...",
+    "retry": "Retry",
+    "deleteProjectConfirm": "Are you sure you want to delete \"{{title}}\"?\n\nThis will delete all chapters, segments, and audio files. This action cannot be undone.",
+    "deleteChapterConfirm": "Are you sure you want to delete the chapter \"{{title}}\"?\n\nThis will delete all {{count}} segments and their audio files. This action cannot be undone.",
+    "audioPlaybackError": "Failed to play audio segment",
+    "audioPlaybackErrorDetailed": "Failed to play audio: {{message}}"
+  },
+  "quickCreateSegment": {
+    "title": "Create Text Segment",
+    "description": "Enter the text for this segment. You can edit it later.",
+    "label": "Segment Text",
+    "placeholder": "Enter segment text...",
+    "helperText": "{{count}} characters | Ctrl+Enter to create",
+    "creating": "Creating...",
+    "create": "Create Segment",
+    "failed": "Failed to create segment"
+  },
+  "quickCreateDivider": {
+    "titleCreate": "Add Pause",
+    "titleEdit": "Edit Pause",
+    "descriptionCreate": "Add a pause between segments (e.g., for scene breaks).",
+    "descriptionEdit": "Adjust the pause duration.",
+    "creating": "Creating...",
+    "saving": "Saving...",
+    "addPause": "Add Pause",
+    "failedCreate": "Failed to create pause",
+    "failedEdit": "Failed to edit pause"
+  },
+  "profileManager": {
+    "title": "Manage Backend Profiles",
+    "noProfiles": "No profiles yet. Create one to get started.",
+    "default": "Default",
+    "name": "Name",
+    "url": "URL",
+    "actions": "Actions",
+    "addNew": "Add New Profile",
+    "editProfile": "Edit Profile",
+    "newProfile": "New Profile",
+    "profileName": "Profile Name",
+    "profileNameHint": "E.g., \"Local Development\" or \"Production Server\"",
+    "backendUrl": "Backend URL",
+    "backendUrlHint": "E.g., \"http://127.0.0.1:8765\" or \"https://backend.example.com\"",
+    "setDefault": "Set as default profile",
+    "saveChanges": "Save Changes",
+    "createProfile": "Create Profile",
+    "deleteTitle": "Delete Profile",
+    "deleteConfirm": "Are you sure you want to delete the profile \"{{name}}\"?",
+    "nameRequired": "Name is required",
+    "nameDuplicate": "A profile with this name already exists"
+  },
+  "profiles": {
+    "title": "Backend Profiles",
+    "current": "Current Profile",
+    "add": "Add Profile",
+    "edit": "Edit Profile",
+    "delete": "Delete Profile",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "name": "Profile Name",
+    "url": "Backend URL",
+    "default": "Set as Default",
+    "messages": {
+      "created": "Profile created",
+      "updated": "Profile updated",
+      "deleted": "Profile deleted",
+      "connected": "Connected to backend",
+      "disconnected": "Disconnected from backend",
+      "connectionFailed": "Failed to connect to backend",
+      "deleteConfirm": "Do you really want to delete this profile?",
+      "error": "Error in profile management"
+    }
+  },
+  "noSpeakers": {
+    "title": "No Speaker Voices Available",
+    "description": "Before you can create audiobooks, you need to add at least one speaker voice with audio samples.",
+    "steps": {
+      "title": "Quick Start:",
+      "step1": "Click the button below to open Settings",
+      "step2": "Go to the 'Speakers' tab",
+      "step3": "Add a new speaker and upload voice samples"
+    },
+    "openSettings": "Open Speaker Settings",
+    "helpText": "Need help? Check the documentation for guidance on adding speakers."
+  },
+  "startPage": {
+    "subtitle": "Connect to a backend server to get started",
+    "backendConnection": "Backend Connection",
+    "profile": "Profile",
+    "noProfiles": "No profiles available",
+    "default": "Default",
+    "manage": "Manage",
+    "url": "URL",
+    "status": "Status",
+    "checking": "Checking...",
+    "online": "Online",
+    "offline": "Offline",
+    "notReachable": "Backend is not reachable",
+    "backendInfo": "Backend Information",
+    "version": "Version",
+    "engines": "Engines",
+    "speakers": "Speakers",
+    "speakersAvailable": "{{count}} available",
+    "busy": "Busy ({{count}} active jobs)",
+    "lastConnected": "Last Connected",
+    "connect": "Connect to Backend",
+    "createProfileHint": "Create a profile to get started",
+    "timeAgo": {
+      "justNow": "Just now",
+      "minutesAgo_one": "{{count}} minute ago",
+      "minutesAgo_other": "{{count}} minutes ago",
+      "hoursAgo_one": "{{count}} hour ago",
+      "hoursAgo_other": "{{count}} hours ago",
+      "daysAgo_one": "{{count}} day ago",
+      "daysAgo_other": "{{count}} days ago"
+    }
+  }
+}
