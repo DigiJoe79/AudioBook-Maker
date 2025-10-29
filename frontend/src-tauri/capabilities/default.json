@@ -1,0 +1,58 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default permissions for the Audiobook Maker application",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-theme",
+
+    "dialog:default",
+    "dialog:allow-save",
+    "dialog:allow-open",
+    "dialog:allow-ask",
+    "dialog:allow-message",
+
+    "fs:default",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "fs:allow-exists",
+    "fs:allow-stat",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        "$APPDATA/**",
+        "$APPCONFIG/**",
+        "$APPLOCALDATA/**",
+        "$APPLOG/**",
+        "$AUDIO/**",
+        "$CACHE/**",
+        "$DATA/**",
+        "$DESKTOP/**",
+        "$DOCUMENT/**",
+        "$DOWNLOAD/**",
+        "$HOME/**",
+        "$LOCALDATA/**",
+        "$PICTURE/**",
+        "$PUBLIC/**",
+        "$RESOURCE/**",
+        "$RUNTIME/**",
+        "$TEMP/**",
+        "$TEMPLATE/**",
+        "$VIDEO/**",
+        "**"
+      ]
+    },
+
+    "shell:default",
+    "shell:allow-open",
+
+    "http:default"
+  ]
+}

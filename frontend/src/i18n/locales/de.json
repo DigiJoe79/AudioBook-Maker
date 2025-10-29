@@ -1,0 +1,582 @@
+{
+  "app": {
+    "title": "Audiobook Maker",
+    "projectsTitle": "Projekte",
+    "chaptersTitle": "Kapitel",
+    "segmentsTitle": "Segmente"
+  },
+  "settings": {
+    "title": "Einstellungen",
+    "tabs": {
+      "general": "Allgemein",
+      "tts": "Text-to-Speech",
+      "audio": "Audio",
+      "text": "Text",
+      "speakers": "Sprecher"
+    },
+    "general": {
+      "theme": "Theme",
+      "themeLight": "Hell",
+      "themeDark": "Dunkel",
+      "themeSystem": "System",
+      "uiLanguage": "Sprache",
+      "uiLanguageDe": "Deutsch",
+      "uiLanguageEn": "English"
+    },
+    "tts": {
+      "globalSettings": "Globale Einstellungen",
+      "defaultEngine": "Standard-Engine",
+      "defaultModel": "Standard-Modell",
+      "defaultSpeaker": "Standard-Sprecher",
+      "perEngineSettings": "Engine-spezifische Einstellungen",
+      "defaultLanguage": "Standard-Sprache",
+      "engineParameters": "Engine-Parameter",
+      "engineParametersComingSoon": "Engine-spezifische Parameter werden hier zukünftig angezeigt",
+      "temperature": "Temperature",
+      "temperatureDesc": "Steuert die Kreativität der Sprachausgabe. Höhere Werte = kreativer, niedrigere Werte = konservativer.",
+      "speed": "Geschwindigkeit",
+      "speedDesc": "Sprechgeschwindigkeit (1.0 = normal, 0.5 = langsam, 2.0 = schnell)",
+      "lengthPenalty": "Length Penalty",
+      "lengthPenaltyDesc": "Beeinflusst die Länge der generierten Audio-Ausgabe",
+      "repetitionPenalty": "Repetition Penalty",
+      "repetitionPenaltyDesc": "Verhindert Wiederholungen in der Sprachausgabe",
+      "topK": "Top K",
+      "topKDesc": "Anzahl der wahrscheinlichsten nächsten Tokens",
+      "topP": "Top P",
+      "topPDesc": "Nucleus Sampling - berücksichtigt die wahrscheinlichsten Tokens",
+      "maxSegmentLength": "Max. Segmentlänge",
+      "maxSegmentLengthDesc": "Maximale Zeichenlänge pro Segment (Engine-Limit)",
+      "simulateDelay": "Verzögerung simulieren",
+      "simulateDelayDesc": "Simulierte Generierungsverzögerung in Sekunden (nur Dummy-Engine)",
+      "enableTextSplitting": "Text-Aufteilung aktivieren",
+      "enableTextSplittingDesc": "Automatische Aufteilung langer Texte"
+    },
+    "audio": {
+      "defaultFormat": "Standard-Format",
+      "defaultQuality": "Standard-Qualität",
+      "qualityLow": "Niedrig",
+      "qualityMedium": "Mittel",
+      "qualityHigh": "Hoch",
+      "pauseBetweenSegments": "Pause zwischen Audio-Segmenten (Export)",
+      "pauseBetweenSegmentsMs": "Millisekunden",
+      "defaultDividerDuration": "Standard Dauer für Pausensegmente",
+      "volumeNormalization": "Lautstärke-Normalisierung",
+      "volumeNormalizationEnabled": "Aktiviert",
+      "targetLevel": "Ziel-Lautstärke (LUFS)",
+      "truePeak": "True Peak (dBFS)"
+    },
+    "text": {
+      "defaultSegmentationMethod": "Standard-Segmentierungsmethode",
+      "segmentationSentences": "Sätze",
+      "segmentationParagraphs": "Absätze",
+      "segmentationSmart": "Smart (empfohlen)",
+      "segmentationLength": "Länge",
+      "preferredMaxSegmentLength": "Bevorzugte Max. Segmentlänge",
+      "preferredMaxSegmentLengthDesc": "Ihre bevorzugte maximale Länge (Zeichen). Wird mit Engine-Limits kombiniert.",
+      "autoCreateSegments": "Segmente automatisch erstellen",
+      "autoDetectLanguage": "Sprache automatisch erkennen"
+    },
+    "actions": {
+      "save": "Speichern",
+      "cancel": "Abbrechen",
+      "reset": "Zurücksetzen",
+      "resetToDefaults": "Auf Standardwerte zurücksetzen",
+      "close": "Schließen"
+    },
+    "messages": {
+      "saved": "Einstellungen gespeichert",
+      "resetSuccess": "Einstellungen zurückgesetzt",
+      "resetConfirm": "Möchten Sie wirklich alle Einstellungen auf die Standardwerte zurücksetzen?",
+      "error": "Fehler beim Speichern der Einstellungen"
+    }
+  },
+  "speakers": {
+    "title": "Sprecher-Verwaltung",
+    "list": "Sprecher",
+    "add": "Sprecher hinzufügen",
+    "edit": "Sprecher bearbeiten",
+    "delete": "Sprecher löschen",
+    "details": "Details",
+    "name": "Name",
+    "description": "Beschreibung",
+    "gender": "Geschlecht",
+    "genderMale": "Männlich",
+    "genderFemale": "Weiblich",
+    "genderNeutral": "Neutral",
+    "languages": "Sprachen",
+    "tags": "Tags",
+    "samples": "Sprachproben",
+    "addSample": "Probe hinzufügen",
+    "uploadSample": "Probe hochladen",
+    "transcript": "Transkript",
+    "defaultSpeaker": "Standard-Sprecher",
+    "setAsDefault": "Als Standard-Sprecher festlegen",
+    "deleteSample": "Probe löschen",
+    "noSamples": "Keine Sprachproben vorhanden",
+    "audioSamples": "Audio-Sprachproben",
+    "existingSamples": "Vorhandene Proben",
+    "newSamples": "Neue Proben",
+    "inactive": "Inaktiv",
+    "actions": {
+      "create": "Erstellen",
+      "save": "Speichern",
+      "cancel": "Abbrechen",
+      "delete": "Löschen"
+    },
+    "messages": {
+      "created": "Sprecher erstellt",
+      "updated": "Sprecher aktualisiert",
+      "deleted": "Sprecher gelöscht",
+      "sampleUploaded": "Probe hochgeladen",
+      "sampleDeleted": "Probe gelöscht",
+      "deleteConfirm": "Möchten Sie diesen Sprecher wirklich löschen?",
+      "deleteSampleConfirm": "Möchten Sie diese Probe wirklich löschen?",
+      "minOneSample": "Mindestens eine Audio-Probe wird benötigt. Sprecher ohne Proben werden automatisch als inaktiv markiert.",
+      "error": "Fehler bei der Sprecher-Verwaltung"
+    }
+  },
+  "common": {
+    "yes": "Ja",
+    "no": "Nein",
+    "ok": "OK",
+    "cancel": "Abbrechen",
+    "save": "Speichern",
+    "delete": "Löschen",
+    "edit": "Bearbeiten",
+    "close": "Schließen",
+    "loading": "Lädt...",
+    "error": "Fehler",
+    "success": "Erfolgreich",
+    "create": "Erstellen",
+    "saving": "Speichert...",
+    "title": "Titel",
+    "description": "Beschreibung"
+  },
+  "audioPlayer": {
+    "selectChapter": "Wählen Sie ein Kapitel aus, um Audio abzuspielen"
+  },
+  "projects": {
+    "title": "Projekte",
+    "new": "Neues Projekt",
+    "createTitle": "Neues Projekt erstellen",
+    "edit": "Projekt bearbeiten",
+    "delete": "Projekt löschen",
+    "noProjects": "Noch keine Projekte vorhanden. Klicken Sie auf + um eines zu erstellen.",
+    "projectTitle": "Projekttitel",
+    "projectDescription": "Projektbeschreibung",
+    "create": {
+      "manual": "Manuell",
+      "importMarkdown": "Markdown Import",
+      "ttsSettings": "TTS-Einstellungen (für neue Segmente)"
+    },
+    "import": {
+      "selectFile": "Markdown-Datei auswählen",
+      "helpText": "Importiert Projekt-Struktur aus Markdown-Datei (max 10 MB)",
+      "importing": "Importiere...",
+      "failed": "Import fehlgeschlagen",
+      "fileTooLarge": "Datei zu groß (max 10 MB)",
+      "invalidFileType": "Ungültiger Dateityp (nur .md oder .markdown)",
+      "noFileSelected": "Keine Datei ausgewählt",
+      "format": {
+        "title": "Markdown-Format:",
+        "projectTitle": "Projekt-Titel",
+        "ignored": "Wird ignoriert (z.B. Acts)",
+        "chapter": "Kapitel (Nummerierung wird entfernt)",
+        "divider": "Szenen-Trenner"
+      }
+    },
+    "messages": {
+      "created": "Projekt erstellt",
+      "updated": "Projekt aktualisiert",
+      "deleted": "Projekt gelöscht",
+      "deleteConfirm": "Möchten Sie dieses Projekt wirklich löschen?",
+      "error": "Fehler bei der Projektverwaltung"
+    }
+  },
+  "chapters": {
+    "title": "Kapitel",
+    "new": "Neues Kapitel",
+    "create": "Neues Kapitel erstellen",
+    "edit": "Kapitel bearbeiten",
+    "delete": "Kapitel löschen",
+    "chapterTitle": "Kapiteltitel",
+    "orderIndex": "Reihenfolge",
+    "messages": {
+      "created": "Kapitel erstellt",
+      "updated": "Kapitel aktualisiert",
+      "deleted": "Kapitel gelöscht",
+      "deleteConfirm": "Möchten Sie dieses Kapitel wirklich löschen?",
+      "error": "Fehler bei der Kapitelverwaltung"
+    }
+  },
+  "chapterList": {
+    "noChapters": "Keine Kapitel",
+    "createFirstChapter": "Erstellen Sie Ihr erstes Kapitel mit dem Button oben",
+    "segmentsCount": "{{count}} Segment",
+    "segmentsCount_plural": "{{count}} Segmente"
+  },
+  "segments": {
+    "title": "Segmente",
+    "create": "Neues Segment erstellen",
+    "noSpeaker": "Kein Sprecher",
+    "speakerInactive": "Sprecher '{{speaker}}' ist inaktiv (keine Samples)",
+    "edit": "Segment bearbeiten",
+    "editText": "Segmenttext bearbeiten",
+    "delete": "Segment löschen",
+    "text": "Text",
+    "segmentText": "Segmenttext",
+    "maxLength": "Maximale Länge",
+    "characters": "Zeichen",
+    "charactersRemaining": "{{count}} Zeichen verbleibend",
+    "textTooLong": "Text ist zu lang! Entfernen Sie {{count}} Zeichen.",
+    "textEmpty": "Text darf nicht leer sein",
+    "placeholder": "Segmenttext eingeben...",
+    "description": "Bearbeiten Sie den Text für dieses Segment. Die maximale Länge beträgt {{maxLength}} Zeichen aufgrund von TTS-Modellbeschränkungen.",
+    "noSegments": "Noch keine Segmente. Ziehen Sie Elemente aus der Symbolleiste oben, um Segmente zu erstellen.",
+    "noAudio": "Noch kein Audio generiert",
+    "generating": "Wird generiert...",
+    "textSegmentCreated": "Textsegment erstellt",
+    "pauseCreated": "Pause erstellt ({{seconds}}s)",
+    "pauseUpdated": "Pause aktualisiert auf {{seconds}}s",
+    "pauseUpdateFailed": "Pause-Aktualisierung fehlgeschlagen",
+    "status": {
+      "completed": "Abgeschlossen",
+      "processing": "Wird verarbeitet",
+      "failed": "Fehlgeschlagen",
+      "pending": "Ausstehend",
+      "noStatus": "Kein Status"
+    },
+    "actions": {
+      "play": "Abspielen",
+      "pause": "Pause",
+      "regenerate": "Audio generieren/regenerieren",
+      "moreActions": "Weitere Aktionen"
+    },
+    "dropZone": {
+      "dropHere": "↓ Hier ablegen",
+      "dropToAppend": "↓ Hier ablegen um anzuhängen",
+      "dropHereToAppend": "Hier ablegen um anzuhängen",
+      "dropToCreate": "↓ Hier ablegen um Segment zu erstellen"
+    },
+    "drag": {
+      "pause": "Pause ({{seconds}}s)",
+      "segment": "Segment {{number}}",
+      "newSegment": "Segment",
+      "newPause": "Pause",
+      "dragging": "Wird gezogen..."
+    },
+    "messages": {
+      "created": "Segment erstellt",
+      "updated": "Segment aktualisiert",
+      "deleted": "Segment gelöscht",
+      "deleteConfirm": "Möchten Sie dieses Segment wirklich löschen?",
+      "error": "Fehler bei der Segmentverwaltung",
+      "saveChanges": "Änderungen speichern"
+    },
+    "settings": {
+      "title": "Segment-Einstellungen bearbeiten",
+      "description": "Bearbeiten Sie die TTS-Einstellungen für dieses Segment. Diese Einstellungen werden beim nächsten Generieren/Regenerieren verwendet.",
+      "engine": "Engine",
+      "model": "Modell",
+      "language": "Sprache",
+      "speaker": "Sprecher",
+      "noSpeaker": "Kein Sprecher",
+      "validation": {
+        "allFieldsRequired": "Engine, Modell und Sprache sind erforderlich"
+      },
+      "messages": {
+        "error": "Fehler beim Speichern der Segment-Einstellungen"
+      }
+    }
+  },
+  "audioGeneration": {
+    "title": "Audio generieren",
+    "generate": "Audio generieren",
+    "generating": "Generiere...",
+    "starting": "Starte...",
+    "speaker": "Sprecher-Stimme",
+    "language": "Sprache",
+    "engine": "Engine",
+    "model": "Modell",
+    "forceRegenerate": "Bereits abgeschlossene Segmente neu generieren",
+    "usingEngine": "Verwendete Engine:",
+    "usingModel": "Verwendetes Modell:",
+    "textLimits": "Textlimits: {{min}}–{{max}} Zeichen für {{language}}",
+    "changeEngineHint": "Ändern Sie Engine/Modell im Header-Dropdown, um andere TTS-Einstellungen zu verwenden.",
+    "languagesSupported": "{{count}} Sprachen unterstützt",
+    "speakersAvailable": "{{count}} Sprecher-Stimmen mit Proben verfügbar",
+    "samplesCount": "{{count}} Probe",
+    "samplesCount_plural": "{{count}} Proben",
+    "regenerateCompleted": "Bereits abgeschlossene Segmente neu generieren ({{count}} abgeschlossen)",
+    "willGenerate": "Es wird Audio für <strong>{{count}}</strong> von <strong>{{total}}</strong> Segmenten mit <strong>{{engine}}</strong> generiert",
+    "regenerateWarning": "⚠️ Die Neugenerierung wird alle vorhandenen Audiodateien ersetzen.",
+    "allCompleted": "Alle Segmente wurden bereits generiert. Aktivieren Sie das Kontrollkästchen zur Neugenerierung, um vorhandenes Audio zu ersetzen.",
+    "noSpeakers": {
+      "title": "Keine Sprecher-Stimmen mit Proben gefunden!",
+      "description": "Bitte fügen Sie Sprecher hinzu und laden Sie Sprachproben im Tab Einstellungen → Sprecher hoch."
+    },
+    "messages": {
+      "started": "Audio-Generierung gestartet",
+      "failed": "Audio-Generierung konnte nicht gestartet werden",
+      "error": "Fehler bei der Audio-Generierung"
+    }
+  },
+  "tts": {
+    "engine": "Engine",
+    "model": "Modell",
+    "language": "Sprache",
+    "speaker": "Sprecher",
+    "speakerOptional": "Optional (leer lassen für keine Sprecherzuweisung)"
+  },
+  "export": {
+    "title": "Kapitel exportieren",
+    "export": "Exportieren",
+    "startExport": "Export starten",
+    "cancelExport": "Export abbrechen",
+    "download": "Herunterladen",
+    "filename": "Dateiname",
+    "filenameHint": "Dateiname ohne Erweiterung",
+    "audioFormat": "Audioformat",
+    "quality": "Qualität",
+    "sampleRate": "Samplerate",
+    "formats": {
+      "mp3": "MP3 (Komprimiert, universell)",
+      "m4a": "M4A/AAC (Komprimiert, bessere Qualität)",
+      "wav": "WAV (Unkomprimiert, beste Qualität)"
+    },
+    "formatHint": "Wählen Sie das Audioformat für den Export",
+    "qualityHint": "Qualität bestimmt Dateigröße und Klangqualität",
+    "xttsStandard": "(XTTS-Standard)",
+    "estimatedSize": "Geschätzte Dateigröße: ~{{size}} MB",
+    "fileSize": "Dateigröße: {{size}} MB",
+    "duration": "Dauer: {{duration}} Sekunden",
+    "progress": {
+      "processing": "Verarbeite Segmente...",
+      "segmentsProcessed": "{{current}}/{{total}} Segmente verarbeitet"
+    },
+    "status": {
+      "completed": "Export erfolgreich abgeschlossen!",
+      "failed": "Export fehlgeschlagen: {{error}}",
+      "fileSaved": "Datei erfolgreich gespeichert!",
+      "downloadFailed": "Download fehlgeschlagen: {{error}}",
+      "downloadCancelled": "Download vom Benutzer abgebrochen"
+    },
+    "warnings": {
+      "allSegmentsRequired": "Alle Segmente müssen vor dem Export des Kapitels generiert werden. ({{completed}}/{{total}} Segmente abgeschlossen)"
+    }
+  },
+  "textUpload": {
+    "title": "Text hochladen und segmentieren",
+    "upload": "Textdatei hochladen",
+    "textContent": "Textinhalt",
+    "placeholder": "Text hier einfügen oder eingeben...",
+    "dragDrop": "Textdatei hier ablegen oder klicken zum Auswählen",
+    "fileSelected": "Datei ausgewählt: {{filename}}",
+    "processing": "Verarbeite...",
+    "creating": "Erstelle...",
+    "preview": "Vorschau",
+    "createSegments": "Segmente erstellen",
+    "segmentationMethod": "Segmentierungsmethode",
+    "language": "Sprache",
+    "methods": {
+      "smart": "Smart (Auto-Erkennung)",
+      "sentences": "Nach Sätzen",
+      "paragraphs": "Nach Absätzen",
+      "length": "Nach Länge"
+    },
+    "languages": {
+      "de": "Deutsch",
+      "en": "Englisch",
+      "es": "Spanisch",
+      "fr": "Französisch"
+    },
+    "previewCount": "Vorschau: {{count}} Segmente",
+    "segmentNumber": "Segment {{number}}",
+    "andMore": "... und {{count}} weitere",
+    "autoCreate": "Segmente automatisch erstellen",
+    "messages": {
+      "success": "Text erfolgreich hochgeladen und verarbeitet",
+      "failed": "Vorschau-Generierung fehlgeschlagen",
+      "error": "Fehler beim Erstellen der Segmente",
+      "noDefaultSpeaker": "Kein Standard-Sprecher festgelegt. Bitte legen Sie in den Einstellungen einen Standard-Sprecher fest.",
+      "speakerInactive": "Standard-Sprecher '{{speaker}}' ist inaktiv (keine Audio-Samples). Bitte fügen Sie Audio-Samples hinzu oder wählen Sie einen anderen Standard-Sprecher."
+    }
+  },
+  "chapterView": {
+    "noProjectSelected": "Kein Projekt ausgewählt",
+    "selectProjectHint": "Wählen Sie ein Projekt aus der Seitenleiste aus, um zu beginnen",
+    "overview": "Übersicht",
+    "selectChapterHint": "Wählen Sie ein Kapitel aus der Seitenleiste oder erstellen Sie ein neues Kapitel",
+    "segmentsGenerated": "{{completed}} / {{total}} Segmente generiert",
+    "uploadText": "Text hochladen",
+    "generating": "Generiere...",
+    "generateAllAudio": "Alle Audio generieren",
+    "regenerateAllAudio": "Alle Audio neu generieren",
+    "exportChapter": "Kapitel exportieren",
+    "noSegments": "Keine Segmente",
+    "uploadTextHint": "Laden Sie eine Textdatei hoch, um sie automatisch zu segmentieren.",
+    "noSegmentsYet": "Dieses Kapitel hat noch keine Segmente. Laden Sie eine Textdatei hoch, um sie automatisch zu segmentieren.",
+    "failedRegenerateSegment": "Segment-Regenerierung fehlgeschlagen"    
+  },
+  "commandToolbar": {
+    "title": "Schnellaktionen",
+    "textSegment": "Segment",
+    "textSegmentDesc": "Neues Textsegment erstellen",
+    "pause": "Pause",
+    "pauseDesc": "Pause/Szenenumbruch einfügen",
+    "hint": "💡 Ziehen Sie Elemente in die Segmentliste, um neue Segmente zu erstellen"
+  },
+  "segmentMenu": {
+    "editText": "Text bearbeiten",
+    "editSettings": "Einstellungen bearbeiten",
+    "editPauseDuration": "Pausendauer bearbeiten",
+    "deleteSegment": "Segment löschen"
+  },
+  "dividerSegment": {
+    "sceneBreak": "Szenenumbruch",
+    "description": "Szenenumbruch • {{seconds}}s"
+  },
+  "connection": {
+    "title": "Backend-Verbindung verloren",
+    "tryingToReconnect": "Versuche, Verbindung zum Backend-Server wiederherzustellen...",
+    "unableToReconnect": "Verbindung zum Backend-Server kann nicht wiederhergestellt werden.",
+    "reconnectionAttempt": "Verbindungsversuch",
+    "returnToStartPage": "Die App kehrt zur Startseite zurück, wenn die Wiederverbindung fehlschlägt.",
+    "sessionSaved": "Ihre Sitzung wurde gespeichert und wird wiederhergestellt, wenn Sie sich erneut verbinden.",
+    "disconnectNow": "Jetzt trennen",
+    "retryNow": "Jetzt wiederholen",
+    "redirecting": "Weiterleitung..."
+  },
+  "disconnect": {
+    "tooltip": "Vom Backend trennen",
+    "confirmTitle": "Vom Backend trennen?",
+    "confirmMessage": "Sie sind derzeit mit \"{{name}}\" verbunden. Ihre Sitzung wird gespeichert und kann wiederhergestellt werden, wenn Sie sich erneut verbinden.",
+    "disconnect": "Trennen",
+    "unknownBackend": "Unbekanntes Backend"
+  },
+  "appLayout": {
+    "engine": "Engine",
+    "model": "Modell",
+    "loading": "Lade...",
+    "loaded": "Geladen",
+    "noEngines": "Keine Engines",
+    "noModels": "Keine Modelle",
+    "languagesCount": "{{count}} Sprachen",
+    "settings": "Einstellungen",
+    "loadingProjects": "Lade Projekte...",
+    "retry": "Wiederholen",
+    "deleteProjectConfirm": "Möchten Sie \"{{title}}\" wirklich löschen?\n\nDies löscht alle Kapitel, Segmente und Audiodateien. Diese Aktion kann nicht rückgängig gemacht werden.",
+    "deleteChapterConfirm": "Möchten Sie das Kapitel \"{{title}}\" wirklich löschen?\n\nDies wird alle Segmente und deren Audiodateien löschen. Diese Aktion kann nicht rückgängig gemacht werden.",
+    "audioPlaybackError": "Audio-Wiedergabe fehlgeschlagen",
+    "audioPlaybackErrorDetailed": "Audio-Wiedergabe fehlgeschlagen: {{message}}"
+  },
+  "quickCreateSegment": {
+    "title": "Textsegment erstellen",
+    "description": "Geben Sie den Text für dieses Segment ein. Sie können ihn später bearbeiten.",
+    "label": "Segmenttext",
+    "placeholder": "Segmenttext eingeben...",
+    "helperText": "{{count}} Zeichen | Strg+Enter zum Erstellen",
+    "creating": "Erstelle...",
+    "create": "Segment erstellen",
+    "failed": "Segment-Erstellung fehlgeschlagen"
+  },
+  "quickCreateDivider": {
+    "titleCreate": "Pause hinzufügen",
+    "titleEdit": "Pause bearbeiten",
+    "descriptionCreate": "Fügen Sie eine Pause zwischen Segmenten hinzu (z.B. für Szenenumbrüche).",
+    "descriptionEdit": "Pausendauer anpassen.",
+    "creating": "Erstelle...",
+    "saving": "Speichere...",
+    "addPause": "Pause hinzufügen",
+    "failedCreate": "Pause konnte nicht erstellt werden",
+    "failedEdit": "Pause konnte nicht bearbeitet werden"
+  },
+  "profileManager": {
+    "title": "Backend-Profile verwalten",
+    "noProfiles": "Noch keine Profile vorhanden. Erstellen Sie eines, um loszulegen.",
+    "default": "Standard",
+    "name": "Name",
+    "url": "URL",
+    "actions": "Aktionen",
+    "addNew": "Neues Profil hinzufügen",
+    "editProfile": "Profil bearbeiten",
+    "newProfile": "Neues Profil",
+    "profileName": "Profilname",
+    "profileNameHint": "Z.B. \"Lokale Entwicklung\" oder \"Produktionsserver\"",
+    "backendUrl": "Backend-URL",
+    "backendUrlHint": "Z.B. \"http://127.0.0.1:8765\" oder \"https://backend.example.com\"",
+    "setDefault": "Als Standardprofil festlegen",
+    "saveChanges": "Änderungen speichern",
+    "createProfile": "Profil erstellen",
+    "deleteTitle": "Profil löschen",
+    "deleteConfirm": "Möchten Sie das Profil \"{{name}}\" wirklich löschen?",
+    "nameRequired": "Name ist erforderlich",
+    "nameDuplicate": "Ein Profil mit diesem Namen existiert bereits"
+  },
+  "profiles": {
+    "title": "Backend-Profile",
+    "current": "Aktuelles Profil",
+    "add": "Profil hinzufügen",
+    "edit": "Profil bearbeiten",
+    "delete": "Profil löschen",
+    "connect": "Verbinden",
+    "disconnect": "Trennen",
+    "name": "Profilname",
+    "url": "Backend-URL",
+    "default": "Als Standard festlegen",
+    "messages": {
+      "created": "Profil erstellt",
+      "updated": "Profil aktualisiert",
+      "deleted": "Profil gelöscht",
+      "connected": "Mit Backend verbunden",
+      "disconnected": "Von Backend getrennt",
+      "connectionFailed": "Verbindung zum Backend fehlgeschlagen",
+      "deleteConfirm": "Möchten Sie dieses Profil wirklich löschen?",
+      "error": "Fehler bei der Profilverwaltung"
+    }
+  },
+  "noSpeakers": {
+    "title": "Keine Sprecher-Stimmen verfügbar",
+    "description": "Bevor Sie Hörbücher erstellen können, müssen Sie mindestens eine Sprecher-Stimme mit Sprachproben hinzufügen.",
+    "steps": {
+      "title": "Schnellstart:",
+      "step1": "Klicken Sie auf die Schaltfläche unten, um die Einstellungen zu öffnen",
+      "step2": "Wechseln Sie zur Registerkarte 'Sprecher'",
+      "step3": "Fügen Sie einen neuen Sprecher hinzu und laden Sie Sprachproben hoch"
+    },
+    "openSettings": "Sprecher-Einstellungen öffnen",
+    "helpText": "Benötigen Sie Hilfe? Lesen Sie die Dokumentation für eine Anleitung zum Hinzufügen von Sprechern."
+  },
+  "startPage": {
+    "subtitle": "Verbinden Sie sich mit einem Backend-Server, um zu beginnen",
+    "backendConnection": "Backend-Verbindung",
+    "profile": "Profil",
+    "noProfiles": "Keine Profile verfügbar",
+    "default": "Standard",
+    "manage": "Verwalten",
+    "url": "URL",
+    "status": "Status",
+    "checking": "Prüfe...",
+    "online": "Online",
+    "offline": "Offline",
+    "notReachable": "Backend ist nicht erreichbar",
+    "backendInfo": "Backend-Informationen",
+    "version": "Version",
+    "engines": "Engines",
+    "speakers": "Sprecher",
+    "speakersAvailable": "{{count}} verfügbar",
+    "busy": "Beschäftigt ({{count}} aktive Jobs)",
+    "lastConnected": "Zuletzt verbunden",
+    "connect": "Mit Backend verbinden",
+    "createProfileHint": "Erstellen Sie ein Profil, um zu beginnen",
+    "timeAgo": {
+      "justNow": "Gerade eben",
+      "minutesAgo_one": "vor {{count}} Minute",
+      "minutesAgo_other": "vor {{count}} Minuten",
+      "hoursAgo_one": "vor {{count}} Stunde",
+      "hoursAgo_other": "vor {{count}} Stunden",
+      "daysAgo_one": "vor {{count}} Tag",
+      "daysAgo_other": "vor {{count}} Tagen"
+    }
+  }
+}

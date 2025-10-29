@@ -1,0 +1,80 @@
+{
+  "productName": "Audiobook Maker",
+  "version": "0.1.0",
+  "identifier": "com.audiobookmaker.tauri",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Audiobook Maker v0.1.0",
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1200,
+        "minHeight": 700,
+        "decorations": true,
+        "transparent": false,
+        "resizable": true,
+        "center": true,
+        "alwaysOnTop": false,
+        "fullscreen": false,
+        "visible": false,
+        "backgroundColor": "#121212"
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": ["'self'"],
+        "connect-src": ["'self'", "http://ipc.localhost", "http://localhost:8765", "http://127.0.0.1:8765", "ws://localhost:*"],
+        "script-src": ["'self'"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "img-src": ["'self'", "data:", "blob:", "http://localhost:8765", "http://127.0.0.1:8765"],
+        "media-src": ["'self'", "http://localhost:8765", "http://127.0.0.1:8765"],
+        "font-src": ["'self'", "data:"]
+      },
+      "freezePrototype": false,
+      "dangerousDisableAssetCspModification": ["style-src"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "",
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
+    "macOS": {
+      "entitlements": null,
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null
+    },
+    "linux": {
+      "appimage": {
+        "bundleMediaFramework": false
+      },
+      "deb": {
+        "depends": []
+      }
+    }
+  },
+  "plugins": {}
+}

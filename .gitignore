@@ -1,0 +1,236 @@
+# ============================================
+# Audiobook Maker - .gitignore
+# ============================================
+CLAUDE.md
+
+# ============================================
+# Node.js / Frontend
+# ============================================
+node_modules/
+dist/
+dist-electron/
+.vite/
+*.local
+
+# npm/yarn logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build info
+*.tsbuildinfo
+
+# ============================================
+# Python / Backend
+# ============================================
+# Virtual environment
+backend/venv/
+backend/.venv/
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Ruff cache
+.ruff_cache/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# ============================================
+# Database
+# ============================================
+# SQLite databases
+backend/database/*.db
+
+# Keep the data directory structure
+!backend/database/.gitkeep
+
+# ============================================
+# Generated Audio & Output
+# ============================================
+# Generated audio files (can be large)
+backend/media/output/*
+!backend/media/output/.gitkeep
+backend/media/exports/*
+!backend/media/exports/.gitkeep
+backend/media/speaker_samples/*
+!backend/media/speaker_samples/.gitkeep
+backend/cleanup.bat
+
+
+# ============================================
+# TTS Models
+# ============================================
+# Models are large (100MB+), should not be committed
+# Download separately or use model management
+backend/models/*/
+!backend/models/.gitkeep
+!backend/models/README.md
+
+# Exception: Keep model directory structure documentation
+backend/models/*/.gitkeep
+
+# ============================================
+# Speaker Samples 
+# ============================================
+# Uncomment if you want to ignore speaker files
+backend/media/speaker_samples/*.wav
+backend/media/speaker_samples/*/*.wav
+
+# Keep speaker directory structure
+!backend/speakers/.gitkeep
+
+# ============================================
+# IDE / Editor
+# ============================================
+# VSCode
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json.example
+
+# JetBrains IDEs (PyCharm, WebStorm, etc.)
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Vim
+*.swp
+*.swo
+*~
+.vim/
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ============================================
+# Operating System
+# ============================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.directory
+.Trash-*
+
+# ============================================
+# Environment Variables
+# ============================================
+.env
+.env.local
+.env.*.local
+
+# ============================================
+# Logs
+# ============================================
+logs/
+*.log
+backend/logs/
+backend/*.log
+
+# ============================================
+# Electron
+# ============================================
+# Electron build output
+release/
+out/
+
+# Electron builder
+electron-builder.yml
+
+# ============================================
+# Testing
+# ============================================
+# Test files (if you want to keep test scripts, remove these lines)
+backend/test_*.py
+backend/*_test.py
+
+# ============================================
+# Temporary Files
+# ============================================
+*.tmp
+*.temp
+*.bak
+*.backup
+*.old
+
+# ============================================
+# Package Manager Locks (Optional)
+# ============================================
+# Uncomment if you want to ignore lock files
+# (generally NOT recommended, but can reduce conflicts)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# ============================================
+# Documentation Builds
+# ============================================
+docs/_build/
+site/
+
+# ============================================
+# Jupyter Notebook
+# ============================================
+.ipynb_checkpoints
+
+# ============================================
+# Project Specific
+# ============================================
+# User-specific configuration
+backend/config.local.py
+backend/settings.local.py
+
+# Development database backups
+*.db.backup
+*.db.bak
+
+# Planning and ToDo documents
+.ToDo/
+.claude/
+
+.gitignore
+remove_comments.py
+CLAUDE.md
+README.md

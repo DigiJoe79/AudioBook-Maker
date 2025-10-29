@@ -1,0 +1,51 @@
+{
+  "name": "audiobook-maker-tauri",
+  "private": true,
+  "version": "0.1.0",
+  "author": "DigiJoe79",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:tauri": "tauri dev",
+    "build": "tsc && vite build",
+    "build:tauri": "tauri build"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@emotion/cache": "^11.14.0",
+    "@emotion/react": "^11.11.3",
+    "@emotion/styled": "^11.11.0",
+    "@mui/icons-material": "^5.15.10",
+    "@mui/material": "^5.15.10",
+    "@tanstack/react-query": "^5.90.2",
+    "@tanstack/react-query-devtools": "^5.18.1",
+    "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/plugin-dialog": "^2.0.1",
+    "@tauri-apps/plugin-fs": "^2.0.1",
+    "@tauri-apps/plugin-http": "^2.0.1",
+    "@tauri-apps/plugin-shell": "^2.0.1",
+    "axios": "^1.6.7",
+    "i18next": "^25.6.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-i18next": "^16.2.0",
+    "react-router-dom": "^6.30.1",
+    "zustand": "^4.5.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@playwright/test": "^1.56.1",
+    "@tauri-apps/cli": "^2.1.0",
+    "@types/react": "^18.2.55",
+    "@types/react-dom": "^18.2.19",
+    "@vitejs/plugin-react": "^4.2.1",
+    "concurrently": "^8.2.2",
+    "globals": "^16.4.0",
+    "playwright": "^1.56.1",
+    "typescript": "^5.3.3",
+    "typescript-eslint": "^8.46.2",
+    "vite": "^5.1.0"
+  }
+}

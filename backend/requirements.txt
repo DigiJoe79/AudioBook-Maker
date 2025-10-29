@@ -1,0 +1,38 @@
+# Web Framework
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+python-multipart==0.0.9
+
+# TTS and Audio Processing
+# IMPORTANT: Install PyTorch with CUDA support FIRST, before running pip install -r requirements.txt:
+# For CUDA 11.8: pip install torch==2.1.1+cu118 torchaudio==2.1.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+# For CUDA 12.1: pip install torch==2.1.1+cu121 torchaudio==2.1.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+# torch==2.1.1  # Commented out - install via CUDA command above
+# torchaudio==2.1.1  # Commented out - install via CUDA command above
+TTS==0.22.0
+transformers<4.36.0  # Compatibility with PyTorch 2.1.1 (newer versions require PyTorch 2.6+)
+
+# Text Processing
+spacy==3.7.2
+# Download German model: python -m spacy download de_core_news_sm
+# Download English model: python -m spacy download en_core_web_sm
+
+# Audio Processing
+pydub==0.25.1
+ffmpeg-python==0.2.0
+
+# Utilities
+loguru==0.7.2
+pydantic==2.6.1
+
+# Database
+# SQLite is built-in to Python
+
+# Note: The following packages were removed (not used in code):
+# - faster-whisper (requires av which needs compilation)
+# - av (only needed by faster-whisper)
+# - soundfile (not imported anywhere)
+# - noisereduce (not imported anywhere)
+# - pedalboard (not imported anywhere)
+# - python-dotenv (not imported anywhere)
+# - numpy/scipy (installed automatically as TTS dependencies)
