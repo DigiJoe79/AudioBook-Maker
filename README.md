@@ -141,8 +141,10 @@ pip install torch==2.1.1 torchaudio==2.1.1
 pip install -r requirements.txt
 
 # Download spaCy language models
-python -m spacy download de_core_news_sm
-python -m spacy download en_core_web_sm
+python install_spacy_models.py
+
+# Download recommended XTTS model(2.0.2)
+python install_xtts_models.py
 ```
 
 #### 3. Frontend Setup
