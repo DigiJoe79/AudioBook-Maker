@@ -320,7 +320,7 @@ npm run build:tauri
 - ✅ Markdown import
 
 ### Planned Features
-- 🔄 Additional TTS engines (OpenAI TTS, ElevenLabs, Azure)
+- 🔄 Additional TTS engines
 - 🔄 Whisper integration for quality checks
 - 🔄 Pronunciation dictionary
 - 🔄 Audio effects (normalization, noise reduction)
@@ -358,7 +358,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 - 🐛 Issues: [GitHub Issues](https://github.com/DigiJoe79/audiobook-maker/issues)
-- 💬 Discussions: [GitHub Discussions](https://github.com/DigiJoe79/audiobook-maker/discussions)
 
 ---
 
