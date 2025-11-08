@@ -23,48 +23,78 @@ def upgrade(conn: sqlite3.Connection) -> None:
     cursor = conn.cursor()
     logger.info("Starting migration 003: Rename TTS parameters")
 
-    # ========== CHAPTERS TABLE ==========
-    logger.info("Renaming chapters.default_engine → default_tts_engine")
-    cursor.execute("""
-        ALTER TABLE chapters RENAME COLUMN default_engine TO default_tts_engine
-    """)
+    # Helper function to check if column exists
+    def column_exists(table: str, column: str) -> bool:
+        cursor.execute(f"PRAGMA table_info({table})")
+        columns = [row[1] for row in cursor.fetchall()]
+        return column in columns
 
-    logger.info("Renaming chapters.default_model_name → default_tts_model_name")
-    cursor.execute("""
-        ALTER TABLE chapters RENAME COLUMN default_model_name TO default_tts_model_name
-    """)
+    # ========== CHAPTERS TABLE ==========
+    if column_exists('chapters', 'default_engine'):
+        logger.info("Renaming chapters.default_engine → default_tts_engine")
+        cursor.execute("""
+            ALTER TABLE chapters RENAME COLUMN default_engine TO default_tts_engine
+        """)
+    else:
+        logger.info("Skipping chapters.default_engine (already renamed or doesn't exist)")
+
+    if column_exists('chapters', 'default_model_name'):
+        logger.info("Renaming chapters.default_model_name → default_tts_model_name")
+        cursor.execute("""
+            ALTER TABLE chapters RENAME COLUMN default_model_name TO default_tts_model_name
+        """)
+    else:
+        logger.info("Skipping chapters.default_model_name (already renamed or doesn't exist)")
 
     # ========== SEGMENTS TABLE ==========
-    logger.info("Renaming segments.engine → tts_engine")
-    cursor.execute("""
-        ALTER TABLE segments RENAME COLUMN engine TO tts_engine
-    """)
+    if column_exists('segments', 'engine'):
+        logger.info("Renaming segments.engine → tts_engine")
+        cursor.execute("""
+            ALTER TABLE segments RENAME COLUMN engine TO tts_engine
+        """)
+    else:
+        logger.info("Skipping segments.engine (already renamed or doesn't exist)")
 
-    logger.info("Renaming segments.model_name → tts_model_name")
-    cursor.execute("""
-        ALTER TABLE segments RENAME COLUMN model_name TO tts_model_name
-    """)
+    if column_exists('segments', 'model_name'):
+        logger.info("Renaming segments.model_name → tts_model_name")
+        cursor.execute("""
+            ALTER TABLE segments RENAME COLUMN model_name TO tts_model_name
+        """)
+    else:
+        logger.info("Skipping segments.model_name (already renamed or doesn't exist)")
 
-    logger.info("Renaming segments.speaker_name → tts_speaker_name")
-    cursor.execute("""
-        ALTER TABLE segments RENAME COLUMN speaker_name TO tts_speaker_name
-    """)
+    if column_exists('segments', 'speaker_name'):
+        logger.info("Renaming segments.speaker_name → tts_speaker_name")
+        cursor.execute("""
+            ALTER TABLE segments RENAME COLUMN speaker_name TO tts_speaker_name
+        """)
+    else:
+        logger.info("Skipping segments.speaker_name (already renamed or doesn't exist)")
 
     # ========== TTS_JOBS TABLE ==========
-    logger.info("Renaming tts_jobs.engine → tts_engine")
-    cursor.execute("""
-        ALTER TABLE tts_jobs RENAME COLUMN engine TO tts_engine
-    """)
+    if column_exists('tts_jobs', 'engine'):
+        logger.info("Renaming tts_jobs.engine → tts_engine")
+        cursor.execute("""
+            ALTER TABLE tts_jobs RENAME COLUMN engine TO tts_engine
+        """)
+    else:
+        logger.info("Skipping tts_jobs.engine (already renamed or doesn't exist)")
 
-    logger.info("Renaming tts_jobs.model_name → tts_model_name")
-    cursor.execute("""
-        ALTER TABLE tts_jobs RENAME COLUMN model_name TO tts_model_name
-    """)
+    if column_exists('tts_jobs', 'model_name'):
+        logger.info("Renaming tts_jobs.model_name → tts_model_name")
+        cursor.execute("""
+            ALTER TABLE tts_jobs RENAME COLUMN model_name TO tts_model_name
+        """)
+    else:
+        logger.info("Skipping tts_jobs.model_name (already renamed or doesn't exist)")
 
-    logger.info("Renaming tts_jobs.speaker_name → tts_speaker_name")
-    cursor.execute("""
-        ALTER TABLE tts_jobs RENAME COLUMN speaker_name TO tts_speaker_name
-    """)
+    if column_exists('tts_jobs', 'speaker_name'):
+        logger.info("Renaming tts_jobs.speaker_name → tts_speaker_name")
+        cursor.execute("""
+            ALTER TABLE tts_jobs RENAME COLUMN speaker_name TO tts_speaker_name
+        """)
+    else:
+        logger.info("Skipping tts_jobs.speaker_name (already renamed or doesn't exist)")
 
     # ========== UPDATE INDEXES ==========
     # Note: SQLite automatically updates indexes when columns are renamed

@@ -173,6 +173,7 @@
     "loading": "Loading...",
     "error": "Error",
     "success": "Success",
+    "warning": "Warning",
     "create": "Create",
     "saving": "Saving...",
     "title": "Title",
@@ -271,6 +272,7 @@
       "processing": "Processing",
       "failed": "Failed",
       "pending": "Pending",
+      "queued": "Queued",
       "noStatus": "No status"
     },
     "limitSource": {
@@ -339,6 +341,7 @@
     "samplesCount_one": "{{count}} sample",
     "samplesCount_other": "{{count}} samples",
     "regenerateCompleted": "Regenerate already completed segments ({{count}} completed)",
+    "forceRegenerateWarning": "Regeneration will replace all existing audio files.",
     "willGenerate": "Will generate audio for <strong>{{count}}</strong> of <strong>{{total}}</strong> segments using <strong>{{engine}}</strong>",
     "regenerateWarning": "⚠️ Regeneration will replace all existing audio files.",
     "allCompleted": "All segments already generated. Enable regeneration checkbox to replace existing audio.",

@@ -172,6 +172,7 @@
     "loading": "Lädt...",
     "error": "Fehler",
     "success": "Erfolgreich",
+    "warning": "Warnung",
     "create": "Erstellen",
     "saving": "Speichert...",
     "title": "Titel",
@@ -270,6 +271,7 @@
       "processing": "Wird verarbeitet",
       "failed": "Fehlgeschlagen",
       "pending": "Ausstehend",
+      "queued": "In Warteschlange",
       "noStatus": "Kein Status"
     },
     "limitSource": {
@@ -338,6 +340,7 @@
     "samplesCount": "{{count}} Probe",
     "samplesCount_plural": "{{count}} Proben",
     "regenerateCompleted": "Bereits abgeschlossene Segmente neu generieren ({{count}} abgeschlossen)",
+    "forceRegenerateWarning": "Die Neugenerierung wird alle vorhandenen Audiodateien ersetzen.",
     "willGenerate": "Es wird Audio für <strong>{{count}}</strong> von <strong>{{total}}</strong> Segmenten mit <strong>{{engine}}</strong> generiert",
     "regenerateWarning": "⚠️ Die Neugenerierung wird alle vorhandenen Audiodateien ersetzen.",
     "allCompleted": "Alle Segmente wurden bereits generiert. Aktivieren Sie das Kontrollkästchen zur Neugenerierung, um vorhandenes Audio zu ersetzen.",
