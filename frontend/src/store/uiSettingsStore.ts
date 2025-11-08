@@ -1,3 +1,9 @@
+/**
+ * UI Settings Store
+ *
+ * Manages UI-only settings (theme, language) stored locally in localStorage.
+ * These settings are independent of backend connection.
+ */
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
@@ -8,13 +14,16 @@ export interface UISettings {
 }
 
 interface UISettingsState {
+  // Settings data
   settings: UISettings;
 
+  // Actions
   setTheme: (theme: UISettings['theme']) => void;
   setLanguage: (language: UISettings['uiLanguage']) => void;
   updateSettings: (settings: Partial<UISettings>) => void;
 }
 
+// Default UI settings
 const DEFAULT_SETTINGS: UISettings = {
   theme: 'system',
   uiLanguage: 'en'
@@ -53,7 +62,7 @@ export const useUISettingsStore = create<UISettingsState>()(
       }
     }),
     {
-      name: 'audiobook-maker:ui-settings',
+      name: 'audiobook-maker:ui-settings', // localStorage key
       version: 1
     }
   )

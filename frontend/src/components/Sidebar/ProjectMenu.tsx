@@ -1,3 +1,7 @@
+/**
+ * ProjectMenu - Dropdown menu for project actions
+ * Accessed via the ⋮ (more) icon in project items
+ */
 
 import React from 'react'
 import { Menu, MenuItem, ListItemIcon, ListItemText } from '@mui/material'

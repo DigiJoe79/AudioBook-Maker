@@ -9,6 +9,7 @@ from loguru import logger
 
 from config import DATABASE_PATH, DATA_DIR
 
+# Schema path (relative to project root)
 SCHEMA_PATH = Path(__file__).parent.parent.parent / "database" / "schema.sql"
 DB_PATH = Path(DATABASE_PATH)
 DB_DIR = Path(DATA_DIR)
@@ -16,11 +17,14 @@ DB_DIR = Path(DATA_DIR)
 
 def init_database() -> None:
     """Initialize the database with schema if it doesn't exist"""
+    # Create data directory if it doesn't exist
     DB_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Check if database exists
     if not DB_PATH.exists():
         logger.info(f"Creating new database at {DB_PATH}")
 
+        # Create database and apply schema
         conn = sqlite3.connect(DB_PATH)
         try:
             with open(SCHEMA_PATH, 'r', encoding='utf-8') as f:
@@ -50,7 +54,8 @@ def get_db_connection() -> Generator[sqlite3.Connection, None, None]:
             cursor.execute("SELECT * FROM projects")
     """
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
+    conn.row_factory = sqlite3.Row  # Enable row access by column name
+    conn.execute("PRAGMA foreign_keys = ON")  # Enable foreign key constraints
     try:
         yield conn
     except Exception:
@@ -70,6 +75,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
     """
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")  # Enable foreign key constraints
     try:
         yield conn
         conn.commit()
@@ -84,4 +90,5 @@ def get_db_connection_simple() -> sqlite3.Connection:
     """Get a simple database connection (not a context manager)"""
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")  # Enable foreign key constraints
     return conn

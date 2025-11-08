@@ -66,9 +66,12 @@ interface ProjectSidebarProps {
 interface DragData {
   type: 'project' | 'chapter'
   id: string
-  projectId?: string
+  projectId?: string // For chapters: parent project ID
 }
 
+/**
+ * Sortable Project Item
+ */
 function SortableProjectItem({
   project,
   isExpanded,
@@ -116,6 +119,7 @@ function SortableProjectItem({
 
   return (
     <Box ref={setNodeRef} style={style}>
+      {/* Project Item */}
       <ListItem
         disablePadding
         secondaryAction={
@@ -135,6 +139,7 @@ function SortableProjectItem({
             onSelectChapter(null)
           }}
         >
+          {/* Drag Handle */}
           <Box
             {...attributes}
             {...listeners}
@@ -148,6 +153,7 @@ function SortableProjectItem({
           >
             <DragIndicator fontSize="small" sx={{ color: 'text.disabled' }} />
           </Box>
+          {/* Project Icon - Click to open context menu */}
           {(onEdit || onDelete) ? (
             <IconButton
               size="small"
@@ -172,6 +178,7 @@ function SortableProjectItem({
         </ListItemButton>
       </ListItem>
 
+      {/* Project Menu */}
       {(onEdit || onDelete) && (
         <ProjectMenu
           anchorEl={menuAnchorEl}
@@ -182,11 +189,15 @@ function SortableProjectItem({
         />
       )}
 
+      {/* Chapters */}
       {children}
     </Box>
   )
 }
 
+/**
+ * Sortable Chapter Item
+ */
 function SortableChapterItem({
   chapter,
   projectId,
@@ -237,6 +248,7 @@ function SortableChapterItem({
         selected={isSelected}
         onClick={onSelect}
       >
+        {/* Drag Handle */}
         <Box
           {...attributes}
           {...listeners}
@@ -250,6 +262,7 @@ function SortableChapterItem({
         >
           <DragIndicator fontSize="small" sx={{ color: 'text.disabled' }} />
         </Box>
+        {/* Chapter Icon - Click to open context menu */}
         {(onEdit || onDelete) ? (
           <IconButton
             size="small"
@@ -273,6 +286,7 @@ function SortableChapterItem({
       </ListItemButton>
     </ListItem>
 
+      {/* Chapter Menu */}
       {(onEdit || onDelete) && (
         <ChapterMenu
           anchorEl={menuAnchorEl}
@@ -286,6 +300,9 @@ function SortableChapterItem({
   )
 }
 
+/**
+ * ProjectSidebar with Drag & Drop Support
+ */
 export default function ProjectSidebar({
   projects,
   selectedProjectId,
@@ -304,30 +321,39 @@ export default function ProjectSidebar({
 }: ProjectSidebarProps) {
   const [activeId, setActiveId] = useState<string | null>(null)
 
+  // Mutations
   const reorderProjects = useReorderProjects()
   const reorderChapters = useReorderChapters()
   const moveChapter = useMoveChapter()
 
+  // Drag sensors
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 8,
+        distance: 8, // 8px movement to start drag
       },
     })
   )
 
+  // Project IDs for SortableContext
   const projectIds = useMemo(() => projects.map(p => p.id), [projects])
 
+  /**
+   * Handle Drag Start
+   */
   function handleDragStart(event: DragStartEvent) {
     setActiveId(event.active.id as string)
   }
 
+  /**
+   * Handle Drag End
+   */
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
     setActiveId(null)
 
     if (!over || active.id === over.id) {
-      return
+      return // No change
     }
 
     const activeData = active.data.current as DragData | undefined
@@ -335,22 +361,30 @@ export default function ProjectSidebar({
 
     if (!activeData) return
 
+    // ========================================================================
+    // Case 1: Project Reordering
+    // ========================================================================
     if (activeData.type === 'project' && overData?.type === 'project') {
       const oldIndex = projects.findIndex(p => p.id === active.id)
       const newIndex = projects.findIndex(p => p.id === over.id)
 
       if (oldIndex === -1 || newIndex === -1) return
 
+      // Build new order
       const reordered = [...projects]
       const [movedProject] = reordered.splice(oldIndex, 1)
       reordered.splice(newIndex, 0, movedProject)
 
       const projectIds = reordered.map(p => p.id)
 
+      // Mutate
       reorderProjects.mutate(projectIds)
       return
     }
 
+    // ========================================================================
+    // Case 2: Chapter Reordering (same project)
+    // ========================================================================
     if (
       activeData.type === 'chapter' &&
       overData?.type === 'chapter' &&
@@ -366,16 +400,21 @@ export default function ProjectSidebar({
 
       if (oldIndex === -1 || newIndex === -1) return
 
+      // Build new order
       const reordered = [...chapters]
       const [movedChapter] = reordered.splice(oldIndex, 1)
       reordered.splice(newIndex, 0, movedChapter)
 
       const chapterIds = reordered.map(c => c.id)
 
+      // Mutate
       reorderChapters.mutate({ projectId, chapterIds })
       return
     }
 
+    // ========================================================================
+    // Case 3: Cross-Project Chapter Move
+    // ========================================================================
     if (
       activeData.type === 'chapter' &&
       overData?.type === 'chapter' &&
@@ -388,10 +427,12 @@ export default function ProjectSidebar({
       const targetProject = projects.find(p => p.id === targetProjectId)
       if (!targetProject) return
 
+      // Find insert position
       const targetChapters = targetProject.chapters
       const overIndex = targetChapters.findIndex(c => c.id === over.id)
       const newOrderIndex = overIndex !== -1 ? overIndex : targetChapters.length
 
+      // Mutate
       moveChapter.mutate({
         chapterId,
         newProjectId: targetProjectId,
@@ -400,18 +441,22 @@ export default function ProjectSidebar({
       return
     }
 
+    // ========================================================================
+    // Case 4: Chapter dropped on Project (move to end of project)
+    // ========================================================================
     if (activeData.type === 'chapter' && overData?.type === 'project') {
       const sourceProjectId = activeData.projectId!
       const targetProjectId = over.id as string
       const chapterId = active.id as string
 
-      if (sourceProjectId === targetProjectId) return
+      if (sourceProjectId === targetProjectId) return // Same project, no change
 
       const targetProject = projects.find(p => p.id === targetProjectId)
       if (!targetProject) return
 
-      const newOrderIndex = targetProject.chapters.length
+      const newOrderIndex = targetProject.chapters.length // Append to end
 
+      // Mutate
       moveChapter.mutate({
         chapterId,
         newProjectId: targetProjectId,
@@ -421,6 +466,7 @@ export default function ProjectSidebar({
     }
   }
 
+  // Find active item for DragOverlay
   const activeProject = activeId ? projects.find(p => p.id === activeId) : null
   const activeChapter = activeId
     ? projects.flatMap(p => p.chapters).find(c => c.id === activeId)
@@ -448,6 +494,7 @@ export default function ProjectSidebar({
           },
         }}
       >
+        {/* Header */}
         <Toolbar
           sx={{
             display: 'flex',
@@ -471,8 +518,10 @@ export default function ProjectSidebar({
         </Toolbar>
         <Divider />
 
+        {/* Project List */}
         <Box sx={{ overflow: 'auto', flexGrow: 1 }}>
           {projects.length === 0 ? (
+            /* Empty State - No scrollbar */
             <Box
               sx={{
                 display: 'flex',
@@ -506,6 +555,7 @@ export default function ProjectSidebar({
                     onEdit={() => onEditProject?.(project.id)}
                     onDelete={() => onDeleteProject?.(project.id, project.title)}
                   >
+                    {/* Chapters List */}
                     <Collapse
                       in={expandedProjects.has(project.id)}
                       timeout="auto"
@@ -532,6 +582,7 @@ export default function ProjectSidebar({
                           ))}
                         </SortableContext>
 
+                        {/* Add Chapter Button */}
                         <ListItem disablePadding>
                           <ListItemButton
                             sx={{ pl: 4 }}
@@ -557,6 +608,7 @@ export default function ProjectSidebar({
         </Box>
       </Drawer>
 
+      {/* Drag Overlay */}
       <DragOverlay>
         {activeProject && (
           <Box

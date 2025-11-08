@@ -1,6 +1,13 @@
+/**
+ * ConnectionLostOverlay
+ *
+ * Modal overlay displayed when backend connection is lost during app usage.
+ * Shows reconnection progress and allows manual retry or disconnect.
+ */
 
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Modal,
   Box,
@@ -14,28 +21,77 @@ import { useConnectionMonitor } from '../hooks/useConnectionMonitor'
 import { useAppStore } from '../store/appStore'
 import { getCurrentSessionState } from '../utils/sessionHelpers'
 import { useTranslation } from 'react-i18next'
+import { queryKeys } from '../services/queryKeys'
+import { logger } from '../utils/logger'
 
 export function ConnectionLostOverlay() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const saveSessionState = useAppStore((state) => state.saveSessionState)
   const disconnectBackend = useAppStore((state) => state.disconnectBackend)
 
   const { isConnected, retryCount, maxRetries, retryNow } = useConnectionMonitor({
     onConnectionLost: () => {
+      // Save current state when connection is lost
       const state = getCurrentSessionState()
       saveSessionState(state)
-      console.log('[ConnectionLostOverlay] Connection lost, session state saved')
+      logger.group(
+        '🔌 Connection',
+        'Connection lost, session state saved',
+        { selectedProject: state.selectedProjectId, selectedChapter: state.selectedChapterId },
+        '#F44336'
+      )
     },
-    onConnectionRestored: () => {
-      console.log('[ConnectionLostOverlay] Connection restored')
+    onConnectionRestored: async () => {
+      // Connection restored - refetch engines and models
+      // (they only change on backend restart, so always fetch fresh on reconnect)
+      logger.group(
+        '🔌 Connection',
+        'Connection restored, fetching fresh data',
+        { action: 'refetch', targets: ['engines', 'models'] },
+        '#4CAF50'
+      )
+
+      try {
+        // Fetch engines and models fresh (ignore cache)
+        await Promise.all([
+          queryClient.refetchQueries({
+            queryKey: queryKeys.tts.engines(),
+            type: 'active'
+          }),
+          // Remove all model queries (matches all ['tts', 'models', *])
+          queryClient.resetQueries({
+            queryKey: ['tts', 'models'],
+            exact: false
+          })
+        ])
+
+        logger.group(
+          '🔌 Connection',
+          'Data refresh complete',
+          { status: 'success' },
+          '#4CAF50'
+        )
+      } catch (error) {
+        logger.warn('[ConnectionLostOverlay] Failed to refresh data:', error)
+      }
+
+      // Overlay will automatically hide because isConnected becomes true
     },
   })
 
+  // Navigate to start page after max retries
   useEffect(() => {
     if (!isConnected && retryCount >= maxRetries) {
-      console.log('[ConnectionLostOverlay] Max retries reached, redirecting to start page')
+      logger.group(
+        '🔌 Connection',
+        'Max retries reached, redirecting to start page',
+        { retryCount, maxRetries, delay: '1000ms' },
+        '#F44336'
+      )
 
+      // Small delay to allow user to see the "giving up" state
       const timeout = setTimeout(() => {
         disconnectBackend()
         navigate('/', { replace: true })
@@ -45,6 +101,7 @@ export function ConnectionLostOverlay() {
     }
   }, [retryCount, maxRetries, isConnected, navigate, disconnectBackend])
 
+  // Don't show overlay if connected
   if (isConnected) return null
 
   const progress = (retryCount / maxRetries) * 100
@@ -53,7 +110,9 @@ export function ConnectionLostOverlay() {
   return (
     <Modal
       open={!isConnected}
+      // Don't allow closing by clicking outside
       onClose={() => {}}
+      // Keep overlay above everything
       sx={{ zIndex: 9999 }}
     >
       <Box
@@ -73,6 +132,7 @@ export function ConnectionLostOverlay() {
             bgcolor: 'background.paper',
           }}
         >
+          {/* Header */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 3 }}>
             <WarningIcon
               color="warning"
@@ -90,6 +150,7 @@ export function ConnectionLostOverlay() {
             </Box>
           </Box>
 
+          {/* Progress */}
           {!hasGivenUp && (
             <Box sx={{ mb: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
@@ -115,6 +176,7 @@ export function ConnectionLostOverlay() {
             </Box>
           )}
 
+          {/* Giving up message */}
           {hasGivenUp && (
             <Box sx={{ mb: 3 }}>
               <Typography variant="body2" color="text.secondary">
@@ -123,6 +185,7 @@ export function ConnectionLostOverlay() {
             </Box>
           )}
 
+          {/* Actions */}
           <Box sx={{ display: 'flex', gap: 2 }}>
             <Button
               variant="outlined"

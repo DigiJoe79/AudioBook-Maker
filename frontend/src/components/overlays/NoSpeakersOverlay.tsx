@@ -1,3 +1,9 @@
+/**
+ * NoSpeakersOverlay
+ *
+ * Overlay shown when no speakers are available in the system.
+ * Guides user to add speakers in Settings.
+ */
 
 import { Box, Paper, Typography, Button, Stack } from '@mui/material'
 import { RecordVoiceOver as SpeakerIcon, Settings as SettingsIcon } from '@mui/icons-material'
@@ -35,6 +41,7 @@ export function NoSpeakersOverlay({ onOpenSettings }: NoSpeakersOverlayProps) {
         }}
       >
         <Stack spacing={3}>
+          {/* Icon */}
           <Box>
             <SpeakerIcon
               sx={{
@@ -45,14 +52,17 @@ export function NoSpeakersOverlay({ onOpenSettings }: NoSpeakersOverlayProps) {
             />
           </Box>
 
+          {/* Title */}
           <Typography variant="h5" fontWeight="bold">
             {t('noSpeakers.title')}
           </Typography>
 
+          {/* Description */}
           <Typography variant="body1" color="text.secondary">
             {t('noSpeakers.description')}
           </Typography>
 
+          {/* Steps */}
           <Box sx={{ textAlign: 'left', pl: 2 }}>
             <Typography variant="body2" color="text.secondary" gutterBottom>
               {t('noSpeakers.steps.title')}
@@ -70,6 +80,7 @@ export function NoSpeakersOverlay({ onOpenSettings }: NoSpeakersOverlayProps) {
             </ol>
           </Box>
 
+          {/* Action Button */}
           <Button
             variant="contained"
             size="large"
@@ -80,6 +91,7 @@ export function NoSpeakersOverlay({ onOpenSettings }: NoSpeakersOverlayProps) {
             {t('noSpeakers.openSettings')}
           </Button>
 
+          {/* Help Text */}
           <Typography variant="caption" color="text.secondary">
             {t('noSpeakers.helpText')}
           </Typography>

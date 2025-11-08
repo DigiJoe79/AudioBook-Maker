@@ -106,6 +106,7 @@ class HealthMonitor:
             self._status["database"] = available
 
 
+# Global singleton instance
 _health_monitor: HealthMonitor | None = None
 
 

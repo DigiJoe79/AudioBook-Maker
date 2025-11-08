@@ -9,6 +9,7 @@ import {
   Stack,
 } from '@mui/material';
 import { useTranslation } from 'react-i18next';
+import { logger } from '../../utils/logger';
 
 interface ChapterDialogProps {
   open: boolean;
@@ -31,13 +32,20 @@ export const ChapterDialog: React.FC<ChapterDialogProps> = ({
   const [title, setTitle] = useState('');
   const [orderIndex, setOrderIndex] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
-    if (open) {
+    // Only initialize when dialog opens (not when initialData changes from cache updates)
+    if (open && !initialized) {
       setTitle(initialData?.title || '');
       setOrderIndex(initialData?.orderIndex ?? nextOrderIndex);
+      setInitialized(true);
     }
-  }, [open, initialData, nextOrderIndex]);
+    // Reset initialization flag when dialog closes
+    if (!open && initialized) {
+      setInitialized(false);
+    }
+  }, [open, initialData, nextOrderIndex, initialized]);
 
   const handleSave = async () => {
     if (!title.trim()) return;
@@ -47,7 +55,7 @@ export const ChapterDialog: React.FC<ChapterDialogProps> = ({
       await onSave({ title, orderIndex });
       onClose();
     } catch (err) {
-      console.error('Failed to save chapter:', err);
+      logger.error('[ChapterDialog] Failed to save chapter:', err);
       alert(t('chapters.messages.error'));
     } finally {
       setSaving(false);

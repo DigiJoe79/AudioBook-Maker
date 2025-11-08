@@ -1,3 +1,21 @@
+/**
+ * Error Boundary Component
+ *
+ * Catches React errors in child components and displays a user-friendly fallback UI.
+ * Prevents the entire app from crashing when errors occur in specific components.
+ *
+ * Features:
+ * - Catches rendering errors, lifecycle errors, and constructor errors
+ * - Logs errors with the logger utility for debugging
+ * - Provides retry functionality to recover from temporary errors
+ * - Context-aware error messages based on error location
+ * - Graceful degradation for critical vs. non-critical components
+ *
+ * Usage:
+ * <ErrorBoundary context="ChapterView" critical={true}>
+ *   <ChapterView />
+ * </ErrorBoundary>
+ */
 
 import React, { Component, ReactNode, ErrorInfo } from 'react'
 import { Box, Typography, Button, Paper, Alert, AlertTitle } from '@mui/material'
@@ -6,9 +24,23 @@ import { logger } from '../utils/logger'
 
 interface Props {
   children: ReactNode
+  /**
+   * Context name for error reporting (e.g., "ChapterView", "SegmentList")
+   * Used to provide specific error messages and logging
+   */
   context?: string
+  /**
+   * Whether this component is critical to app functionality
+   * Critical errors show more prominent UI and detailed recovery instructions
+   */
   critical?: boolean
+  /**
+   * Custom fallback UI to display instead of default error screen
+   */
   fallback?: ReactNode
+  /**
+   * Callback when error occurs (for additional error handling/reporting)
+   */
   onError?: (error: Error, errorInfo: ErrorInfo) => void
 }
 
@@ -29,6 +61,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   static getDerivedStateFromError(error: Error): Partial<State> {
+    // Update state so the next render will show the fallback UI
     return {
       hasError: true,
       error,
@@ -38,23 +71,25 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     const { context, onError } = this.props
 
-    logger.error(
-      `[ErrorBoundary${context ? `:${context}` : ''}]`,
-      'Caught error:',
+    // Log error with context
+    logger.group(
+      '⚠️ Error Boundary',
+      `Caught error${context ? ` in ${context}` : ''}`,
       {
-        error: {
-          name: error.name,
-          message: error.message,
-          stack: error.stack,
-        },
-        componentStack: errorInfo.componentStack,
-      }
+        'Error Name': error.name,
+        'Error Message': error.message,
+        'Component Stack': errorInfo.componentStack?.split('\n')[0] || 'N/A',
+        'Full Stack': error.stack || 'N/A'
+      },
+      '#F44336'  // Red for errors
     )
 
+    // Update state with error info
     this.setState({
       errorInfo,
     })
 
+    // Call custom error handler if provided
     if (onError) {
       try {
         onError(error, errorInfo)
@@ -73,6 +108,9 @@ export class ErrorBoundary extends Component<Props, State> {
     })
   }
 
+  /**
+   * Get context-specific error message and recovery instructions
+   */
   private getErrorDetails(): { message: string; instructions: string[] } {
     const { context } = this.props
 
@@ -147,12 +185,13 @@ export class ErrorBoundary extends Component<Props, State> {
       return children
     }
 
+    // Use custom fallback if provided
     if (fallback) {
       return fallback
     }
 
     const { message, instructions } = this.getErrorDetails()
-    const isCritical = critical ?? true
+    const isCritical = critical ?? true // Default to critical
 
     return (
       <Box
@@ -189,6 +228,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </Typography>
           </Box>
 
+          {/* Error Details (Development Only) */}
           {import.meta.env.DEV && error && (
             <Alert severity="error" sx={{ mb: 3, textAlign: 'left' }}>
               <AlertTitle>Error Details (Development)</AlertTitle>
@@ -198,6 +238,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </Alert>
           )}
 
+          {/* Recovery Instructions */}
           <Alert severity="info" sx={{ mb: 3, textAlign: 'left' }}>
             <AlertTitle>What you can try:</AlertTitle>
             <ul style={{ margin: '8px 0 0 0', paddingLeft: '20px' }}>
@@ -209,6 +250,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </ul>
           </Alert>
 
+          {/* Action Buttons */}
           <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
             <Button
               variant="contained"
@@ -228,6 +270,7 @@ export class ErrorBoundary extends Component<Props, State> {
             )}
           </Box>
 
+          {/* Stack Trace (Development Only) */}
           {import.meta.env.DEV && error?.stack && (
             <Box sx={{ mt: 3 }}>
               <Typography variant="caption" color="text.secondary" gutterBottom>
@@ -264,6 +307,15 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 }
 
+/**
+ * Higher-order component to wrap functional components with ErrorBoundary
+ *
+ * Usage:
+ * export default withErrorBoundary(MyComponent, {
+ *   context: 'MyComponent',
+ *   critical: false
+ * })
+ */
 export function withErrorBoundary<P extends object>(
   Component: React.ComponentType<P>,
   options?: Omit<Props, 'children'>

@@ -1,3 +1,9 @@
+/**
+ * React Query Hooks for Segments
+ *
+ * Segments are usually accessed via useChapter, but these hooks provide
+ * granular mutation operations for segment updates and deletions.
+ */
 
 import {
   useQuery,
@@ -10,43 +16,25 @@ import { segmentApi, type ApiSegment } from '../services/api'
 import { type Segment } from '../types'
 import { queryKeys } from '../services/queryKeys'
 
+// Transform API segment to app segment
+// Backend now returns camelCase via Pydantic Response Models
 const transformSegment = (apiSegment: ApiSegment): Segment => {
-  const mapStatus = (
-    apiStatus: string
-  ): 'pending' | 'processing' | 'completed' | 'failed' => {
-    switch (apiStatus) {
-      case 'processing':
-        return 'processing'
-      case 'failed':
-        return 'failed'
-      case 'completed':
-        return 'completed'
-      case 'pending':
-      default:
-        return 'pending'
-    }
-  }
-
   return {
-    id: apiSegment.id,
-    chapterId: apiSegment.chapterId,
-    text: apiSegment.text,
+    ...apiSegment,
     audioPath: apiSegment.audioPath || undefined,
-    orderIndex: apiSegment.orderIndex,
-    startTime: apiSegment.startTime,
-    endTime: apiSegment.endTime,
-    engine: apiSegment.engine,
-    modelName: apiSegment.modelName,
-    speakerName: apiSegment.speakerName,
-    language: apiSegment.language,
-    segmentType: apiSegment.segmentType,
-    pauseDuration: apiSegment.pauseDuration,
-    status: mapStatus(apiSegment.status),
     createdAt: new Date(apiSegment.createdAt),
     updatedAt: new Date(apiSegment.updatedAt),
   }
 }
 
+/**
+ * Fetch a single segment by ID (rarely needed)
+ *
+ * @example
+ * ```tsx
+ * const { data: segment } = useSegment(segmentId)
+ * ```
+ */
 export function useSegment(
   segmentId: string | null | undefined
 ): UseQueryResult<Segment, Error> {
@@ -61,6 +49,20 @@ export function useSegment(
   })
 }
 
+/**
+ * Update a segment
+ *
+ * @example
+ * ```tsx
+ * const updateSegment = useUpdateSegment()
+ *
+ * await updateSegment.mutateAsync({
+ *   segmentId: 'segment-123',
+ *   chapterId: 'chapter-123',
+ *   data: { text: 'Updated text' }
+ * })
+ * ```
+ */
 export function useUpdateSegment(): UseMutationResult<
   Segment,
   Error,
@@ -106,23 +108,82 @@ export function useUpdateSegment(): UseMutationResult<
       const updated = await segmentApi.update(segmentId, data)
       return transformSegment(updated)
     },
+    onMutate: async (variables) => {
+      const { segmentId, chapterId, data } = variables
+
+      // Cancel any outgoing refetches
+      await queryClient.cancelQueries({ queryKey: queryKeys.chapters.detail(chapterId) })
+      await queryClient.cancelQueries({ queryKey: queryKeys.segments.detail(segmentId) })
+
+      // Snapshot the previous values
+      const previousChapter = queryClient.getQueryData(queryKeys.chapters.detail(chapterId))
+      const previousSegment = queryClient.getQueryData(queryKeys.segments.detail(segmentId))
+
+      // Optimistically update segment in chapter query
+      queryClient.setQueryData<any>(queryKeys.chapters.detail(chapterId), (old: any) => {
+        if (!old) return old
+        return {
+          ...old,
+          segments: old.segments.map((s: any) =>
+            s.id === segmentId ? { ...s, ...data } : s
+          ),
+        }
+      })
+
+      // Optimistically update segment detail query
+      queryClient.setQueryData<any>(queryKeys.segments.detail(segmentId), (old: any) => {
+        if (!old) return old
+        return { ...old, ...data }
+      })
+
+      return { previousChapter, previousSegment, chapterId, segmentId }
+    },
+    onError: (_, __, context) => {
+      // Rollback on error
+      if (context?.previousChapter) {
+        queryClient.setQueryData(queryKeys.chapters.detail(context.chapterId), context.previousChapter)
+      }
+      if (context?.previousSegment) {
+        queryClient.setQueryData(queryKeys.segments.detail(context.segmentId), context.previousSegment)
+      }
+    },
     onSuccess: (updatedSegment, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.chapters.detail(variables.chapterId),
-      })
-
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.projects.lists(),
-      })
-
+      // Update with backend response (for any computed fields)
       queryClient.setQueryData(
         queryKeys.segments.detail(variables.segmentId),
         updatedSegment
+      )
+
+      // Also update segment in chapter query with backend response
+      queryClient.setQueryData<any>(
+        queryKeys.chapters.detail(variables.chapterId),
+        (old: any) => {
+          if (!old) return old
+          return {
+            ...old,
+            segments: old.segments.map((s: any) =>
+              s.id === variables.segmentId ? updatedSegment : s
+            ),
+          }
+        }
       )
     },
   })
 }
 
+/**
+ * Delete a segment
+ *
+ * @example
+ * ```tsx
+ * const deleteSegment = useDeleteSegment()
+ *
+ * await deleteSegment.mutateAsync({
+ *   segmentId: 'segment-123',
+ *   chapterId: 'chapter-123'
+ * })
+ * ```
+ */
 export function useDeleteSegment(): UseMutationResult<
   void,
   Error,
@@ -135,14 +196,17 @@ export function useDeleteSegment(): UseMutationResult<
       await segmentApi.delete(segmentId)
     },
     onMutate: async ({ segmentId, chapterId }) => {
+      // Cancel outgoing refetches for this chapter
       await queryClient.cancelQueries({
         queryKey: queryKeys.chapters.detail(chapterId),
       })
 
+      // Snapshot previous chapter
       const previousChapter = queryClient.getQueryData(
         queryKeys.chapters.detail(chapterId)
       )
 
+      // Optimistically remove segment from chapter
       queryClient.setQueryData<any>(
         queryKeys.chapters.detail(chapterId),
         (old: any) => {
@@ -157,6 +221,7 @@ export function useDeleteSegment(): UseMutationResult<
       return { previousChapter, chapterId }
     },
     onError: (_err, _variables, context) => {
+      // Rollback on error
       if (context?.previousChapter) {
         queryClient.setQueryData(
           queryKeys.chapters.detail(context.chapterId),
@@ -165,10 +230,12 @@ export function useDeleteSegment(): UseMutationResult<
       }
     },
     onSuccess: (_, variables) => {
+      // Remove segment from cache
       queryClient.removeQueries({
         queryKey: queryKeys.segments.detail(variables.segmentId),
       })
 
+      // Invalidate chapter to ensure consistency
       queryClient.invalidateQueries({
         queryKey: queryKeys.chapters.detail(variables.chapterId),
       })

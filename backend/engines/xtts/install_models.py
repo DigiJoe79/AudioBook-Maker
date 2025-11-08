@@ -36,7 +36,8 @@ class ModelDownloader:
             base_dir: Base directory for model storage. Defaults to script directory.
         """
         self.base_dir = base_dir or Path(__file__).parent.resolve()
-        self.model_path = self.base_dir / 'models' / 'xtts' / self.MODEL_VERSION
+        # New structure: engines/xtts/models/v2.0.2/
+        self.model_path = self.base_dir / 'models' / self.MODEL_VERSION
 
         self.files_to_download: Dict[str, str] = {
             'LICENSE.txt': f'{self.HUGGINGFACE_BASE_URL}/LICENSE.txt?download=true',

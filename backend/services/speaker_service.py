@@ -14,6 +14,7 @@ from loguru import logger
 
 from config import SPEAKER_SAMPLES_DIR
 
+# For audio metadata extraction (optional, graceful fallback if not available)
 try:
     import wave
     WAVE_SUPPORT = True
@@ -169,13 +170,13 @@ class SpeakerService:
         for row in cursor.fetchall():
             sample = {
                 "id": row[0],
-                "fileName": row[1],
-                "filePath": row[2],
-                "fileSize": row[3],
+                "fileName": row[1],  # camelCase for frontend
+                "filePath": row[2],  # camelCase for frontend
+                "fileSize": row[3],  # camelCase for frontend
                 "duration": row[4],
-                "sampleRate": row[5],
+                "sampleRate": row[5],  # camelCase for frontend
                 "transcript": row[6],
-                "createdAt": row[7]
+                "createdAt": row[7]  # camelCase for frontend
             }
             samples.append(sample)
 
@@ -203,6 +204,7 @@ class SpeakerService:
 
         cursor = self.db.cursor()
 
+        # Check if this is the first speaker
         cursor.execute("SELECT COUNT(*) FROM speakers")
         speaker_count = cursor.fetchone()[0]
         is_first_speaker = speaker_count == 0
@@ -217,18 +219,20 @@ class SpeakerService:
             data.get("gender"),
             json.dumps(data.get("languages", [])),
             json.dumps(data.get("tags", [])),
-            False,
-            is_first_speaker,
+            False,  # Speaker starts as inactive (no samples yet)
+            is_first_speaker,  # First speaker is automatically default
             now,
             now
         ))
 
         self.db.commit()
 
+        # Create speaker samples directory
         speaker_dir = self.samples_folder / speaker_id
         speaker_dir.mkdir(parents=True, exist_ok=True)
 
         if is_first_speaker:
+            # Also update settings.tts.defaultSpeaker when creating the first speaker
             from services.settings_service import SettingsService
             settings_service = SettingsService(self.db)
             tts_settings = settings_service.get_setting('tts')
@@ -254,6 +258,7 @@ class SpeakerService:
         Returns:
             Updated speaker
         """
+        # Build UPDATE statement dynamically
         fields = []
         values = []
 
@@ -268,14 +273,19 @@ class SpeakerService:
                 values.append(json.dumps(data[key]))
 
         if not fields:
+            # No fields to update
             return self.get_speaker(speaker_id)
 
+        # Add updated_at
         fields.append("updated_at = ?")
         values.append(datetime.utcnow().isoformat())
 
+        # Add speaker_id for WHERE clause
         values.append(speaker_id)
 
         cursor = self.db.cursor()
+        # Safe: Column names are hardcoded above from function parameters, never user-controlled
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
         cursor.execute(f"""
             UPDATE speakers
             SET {', '.join(fields)}
@@ -298,14 +308,17 @@ class SpeakerService:
         Returns:
             Status message
         """
+        # Get speaker for logging
         speaker = self.get_speaker(speaker_id)
         if not speaker:
             raise ValueError(f"Speaker not found: {speaker_id}")
 
+        # Delete from database (CASCADE will delete samples)
         cursor = self.db.cursor()
         cursor.execute("DELETE FROM speakers WHERE id = ?", (speaker_id,))
         self.db.commit()
 
+        # Delete files from filesystem
         speaker_dir = self.samples_folder / speaker_id
         if speaker_dir.exists():
             shutil.rmtree(speaker_dir)
@@ -339,6 +352,7 @@ class SpeakerService:
         file_name = original_filename if original_filename else file_path.name
         file_size = file_path.stat().st_size
 
+        # Extract audio metadata
         duration = None
         sample_rate = None
         if WAVE_SUPPORT and file_path.suffix.lower() == '.wav':
@@ -352,6 +366,7 @@ class SpeakerService:
                 logger.warning(f"Could not extract audio metadata from {file_name}: {e}")
                 logger.info(f"Continuing without metadata for sample {file_name}")
 
+        # Store in database
         cursor = self.db.cursor()
         cursor.execute("""
             INSERT INTO speaker_samples
@@ -371,9 +386,11 @@ class SpeakerService:
 
         self.db.commit()
 
+        # Auto-activate speaker when first sample is added
         cursor.execute("SELECT COUNT(*) FROM speaker_samples WHERE speaker_id = ?", (speaker_id,))
         sample_count = cursor.fetchone()[0]
         if sample_count == 1:
+            # This is the first sample, activate the speaker
             cursor.execute("""
                 UPDATE speakers
                 SET is_active = TRUE, updated_at = ?
@@ -386,13 +403,13 @@ class SpeakerService:
 
         return {
             "id": sample_id,
-            "fileName": file_name,
-            "filePath": str(file_path),
-            "fileSize": file_size,
+            "fileName": file_name,  # camelCase for frontend
+            "filePath": str(file_path),  # camelCase for frontend
+            "fileSize": file_size,  # camelCase for frontend
             "duration": duration,
-            "sampleRate": sample_rate,
+            "sampleRate": sample_rate,  # camelCase for frontend
             "transcript": transcript,
-            "createdAt": datetime.utcnow().isoformat()
+            "createdAt": datetime.utcnow().isoformat()  # camelCase for frontend
         }
 
     def delete_sample(self, speaker_id: str, sample_id: str) -> Dict[str, str]:
@@ -406,6 +423,7 @@ class SpeakerService:
         Returns:
             Status message
         """
+        # Get sample for file path
         cursor = self.db.cursor()
         cursor.execute("""
             SELECT file_path
@@ -419,15 +437,19 @@ class SpeakerService:
 
         file_path = Path(row[0])
 
+        # Delete from database
         cursor.execute("DELETE FROM speaker_samples WHERE id = ?", (sample_id,))
         self.db.commit()
 
+        # Delete file
         if file_path.exists():
             file_path.unlink()
 
+        # Auto-deactivate speaker if this was the last sample
         cursor.execute("SELECT COUNT(*) FROM speaker_samples WHERE speaker_id = ?", (speaker_id,))
         sample_count = cursor.fetchone()[0]
         if sample_count == 0:
+            # No more samples, deactivate the speaker
             cursor.execute("""
                 UPDATE speakers
                 SET is_active = FALSE, updated_at = ?
@@ -457,8 +479,10 @@ class SpeakerService:
         cursor = self.db.cursor()
         now = datetime.utcnow().isoformat()
 
+        # Unset all other defaults
         cursor.execute("UPDATE speakers SET is_default = FALSE")
 
+        # Set this speaker as default
         cursor.execute("""
             UPDATE speakers
             SET is_default = TRUE, updated_at = ?

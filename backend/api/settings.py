@@ -10,6 +10,7 @@ from loguru import logger
 
 from db.database import get_db
 from services.settings_service import SettingsService
+from services.event_broadcaster import broadcaster, EventType
 from models.response_models import (
     MessageResponse,
     AllSettingsResponse,
@@ -111,6 +112,12 @@ async def update_setting(
 
         logger.info(f"Updated setting: {key}")
 
+        # Emit SSE event
+        await broadcaster.broadcast_settings_update({
+            "key": key,
+            "value": result["value"]
+        })
+
         return result
 
     except Exception as e:
@@ -134,6 +141,12 @@ async def reset_to_defaults(db=Depends(get_db)):
 
         logger.info("Reset all settings to defaults")
 
+        # Emit SSE event
+        await broadcaster.broadcast_settings_update(
+            {"reset": True},
+            event_type=EventType.SETTINGS_RESET
+        )
+
         return result
 
     except Exception as e:
@@ -149,13 +162,13 @@ async def get_segment_limits(engine: str, db=Depends(get_db)):
     Combines user preference with engine constraints to determine the actual limit to use.
 
     Args:
-        engine: Engine name (e.g., 'xtts', 'dummy')
+        engine: Engine name 
 
     Returns:
         {
-            "user_preference": 500,
-            "engine_maximum": 1000,
-            "effective_limit": 500
+            "user_preference": 500,   # From settings
+            "engine_maximum": 1000,   # From engine schema
+            "effective_limit": 500    # Min of both
         }
     """
     try:
@@ -179,23 +192,27 @@ async def get_engine_parameter_schema(engine: str):
     Returns UI metadata for engine parameters (for Settings dialog).
 
     Args:
-        engine: Engine name (e.g., 'xtts', 'dummy')
+        engine: Engine name
 
     Returns:
         Parameter schema dictionary
     """
     try:
-        from services.tts_manager import TTSManager
+        from core.engine_manager import get_engine_manager
 
-        manager = TTSManager()
-        engine_class = manager._engine_classes.get(engine)
+        manager = get_engine_manager()
 
-        if not engine_class:
+        if engine not in manager._engine_metadata:
             raise HTTPException(status_code=404, detail=f"Engine '{engine}' not found")
 
-        schema = engine_class.get_parameter_schema_static()
+        # Get parameter schema from engine metadata (engine.yaml)
+        # Note: metadata['config'] contains the entire engine.yaml,
+        # which itself has a 'config' field with 'parameter_schema'
+        metadata = manager._engine_metadata[engine]
+        yaml_config = metadata.get('config', {})
+        schema = yaml_config.get('config', {}).get('parameter_schema', {})
 
-        logger.debug(f"Retrieved parameter schema for engine '{engine}'")
+        logger.debug(f"Retrieved parameter schema for engine '{engine}': {len(schema)} parameters")
 
         return {"parameters": schema}
 

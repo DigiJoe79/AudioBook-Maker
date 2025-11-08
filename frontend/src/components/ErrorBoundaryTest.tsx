@@ -1,9 +1,24 @@
+/**
+ * Error Boundary Test Component
+ *
+ * This component is used to test Error Boundary functionality.
+ * It can be imported and rendered in development to verify error handling.
+ *
+ * Usage:
+ * import { ErrorBoundaryTest } from './components/ErrorBoundaryTest'
+ *
+ * // In your component:
+ * {import.meta.env.DEV && <ErrorBoundaryTest />}
+ */
 
 import { useState } from 'react'
 import { Box, Button, Typography, Paper } from '@mui/material'
 import { BugReport } from '@mui/icons-material'
 import { ErrorBoundary } from './ErrorBoundary'
 
+/**
+ * Component that throws an error when button is clicked
+ */
 function BuggyComponent({ shouldError }: { shouldError: boolean }) {
   if (shouldError) {
     throw new Error('Test error from BuggyComponent!')
@@ -16,6 +31,9 @@ function BuggyComponent({ shouldError }: { shouldError: boolean }) {
   )
 }
 
+/**
+ * Test harness for Error Boundary
+ */
 export function ErrorBoundaryTest() {
   const [triggerError, setTriggerError] = useState(false)
 
@@ -59,3 +77,37 @@ export function ErrorBoundaryTest() {
   )
 }
 
+/**
+ * Scenarios to test Error Boundaries:
+ *
+ * 1. **Rendering Error (Component)**:
+ *    - Import ErrorBoundaryTest in any component
+ *    - Click "Trigger Test Error" button
+ *    - Should show ErrorBoundary fallback UI
+ *    - Click "Retry" to reset
+ *
+ * 2. **Lifecycle Error (useEffect)**:
+ *    - Add this to any component:
+ *      useEffect(() => { throw new Error('useEffect error!') }, [])
+ *    - Should be caught by nearest ErrorBoundary
+ *
+ * 3. **Event Handler Error**:
+ *    - Note: Event handler errors are NOT caught by ErrorBoundary
+ *    - These must be handled with try-catch
+ *
+ * 4. **Async Error**:
+ *    - Note: Async errors are NOT caught by ErrorBoundary
+ *    - Use error handling in promises/async functions
+ *
+ * 5. **Critical vs Non-Critical**:
+ *    - Critical (App-level): Shows full-screen error with reload option
+ *    - Non-Critical (Component-level): Shows inline error with retry
+ *
+ * 6. **Context-Specific Messages**:
+ *    - Each context shows different error message
+ *    - Different recovery instructions
+ *
+ * 7. **Development Features**:
+ *    - Stack trace visible in DEV mode
+ *    - Error details logged with logger
+ */

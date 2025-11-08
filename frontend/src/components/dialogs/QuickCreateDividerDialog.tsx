@@ -1,3 +1,7 @@
+/**
+ * Quick Create Divider Dialog
+ * Opens after dragging "Pause" from CommandToolbar
+ */
 
 import React, { useState } from 'react'
 import {
@@ -13,13 +17,14 @@ import {
 import { PauseCircle } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { useAppStore } from '../../store/appStore'
+import { logger } from '../../utils/logger'
 
 interface QuickCreateDividerDialogProps {
   open: boolean
   chapterId?: string
   orderIndex?: number
-  initialDuration?: number
-  mode?: 'create' | 'edit'
+  initialDuration?: number  // NEW: Initial pause duration for editing
+  mode?: 'create' | 'edit'  // NEW: Dialog mode
   onClose: () => void
   onConfirm: (pauseDuration: number) => Promise<void>
 }
@@ -42,12 +47,14 @@ export default function QuickCreateDividerDialog({
 }: QuickCreateDividerDialogProps) {
   const { t } = useTranslation()
 
+  // Get default divider duration from settings
   const settings = useAppStore((state) => state.settings)
   const defaultDuration = initialDuration ?? settings?.audio.defaultDividerDuration ?? 2000
 
   const [pauseDuration, setPauseDuration] = useState(defaultDuration)
   const [loading, setLoading] = useState(false)
 
+  // Update pauseDuration when dialog opens
   React.useEffect(() => {
     if (open) {
       setPauseDuration(defaultDuration)
@@ -57,13 +64,26 @@ export default function QuickCreateDividerDialog({
   const handleConfirm = async () => {
     setLoading(true)
     try {
+      logger.group(
+        '✂️ Divider',
+        `${mode === 'create' ? 'Creating' : 'Editing'} divider`,
+        {
+          'Mode': mode,
+          'Pause Duration': `${(pauseDuration / 1000).toFixed(1)}s`,
+          'Chapter ID': chapterId,
+          'Order Index': orderIndex
+        },
+        '#FF9800'  // Orange badge color
+      )
+
       await onConfirm(pauseDuration)
       if (mode === 'create') {
+        // Reset to settings default (not hardcoded)
         setPauseDuration(settings?.audio.defaultDividerDuration ?? 2000)
       }
       onClose()
     } catch (err) {
-      console.error('Failed to', mode, 'divider:', err)
+      logger.error('[QuickCreateDividerDialog] Failed to', mode, 'divider:', err)
       alert(t(`quickCreateDivider.failed${mode === 'create' ? 'Create' : 'Edit'}`))
     } finally {
       setLoading(false)
@@ -72,6 +92,7 @@ export default function QuickCreateDividerDialog({
 
   const handleClose = () => {
     if (mode === 'create') {
+      // Reset to settings default (not hardcoded)
       setPauseDuration(settings?.audio.defaultDividerDuration ?? 2000)
     }
     onClose()

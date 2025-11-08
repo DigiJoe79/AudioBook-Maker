@@ -1,3 +1,10 @@
+/**
+ * useConfirm Hook - Promise-based confirmation dialog
+ *
+ * Provides a confirm() function that returns a Promise,
+ * making it a drop-in replacement for Tauri's ask() dialog
+ * but with Material-UI theming (respects dark mode).
+ */
 
 import { useState, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'

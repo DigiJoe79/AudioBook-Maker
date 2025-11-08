@@ -226,11 +226,18 @@ backend/settings.local.py
 *.db.backup
 *.db.bak
 
-# Planning and ToDo documents
+# Planning, ToDo documents, and archived Versions 
 .ToDo/
 .claude/
+target/*
+target/*/
 
 .gitignore
 remove_comments.py
 CLAUDE.md
-README.md
+
+backend/engines/*/models/*
+backend/engines/chatterbox/src
+backend/engines/chatterbox/src/*
+audiobook-maker-coding-standards
+audiobook-maker-coding-standards/*

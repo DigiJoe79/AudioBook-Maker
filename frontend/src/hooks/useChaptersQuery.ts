@@ -1,3 +1,8 @@
+/**
+ * React Query Hooks for Chapters
+ *
+ * These hooks provide granular chapter management with optimistic updates.
+ */
 
 import {
   useQuery,
@@ -9,65 +14,51 @@ import {
 import { chapterApi, type ApiChapter } from '../services/api'
 import { type Chapter, type Segment } from '../types'
 import { queryKeys } from '../services/queryKeys'
+import { useSSEConnection } from '../contexts/SSEContext'
 
+// Transform API chapter to app chapter
 const transformChapter = (apiChapter: ApiChapter): Chapter => {
-  const mapStatus = (
-    apiStatus: string
-  ): 'pending' | 'processing' | 'completed' | 'failed' => {
-    switch (apiStatus) {
-      case 'processing':
-        return 'processing'
-      case 'failed':
-        return 'failed'
-      case 'completed':
-        return 'completed'
-      case 'pending':
-      default:
-        return 'pending'
-    }
-  }
-
   return {
-    id: apiChapter.id,
-    projectId: apiChapter.projectId,
-    title: apiChapter.title,
-    orderIndex: apiChapter.orderIndex,
-    defaultEngine: apiChapter.defaultEngine,
-    defaultModelName: apiChapter.defaultModelName,
+    ...apiChapter,
     createdAt: new Date(apiChapter.createdAt),
     updatedAt: new Date(apiChapter.updatedAt),
     segments: (apiChapter.segments || []).map((segment: any) => ({
-      id: segment.id,
-      chapterId: segment.chapterId,
-      text: segment.text,
+      ...segment,
       audioPath: segment.audioPath || undefined,
-      orderIndex: segment.orderIndex,
-      startTime: segment.startTime,
-      endTime: segment.endTime,
-      engine: segment.engine,
-      modelName: segment.modelName,
-      speakerName: segment.speakerName,
-      language: segment.language,
-      segmentType: segment.segmentType,
-      pauseDuration: segment.pauseDuration,
-      status: mapStatus(segment.status),
       createdAt: new Date(segment.createdAt),
       updatedAt: new Date(segment.updatedAt),
     })),
   }
 }
 
+/**
+ * Fetch a single chapter by ID (SSE-driven updates, no polling)
+ *
+ * This hook relies on SSE events from the backend to trigger cache invalidation
+ * automatically. When SSE is unavailable, it falls back to infrequent polling.
+ *
+ * SSE Events that invalidate chapter cache:
+ * - segment.completed → invalidates chapters.detail(chapterId)
+ * - segment.failed → invalidates chapters.detail(chapterId)
+ * - segment.updated → invalidates chapters.detail(chapterId)
+ * - job.completed → invalidates chapters.detail(chapterId)
+ * - job.failed → invalidates chapters.detail(chapterId)
+ * - chapter.updated → invalidates chapters.detail(chapterId)
+ *
+ * @param chapterId - The chapter ID to fetch
+ *
+ * @example
+ * ```tsx
+ * const { data: chapter } = useChapter(chapterId)
+ * // Updates automatically via SSE events (no polling needed)
+ * ```
+ */
 export function useChapter(
-  chapterId: string | null | undefined,
-  options?: {
-    forcePolling?: boolean
-    pollingInterval?: number
-    pollingTimeout?: number
-  }
+  chapterId: string | null | undefined
 ): UseQueryResult<Chapter, Error> {
-  const { forcePolling = false, pollingInterval = 1000, pollingTimeout = 60000 } = options || {}
-
-  const pollingStartTimeRef = { current: null as number | null }
+  // Check if SSE is active (uses shared context connection)
+  const { connection: sseConnection } = useSSEConnection()
+  const isSSEActive = sseConnection.connectionType === 'sse'
 
   return useQuery({
     queryKey: queryKeys.chapters.detail(chapterId || ''),
@@ -77,37 +68,30 @@ export function useChapter(
       return transformChapter(data)
     },
     enabled: !!chapterId,
-    refetchInterval: (query) => {
-      const chapter = query.state.data
-
-      if (forcePolling) {
-        if (!pollingStartTimeRef.current) {
-          pollingStartTimeRef.current = Date.now()
-        }
-
-        const elapsed = Date.now() - pollingStartTimeRef.current
-        if (elapsed > pollingTimeout) {
-          console.log('[useChapter] Force polling timeout reached, stopping')
-          pollingStartTimeRef.current = null
-          return false
-        }
-
-        return pollingInterval
-      }
-
-      pollingStartTimeRef.current = null
-
-      if (!chapter?.segments) return false
-      const hasProcessingSegments = chapter.segments.some((s) => s.status === 'processing')
-      return hasProcessingSegments ? pollingInterval : false
-    },
+    // SSE-aware polling: Only poll as fallback when SSE is unavailable
+    // When SSE is active, cache invalidation is event-driven (no polling)
+    refetchInterval: isSSEActive ? false : 10000, // 10s fallback polling
   })
 }
 
+/**
+ * Create a new chapter
+ *
+ * @example
+ * ```tsx
+ * const createChapter = useCreateChapter()
+ *
+ * await createChapter.mutateAsync({
+ *   projectId: 'project-123',
+ *   title: 'Chapter 1',
+ *   orderIndex: 0
+ * })
+ * ```
+ */
 export function useCreateChapter(): UseMutationResult<
   Chapter,
   Error,
-  { projectId: string; title: string; orderIndex: number; defaultEngine: string; defaultModelName: string }
+  { projectId: string; title: string; orderIndex: number; defaultTtsEngine: string; defaultTtsModelName: string }
 > {
   const queryClient = useQueryClient()
 
@@ -116,45 +100,15 @@ export function useCreateChapter(): UseMutationResult<
       projectId: string
       title: string
       orderIndex: number
-      defaultEngine: string
-      defaultModelName: string
+      defaultTtsEngine: string
+      defaultTtsModelName: string
     }) => {
       const created = await chapterApi.create(data)
       return transformChapter(created)
     },
     onSuccess: (newChapter, variables) => {
-      queryClient.setQueryData(
-        queryKeys.chapters.detail(newChapter.id),
-        newChapter
-      )
-
-      queryClient.setQueryData(
-        queryKeys.projects.lists(),
-        (oldProjects: any) => {
-          if (!oldProjects) return oldProjects
-          return oldProjects.map((project: any) => {
-            if (project.id === variables.projectId) {
-              return {
-                ...project,
-                chapters: [...(project.chapters || []), newChapter]
-              }
-            }
-            return project
-          })
-        }
-      )
-
-      queryClient.setQueryData(
-        queryKeys.projects.detail(variables.projectId),
-        (oldProject: any) => {
-          if (!oldProject) return oldProject
-          return {
-            ...oldProject,
-            chapters: [...(oldProject.chapters || []), newChapter]
-          }
-        }
-      )
-
+      // Invalidate to refetch project with the new chapter
+      // Backend is source of truth - may have set additional fields (timestamps, defaults, etc.)
       queryClient.invalidateQueries({
         queryKey: queryKeys.projects.detail(variables.projectId),
       })
@@ -165,6 +119,19 @@ export function useCreateChapter(): UseMutationResult<
   })
 }
 
+/**
+ * Update an existing chapter
+ *
+ * @example
+ * ```tsx
+ * const updateChapter = useUpdateChapter()
+ *
+ * await updateChapter.mutateAsync({
+ *   id: 'chapter-123',
+ *   data: { title: 'Updated Title' }
+ * })
+ * ```
+ */
 export function useUpdateChapter(): UseMutationResult<
   Chapter,
   Error,
@@ -183,30 +150,24 @@ export function useUpdateChapter(): UseMutationResult<
       const updated = await chapterApi.update(id, data)
       return transformChapter(updated)
     },
-    onMutate: async ({ id, data }) => {
+    onMutate: async ({ id }) => {
+      // Cancel outgoing refetches to prevent race conditions
       await queryClient.cancelQueries({
         queryKey: queryKeys.chapters.detail(id),
       })
 
+      // Snapshot previous value for rollback on error
       const previousChapter = queryClient.getQueryData<Chapter>(
         queryKeys.chapters.detail(id)
       )
 
-      queryClient.setQueryData<Chapter>(
-        queryKeys.chapters.detail(id),
-        (old) => {
-          if (!old) return old
-          return {
-            ...old,
-            ...data,
-            updatedAt: new Date(),
-          }
-        }
-      )
+      // NOTE: No optimistic update here since we use backend response in onSuccess
+      // This prevents controlled input fields from being overwritten while user types
 
       return { previousChapter }
     },
     onError: (_err, variables, context) => {
+      // Rollback on error
       if (context?.previousChapter) {
         queryClient.setQueryData(
           queryKeys.chapters.detail(variables.id),
@@ -214,17 +175,60 @@ export function useUpdateChapter(): UseMutationResult<
         )
       }
     },
-    onSuccess: (updatedChapter) => {
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.projects.detail(updatedChapter.projectId),
-      })
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.projects.lists(),
-      })
+    onSuccess: (updatedChapter, variables) => {
+      // Write backend response directly to chapter cache (no refetch needed)
+      queryClient.setQueryData(
+        queryKeys.chapters.detail(variables.id),
+        updatedChapter
+      )
+
+      // Update projects caches with the updated chapter
+      // This ensures nested chapter data stays in sync without full refetch
+      queryClient.setQueryData(
+        queryKeys.projects.detail(updatedChapter.projectId),
+        (oldProject: any) => {
+          if (!oldProject) return oldProject
+          return {
+            ...oldProject,
+            chapters: oldProject.chapters.map((ch: any) =>
+              ch.id === variables.id ? updatedChapter : ch
+            ),
+          }
+        }
+      )
+
+      queryClient.setQueryData(
+        queryKeys.projects.lists(),
+        (oldProjects: any) => {
+          if (!oldProjects) return oldProjects
+          return oldProjects.map((project: any) => {
+            if (project.id !== updatedChapter.projectId) return project
+            return {
+              ...project,
+              chapters: project.chapters.map((ch: any) =>
+                ch.id === variables.id ? updatedChapter : ch
+              ),
+            }
+          })
+        }
+      )
     },
   })
 }
 
+/**
+ * Delete a chapter (cascades to segments)
+ *
+ * @example
+ * ```tsx
+ * const deleteChapter = useDeleteChapter()
+ *
+ * await deleteChapter.mutateAsync({
+ *   chapterId: 'chapter-123',
+ *   projectId: 'project-123'
+ * })
+ * ```
+ */
 export function useDeleteChapter(): UseMutationResult<
   void,
   Error,
@@ -237,7 +241,13 @@ export function useDeleteChapter(): UseMutationResult<
       await chapterApi.delete(chapterId)
     },
     onSuccess: (_, variables) => {
+      // DON'T remove the query here! If we do, the invalidateQueries below will
+      // trigger a re-render where AppLayout still has selectedChapterId set,
+      // causing React Query to mount a new observer and fetch (404).
+      // Instead, just invalidate projects and let the stale chapter query sit in cache.
+      // It will be garbage collected eventually.
 
+      // Invalidate parent project
       queryClient.invalidateQueries({
         queryKey: queryKeys.projects.detail(variables.projectId),
       })
@@ -248,14 +258,32 @@ export function useDeleteChapter(): UseMutationResult<
   })
 }
 
+/**
+ * Segment text into natural segments
+ *
+ * @example
+ * ```tsx
+ * const segmentText = useSegmentText()
+ *
+ * await segmentText.mutateAsync({
+ *   chapterId: 'chapter-123',
+ *   text: 'Long text to segment...',
+ *   options: {
+ *     method: 'sentences',
+ *     language: 'de',
+ *     auto_create: true
+ *   }
+ * })
+ * ```
+ */
 export function useSegmentText(): UseMutationResult<
   {
     success: boolean
     message: string
-    segments: Segment[]
-    preview?: Array<{ text: string; orderIndex: number }>
+    segments: Segment[] // Full segment objects when autoCreate=true
+    preview?: Array<{ text: string; orderIndex: number }> // Preview when autoCreate=false
     segmentCount: number
-    engine: string
+    ttsEngine: string
     constraints: Record<string, number>
   },
   Error,
@@ -265,9 +293,9 @@ export function useSegmentText(): UseMutationResult<
     options?: {
       method?: 'sentences' | 'paragraphs' | 'smart' | 'length'
       language?: string
-      engine?: string
-      modelName?: string
-      speakerName?: string
+      ttsEngine?: string
+      ttsModelName?: string
+      ttsSpeakerName?: string
       minLength?: number
       maxLength?: number
       autoCreate?: boolean
@@ -300,14 +328,38 @@ export function useSegmentText(): UseMutationResult<
         ...options,
       })
     },
-    onSuccess: (_, variables) => {
-      if (variables.options?.autoCreate) {
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.chapters.detail(variables.chapterId),
-        })
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.projects.lists(),
-        })
+    onSuccess: (response, variables) => {
+      // If autoCreate was true, write segments directly to cache (no refetch needed)
+      if (variables.options?.autoCreate && response.segments) {
+        // Update chapter cache with new segments
+        queryClient.setQueryData(
+          queryKeys.chapters.detail(variables.chapterId),
+          (oldChapter: any) => {
+            if (!oldChapter) return oldChapter
+            return {
+              ...oldChapter,
+              segments: response.segments,
+            }
+          }
+        )
+
+        // Update projects list cache with new segments
+        queryClient.setQueryData(
+          queryKeys.projects.lists(),
+          (oldProjects: any) => {
+            if (!oldProjects) return oldProjects
+            return oldProjects.map((project: any) => ({
+              ...project,
+              chapters: project.chapters.map((chapter: any) => {
+                if (chapter.id !== variables.chapterId) return chapter
+                return {
+                  ...chapter,
+                  segments: response.segments,
+                }
+              }),
+            }))
+          }
+        )
       }
     },
   })

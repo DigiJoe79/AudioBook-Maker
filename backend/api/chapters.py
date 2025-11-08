@@ -10,14 +10,14 @@ from loguru import logger
 from db.database import get_db
 from db.repositories import ChapterRepository, SegmentRepository
 from services.text_segmenter import get_segmenter
-from services.tts_manager import get_tts_manager
+from core.engine_manager import get_engine_manager
 from models.response_models import (
     ChapterResponse,
     ChapterWithSegmentsResponse,
     TextSegmentationResponse,
     DeleteResponse,
     ReorderResponse,
-    to_camel
+    to_camel  # Import alias generator
 )
 from config import OUTPUT_DIR
 
@@ -26,7 +26,6 @@ router = APIRouter(tags=["chapters"])
 
 class ChapterCreate(BaseModel):
     model_config = ConfigDict(
-        protected_namespaces=(),
         alias_generator=to_camel,
         populate_by_name=True
     )
@@ -34,8 +33,8 @@ class ChapterCreate(BaseModel):
     project_id: str
     title: str
     order_index: int
-    default_engine: str
-    default_model_name: str
+    default_tts_engine: str
+    default_tts_model_name: str
 
 
 class ChapterUpdate(BaseModel):
@@ -70,7 +69,6 @@ class MoveChapterRequest(BaseModel):
 
 class SegmentTextRequest(BaseModel):
     model_config = ConfigDict(
-        protected_namespaces=(),
         alias_generator=to_camel,
         populate_by_name=True
     )
@@ -78,12 +76,12 @@ class SegmentTextRequest(BaseModel):
     text: str
     method: Literal["sentences", "paragraphs", "smart", "length"] = "smart"
     language: str
-    engine: str
-    model_name: str
-    speaker_name: Optional[str] = None
-    min_length: Optional[int] = None
-    max_length: Optional[int] = None
-    auto_create: bool = False
+    tts_engine: str  # Engine selection (required - determines max/min length constraints)
+    tts_model_name: str  # Model name for TTS generation (required)
+    tts_speaker_name: Optional[str] = None  # Speaker for TTS generation (optional)
+    min_length: Optional[int] = None  # Optional override (auto-detected from engine if not provided)
+    max_length: Optional[int] = None  # Optional override (auto-detected from engine if not provided)
+    auto_create: bool = False  # Automatically create segments in DB
 
 
 @router.post("/chapters", response_model=ChapterResponse)
@@ -98,10 +96,11 @@ async def create_chapter(
         chapter.project_id,
         chapter.title,
         chapter.order_index,
-        chapter.default_engine,
-        chapter.default_model_name
+        chapter.default_tts_engine,
+        chapter.default_tts_model_name
     )
 
+    # Add empty segments list
     new_chapter['segments'] = []
     return new_chapter
 
@@ -166,29 +165,35 @@ async def segment_chapter_text(
     chapter_repo = ChapterRepository(conn)
     segment_repo = SegmentRepository(conn)
 
+    # Verify chapter exists
     chapter = chapter_repo.get_by_id(chapter_id)
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
 
-    manager = get_tts_manager()
+    # Get engine constraints (lightweight - don't load model)
+    manager = get_engine_manager()
 
     try:
-        if request.engine not in manager.list_available_engines():
+        # Check if engine type is valid
+        if request.tts_engine not in manager.list_available_engines():
             raise HTTPException(
                 status_code=400,
-                detail=f"Unknown engine type: {request.engine}. Available engines: {manager.list_available_engines()}"
+                detail=f"Unknown engine type: {request.tts_engine}. Available engines: {manager.list_available_engines()}"
             )
 
-        engine_class = manager._engine_classes[request.engine]
-        temp_engine = engine_class()
+        # Get engine constraints from metadata
+        metadata = manager._engine_metadata[request.tts_engine]
+        constraints = metadata.get('constraints', {})
 
-        engine_max = temp_engine.get_max_text_length(request.language)
-        engine_min = temp_engine.get_min_text_length()
+        engine_max = constraints.get('max_text_length', 500)
+        engine_min = constraints.get('min_text_length', 10)
 
+        # Get user preference from settings
         from services.settings_service import SettingsService
         settings_service = SettingsService(conn)
         user_pref = settings_service.get_setting('text.preferredMaxSegmentLength') or 250
 
+        # Use the minimum of user preference and engine max (unless explicitly overridden)
         max_length = request.max_length if request.max_length is not None else min(user_pref, engine_max)
         min_length = request.min_length if request.min_length is not None else engine_min
 
@@ -202,6 +207,7 @@ async def segment_chapter_text(
             detail=f"Failed to get engine constraints: {str(e)}"
         )
 
+    # Get text segmenter for the specified language
     try:
         segmenter = get_segmenter(request.language)
     except Exception as e:
@@ -210,6 +216,7 @@ async def segment_chapter_text(
             detail=f"Failed to load text segmenter: {str(e)}"
         )
 
+    # Perform segmentation based on method
     if request.method == "sentences":
         segments = segmenter.segment_by_sentences(
             request.text,
@@ -232,10 +239,11 @@ async def segment_chapter_text(
     else:
         raise HTTPException(status_code=400, detail=f"Invalid method: {request.method}")
 
+    # If auto_create is enabled, create segments in database
     if request.auto_create:
         logger.info(f"[Text Segmentation] Creating {len(segments)} segments")
-        logger.info(f"[Text Segmentation] Speaker: '{request.speaker_name}' (type: {type(request.speaker_name)})")
-        logger.info(f"[Text Segmentation] Engine: {request.engine}, Model: {request.model_name}")
+        logger.info(f"[Text Segmentation] Speaker: '{request.tts_speaker_name}' (type: {type(request.tts_speaker_name)})")
+        logger.info(f"[Text Segmentation] Engine: {request.tts_engine}, Model: {request.tts_model_name}")
 
         created_segments = []
         for seg in segments:
@@ -243,34 +251,35 @@ async def segment_chapter_text(
                 chapter_id=chapter_id,
                 text=seg["text"],
                 order_index=seg["order_index"],
-                engine=request.engine,
-                model_name=request.model_name,
-                speaker_name=request.speaker_name,
+                tts_engine=request.tts_engine,
+                tts_model_name=request.tts_model_name,  # Required - no fallback
+                tts_speaker_name=request.tts_speaker_name,
                 language=request.language,
                 status="pending"
             )
-            if seg["order_index"] == 0:
-                logger.info(f"[Text Segmentation] First segment speaker_name: '{created_seg.get('speaker_name')}'")
+            if seg["order_index"] == 0:  # Log first segment
+                logger.info(f"[Text Segmentation] First segment tts_speaker_name: '{created_seg.get('tts_speaker_name')}'")
             created_segments.append(created_seg)
 
         return {
             "success": True,
-            "message": f"Created {len(created_segments)} segments using {request.engine} constraints (min={min_length}, max={max_length})",
+            "message": f"Created {len(created_segments)} segments using {request.tts_engine} constraints (min={min_length}, max={max_length})",
             "segments": created_segments,
             "segment_count": len(created_segments),
-            "engine": request.engine,
+            "engine": request.tts_engine,
             "constraints": {
                 "min_length": min_length,
                 "max_length": max_length
             }
         }
 
+    # Otherwise return preview
     return {
         "success": True,
-        "message": f"Generated {len(segments)} segments (preview mode) using {request.engine} constraints",
+        "message": f"Generated {len(segments)} segments (preview mode) using {request.tts_engine} constraints",
         "segments": segments,
         "segment_count": len(segments),
-        "engine": request.engine,
+        "engine": request.tts_engine,
         "constraints": {
             "min_length": min_length,
             "max_length": max_length
@@ -287,23 +296,26 @@ async def delete_chapter(chapter_id: str, conn: sqlite3.Connection = Depends(get
     chapter_repo = ChapterRepository(conn)
     segment_repo = SegmentRepository(conn)
 
+    # Get all segments to delete their audio files
     segments = segment_repo.get_by_chapter(chapter_id)
 
+    # Delete audio files
     deleted_files = 0
     for segment in segments:
         if segment.get('audio_path'):
             try:
-                audio_url = segment['audio_path']
-                if '/audio/' in audio_url:
-                    filename = audio_url.split('/audio/')[-1]
-                    audio_file = Path(OUTPUT_DIR) / filename
+                # audio_path is just the filename (e.g., segment_123.wav)
+                filename = segment['audio_path']
+                audio_file = Path(OUTPUT_DIR) / filename
 
-                    if audio_file.exists():
-                        os.remove(audio_file)
-                        deleted_files += 1
+                if audio_file.exists():
+                    os.remove(audio_file)
+                    deleted_files += 1
             except Exception as e:
+                # Log but don't fail the deletion
                 logger.warning(f"Could not delete audio file for segment {segment['id']}: {e}")
 
+    # Delete chapter (CASCADE will delete segments)
     if not chapter_repo.delete(chapter_id):
         raise HTTPException(status_code=404, detail="Chapter not found")
 
@@ -329,6 +341,7 @@ async def reorder_chapters(
     """
     chapter_repo = ChapterRepository(conn)
 
+    # Validate chapters belong to project
     for chapter_id in data.chapter_ids:
         chapter = chapter_repo.get_by_id(chapter_id)
         if not chapter:
@@ -339,6 +352,7 @@ async def reorder_chapters(
                 detail=f"Chapter {chapter_id} does not belong to project {data.project_id}"
             )
 
+    # Reorder
     chapter_repo.reorder_batch(data.chapter_ids, data.project_id)
 
     return {
@@ -368,19 +382,23 @@ async def move_chapter(
     chapter_repo = ChapterRepository(conn)
     project_repo = ProjectRepository(conn)
 
+    # Validate chapter exists
     chapter = chapter_repo.get_by_id(chapter_id)
     if not chapter:
         raise HTTPException(status_code=404, detail="Chapter not found")
 
+    # Validate new project exists
     if not project_repo.get_by_id(data.new_project_id):
         raise HTTPException(status_code=404, detail="Target project not found")
 
+    # Move chapter
     updated_chapter = chapter_repo.move_to_project(
         chapter_id,
         data.new_project_id,
         data.new_order_index
     )
 
+    # Load segments for response
     segment_repo = SegmentRepository(conn)
     segments = segment_repo.get_by_chapter(chapter_id)
     updated_chapter['segments'] = segments

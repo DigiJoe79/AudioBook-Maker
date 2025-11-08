@@ -1,7 +1,16 @@
+/**
+ * API Service for Audiobook Maker Backend
+ */
 
 import type { TTSEngine, Project, Chapter, Segment } from '../types'
 import { useAppStore } from '../store/appStore'
 
+/**
+ * Get the current API base URL from the Zustand store
+ *
+ * This allows the backend URL to be dynamic based on the user's
+ * selected profile instead of being hardcoded.
+ */
 function getApiBaseUrl(): string {
   const url = useAppStore.getState().connection.url
   if (!url) {
@@ -10,6 +19,8 @@ function getApiBaseUrl(): string {
   return `${url}/api`
 }
 
+// API-specific types (for responses that differ from main types)
+// These are the raw API response types before transformation
 export interface ApiProject {
   id: string;
   title: string;
@@ -25,8 +36,8 @@ export interface ApiChapter {
   projectId: string;
   title: string;
   orderIndex: number;
-  defaultEngine: string;
-  defaultModelName: string;
+  defaultTtsEngine: string;
+  defaultTtsModelName: string;
   createdAt: string;
   updatedAt: string;
   segments: ApiSegment[];
@@ -40,9 +51,9 @@ export interface ApiSegment {
   orderIndex: number;
   startTime: number;
   endTime: number;
-  engine: string;
-  modelName: string;
-  speakerName: string | null;
+  ttsEngine: string;
+  ttsModelName: string;
+  ttsSpeakerName: string | null;
   language: string;
   segmentType: 'standard' | 'divider';
   pauseDuration: number;
@@ -51,6 +62,7 @@ export interface ApiSegment {
   updatedAt: string;
 }
 
+// Export main types (already imported above)
 export type { Project, Chapter, Segment }
 
 export interface TTSOptions {
@@ -62,6 +74,7 @@ export interface TTSOptions {
   speed?: number;
 }
 
+// Helper function for API calls
 async function apiCall<T>(
   endpoint: string,
   options: RequestInit = {}
@@ -76,7 +89,9 @@ async function apiCall<T>(
     });
 
     if (!response.ok) {
+      // Check if this is a connection error
       if (response.status === 0 || response.status >= 500) {
+        // Notify connection monitor about potential backend offline
         window.dispatchEvent(new CustomEvent('backend-connection-error'))
       }
 
@@ -86,11 +101,14 @@ async function apiCall<T>(
 
     return response.json();
   } catch (error) {
+    // Network error (fetch failed) - Backend likely offline or unreachable
+    // This catches cases where fetch() throws (CORS, network failure, timeout, etc.)
     window.dispatchEvent(new CustomEvent('backend-connection-error'))
     throw error
   }
 }
 
+// Project API
 export const projectApi = {
   getAll: () => apiCall<ApiProject[]>('/projects'),
 
@@ -113,19 +131,34 @@ export const projectApi = {
       method: 'DELETE',
     }),
 
+  // Reorder projects
   reorder: (projectIds: string[]) =>
     apiCall<{ success: boolean; message: string }>('/projects/reorder', {
       method: 'POST',
       body: JSON.stringify({ projectIds }),
     }),
 
+  /**
+   * Import project from Markdown file
+   *
+   * Markdown structure:
+   * - # Heading 1 → Project title
+   * - ## Heading 2 → Ignored (Acts, etc.)
+   * - ### Heading 3 → Chapter (numbering removed)
+   * - *** → Divider segment
+   * - Text → Automatically segmented with spaCy
+   *
+   * @param file Markdown file (.md or .markdown, max 10 MB)
+   * @param ttsSettings TTS settings for all segments
+   * @returns Created project with chapters and segments
+   */
   importFromMarkdown: async (
     file: File,
     ttsSettings: {
-      engine: string;
-      modelName: string;
+      ttsEngine: string;
+      ttsModelName: string;
       language: string;
-      speakerName?: string;
+      ttsSpeakerName?: string;
     }
   ): Promise<{
     success: boolean;
@@ -136,19 +169,21 @@ export const projectApi = {
   }> => {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('engine', ttsSettings.engine);
-    formData.append('model_name', ttsSettings.modelName);
+    formData.append('tts_engine', ttsSettings.ttsEngine);
+    // Use snake_case for FormData fields (FastAPI Form parameters don't use Pydantic conversion)
+    formData.append('tts_model_name', ttsSettings.ttsModelName);
     formData.append('language', ttsSettings.language);
-    if (ttsSettings.speakerName) {
-      formData.append('speaker_name', ttsSettings.speakerName);
+    if (ttsSettings.ttsSpeakerName) {
+      formData.append('tts_speaker_name', ttsSettings.ttsSpeakerName);
     }
 
     const response = await fetch(`${getApiBaseUrl()}/projects/import-markdown`, {
       method: 'POST',
-      body: formData,
+      body: formData, // multipart/form-data (no Content-Type header!)
     });
 
     if (!response.ok) {
+      // Check if this is a connection error
       if (response.status === 0 || response.status >= 500) {
         window.dispatchEvent(new CustomEvent('backend-connection-error'));
       }
@@ -161,6 +196,7 @@ export const projectApi = {
   },
 };
 
+// Chapter API
 export const chapterApi = {
   getById: (id: string) => apiCall<ApiChapter>(`/chapters/${id}`),
 
@@ -168,8 +204,8 @@ export const chapterApi = {
     projectId: string
     title: string
     orderIndex: number
-    defaultEngine: string
-    defaultModelName: string
+    defaultTtsEngine: string
+    defaultTtsModelName: string
   }) =>
     apiCall<ApiChapter>('/chapters', {
       method: 'POST',
@@ -187,27 +223,30 @@ export const chapterApi = {
       method: 'DELETE',
     }),
 
+  // Reorder chapters within project
   reorder: (projectId: string, chapterIds: string[]) =>
     apiCall<{ success: boolean; message: string }>('/chapters/reorder', {
       method: 'POST',
       body: JSON.stringify({ projectId, chapterIds }),
     }),
 
+  // Move chapter to different project
   move: (chapterId: string, newProjectId: string, newOrderIndex: number) =>
     apiCall<ApiChapter>(`/chapters/${chapterId}/move`, {
       method: 'PUT',
       body: JSON.stringify({ newProjectId, newOrderIndex }),
     }),
 
+  // Segment text into natural segments
   segmentText: (
     chapterId: string,
     data: {
       text: string;
       method?: 'sentences' | 'paragraphs' | 'smart' | 'length';
       language?: string;
-      engine?: string;
-      modelName?: string;
-      speakerName?: string;
+      ttsEngine?: string;
+      ttsModelName?: string;
+      ttsSpeakerName?: string;
       minLength?: number;
       maxLength?: number;
       autoCreate?: boolean;
@@ -216,10 +255,10 @@ export const chapterApi = {
     apiCall<{
       success: boolean;
       message: string;
-      segments: Segment[];
-      preview?: Array<{ text: string; orderIndex: number }>;
+      segments: Segment[]; // Full segment objects when autoCreate=true
+      preview?: Array<{ text: string; orderIndex: number }>; // Preview when autoCreate=false
       segmentCount: number;
-      engine: string;
+      ttsEngine: string;
       constraints: Record<string, number>;
     }>(`/chapters/${chapterId}/segment`, {
       method: 'POST',
@@ -227,6 +266,7 @@ export const chapterApi = {
     }),
 };
 
+// Segment API
 export const segmentApi = {
   getById: (id: string) => apiCall<ApiSegment>(`/segments/${id}`),
 
@@ -234,9 +274,9 @@ export const segmentApi = {
     chapterId: string;
     text: string;
     orderIndex: number;
-    engine: string;
-    modelName: string;
-    speakerName?: string;
+    ttsEngine: string;
+    ttsModelName: string;
+    ttsSpeakerName?: string;
     language: string;
     segmentType?: 'standard' | 'divider';
     pauseDuration?: number;
@@ -259,10 +299,10 @@ export const segmentApi = {
       endTime?: number;
       status?: string;
       pauseDuration?: number;
-      engine?: string;
-      modelName?: string;
+      ttsEngine?: string;
+      ttsModelName?: string;
       language?: string;
-      speakerName?: string | null;
+      ttsSpeakerName?: string | null;
     }
   ) =>
     apiCall<ApiSegment>(`/segments/${id}`, {
@@ -275,12 +315,14 @@ export const segmentApi = {
       method: 'DELETE',
     }),
 
+  // Reorder segments within chapter
   reorder: (chapterId: string, segmentIds: string[]) =>
     apiCall<{ success: boolean; message: string }>('/segments/reorder', {
       method: 'POST',
       body: JSON.stringify({ chapterId, segmentIds }),
     }),
 
+  // Move segment to different chapter
   move: (segmentId: string, newChapterId: string, newOrderIndex: number) =>
     apiCall<ApiSegment>(`/segments/${segmentId}/move`, {
       method: 'PUT',
@@ -288,17 +330,10 @@ export const segmentApi = {
     }),
 };
 
+// TTS API
 export const ttsApi = {
-  initialize: () =>
-    apiCall<{
-      success: boolean;
-      message: string;
-      modelVersion: string;
-      device: string;
-    }>('/tts/initialize', {
-      method: 'POST',
-    }),
-
+  // Get available speakers from database (NOT from TTS engine)
+  // Uses /api/speakers/ endpoint which is engine-independent
   getSpeakers: () =>
     apiCall<Array<{
       id: string;
@@ -324,18 +359,20 @@ export const ttsApi = {
       }>;
     }>>('/speakers/'),
 
+  // Get available TTS engines
   getEngines: () =>
     apiCall<{
       success: boolean;
       engines: TTSEngine[];
     }>('/tts/engines'),
 
+  // Get available models for a specific engine
   getEngineModels: (engineType: string) =>
     apiCall<{
       success: boolean;
-      engine: string;
+      ttsEngine: string;
       models: Array<{
-        modelName: string;
+        ttsModelName: string;
         displayName: string;
         path: string;
         version: string;
@@ -344,18 +381,7 @@ export const ttsApi = {
       count: number;
     }>(`/tts/engines/${engineType}/models`),
 
-  initializeEngine: (engineType: string, modelName?: string) =>
-    apiCall<{
-      success: boolean;
-      engine: string;
-      modelName: string;
-      languages: string[];
-      constraints: any;
-    }>(`/tts/engines/${engineType}/initialize`, {
-      method: 'POST',
-      body: JSON.stringify({ modelName: modelName || 'v2.0.2' }),
-    }),
-
+  // Regenerate audio for segment (uses stored segment parameters + settings)
   generateSegmentById: (segmentId: string) =>
     apiCall<{
       success: boolean;
@@ -365,13 +391,14 @@ export const ttsApi = {
       method: 'POST',
     }),
 
+  // Generate audio for entire chapter
   generateChapter: (data: {
     chapterId: string;
-    speaker: string;
-    language?: string;
-    engine?: string;
-    modelName?: string;
-    forceRegenerate?: boolean;
+    ttsSpeakerName: string;  
+    language: string;  
+    ttsEngine: string;  
+    ttsModelName: string;  
+    forceRegenerate?: boolean; 
     options?: TTSOptions;
   }) =>
     apiCall<{
@@ -383,6 +410,7 @@ export const ttsApi = {
       body: JSON.stringify(data),
     }),
 
+  // Get chapter generation progress
   getChapterProgress: (chapterId: string) =>
     apiCall<{
       chapterId: string;
@@ -394,6 +422,7 @@ export const ttsApi = {
       error?: string;
     }>(`/tts/generate-chapter/${chapterId}/progress`),
 
+  // Cancel chapter generation (legacy - use cancelJob for job-based cancellation)
   cancelChapterGeneration: (chapterId: string) =>
     apiCall<{
       status: string;
@@ -401,9 +430,125 @@ export const ttsApi = {
     }>(`/tts/generate-chapter/${chapterId}`, {
       method: 'DELETE',
     }),
+
+  /**
+   * Cancel a specific TTS job
+   *
+   * @param jobId - Unique job identifier (UUID)
+   * @returns Promise with cancellation confirmation
+   */
+  cancelJob: (jobId: string) =>
+    apiCall<{
+      success: boolean;
+      jobId: string;
+      status: string;
+    }>(`/tts/cancel-job/${jobId}`, {
+      method: 'POST',
+    }),
+
+  // ============================================================================
+  // TTS Job Management (Database-backed)
+  // ============================================================================
+
+  /**
+   * List TTS jobs with optional filters
+   *
+   * @param filters - Optional filters (status, chapterId)
+   * @returns Promise with jobs list and count
+   */
+  listJobs: (filters?: {
+    status?: string;
+    chapterId?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const params = new URLSearchParams()
+    if (filters?.status) params.append('status', filters.status)
+    if (filters?.chapterId) params.append('chapterId', filters.chapterId)
+    if (filters?.limit !== undefined) params.append('limit', filters.limit.toString())
+    if (filters?.offset !== undefined) params.append('offset', filters.offset.toString())
+
+    const queryString = params.toString()
+    const endpoint = queryString ? `/tts/jobs?${queryString}` : '/tts/jobs'
+
+    return apiCall<import('../types').TTSJobsListResponse>(endpoint)
+  },
+
+  /**
+   * Get all active TTS jobs (pending + running)
+   *
+   * Optimized for real-time monitoring. Auto-polls this endpoint
+   * to keep UI updated during generation.
+   *
+   * @returns Promise with active jobs list
+   */
+  listActiveJobs: () =>
+    apiCall<import('../types').TTSJobsListResponse>('/tts/jobs/active'),
+
+  /**
+   * Get single TTS job by ID
+   *
+   * @param jobId - Unique job identifier (UUID)
+   * @returns Promise with complete job details
+   */
+  getJob: (jobId: string) =>
+    apiCall<import('../types').TTSJob>(`/tts/jobs/${jobId}`),
+
+  /**
+   * Delete a specific job by ID
+   *
+   * @param jobId - Unique job identifier (UUID)
+   * @returns Promise with deletion confirmation
+   */
+  deleteJob: (jobId: string) =>
+    apiCall<{ success: boolean; deleted: boolean; jobId: string }>(
+      `/tts/jobs/${jobId}`,
+      { method: 'DELETE' }
+    ),
+
+  /**
+   * Clear all completed and failed jobs (bulk cleanup)
+   *
+   * @returns Promise with count of deleted jobs
+   */
+  clearJobHistory: () =>
+    apiCall<{ success: boolean; deleted: number }>('/tts/jobs/cleanup', {
+      method: 'DELETE',
+    }),
+
+  /**
+   * Resume a cancelled job
+   *
+   * Creates a new job for remaining unprocessed segments.
+   *
+   * @param jobId - UUID of the cancelled job to resume
+   * @returns Promise with the newly created job
+   */
+  resumeJob: (jobId: string) =>
+    apiCall<import('../types').TTSJob>(`/tts/jobs/${jobId}/resume`, {
+      method: 'POST',
+    }),
+
+  /**
+   * Set preferred engine/model for warm-keeping
+   *
+   * This preference is stored in RAM only (session-based).
+   * After all jobs complete, the worker will activate this engine.
+   *
+   * @param ttsEngine - Engine identifier
+   * @param ttsModelName - Model name 
+   * @returns Promise with success message
+   */
+  setPreferredEngine: (ttsEngine: string, ttsModelName: string) =>
+    apiCall<{ message: string }>('/tts/set-preferred-engine', {
+      method: 'POST',
+      body: JSON.stringify({ ttsEngine, ttsModelName }),
+    }),
 };
 
+// Text Processing API
 export const textProcessingApi = {
+  // Segment text without creating database entries
   segmentText: (data: {
     text: string;
     method?: 'sentences' | 'paragraphs' | 'smart' | 'length';
@@ -423,6 +568,7 @@ export const textProcessingApi = {
     }),
 };
 
+// Export API (camelCase to match backend)
 export interface ExportRequest {
   chapterId: string;
   outputFormat: 'mp3' | 'm4a' | 'wav';
@@ -453,28 +599,34 @@ export interface ExportProgress {
 }
 
 export const exportApi = {
+  // Start audio export
   startExport: (data: ExportRequest) =>
     apiCall<ExportResponse>('/audio/export', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
+  // Get export progress
   getExportProgress: (jobId: string) =>
     apiCall<ExportProgress>(`/audio/export/${jobId}/progress`),
 
+  // Cancel export job
   cancelExport: (jobId: string) =>
     apiCall<{ message: string }>(`/audio/export/${jobId}/cancel`, {
       method: 'DELETE',
     }),
 
+  // Download exported file using native Tauri dialog
   downloadExport: async (jobId: string, defaultFilename: string) => {
     const backendUrl = useAppStore.getState().connection.url;
     if (!backendUrl) {
       throw new Error('Backend not connected');
     }
 
+    // Import dynamically to avoid issues in non-Tauri environments
     const { tauriAPI } = await import('./tauri-api');
 
+    // Use native Tauri download with file dialog
     const savedPath = await tauriAPI.downloadExportedAudio(
       jobId,
       backendUrl,
@@ -484,11 +636,13 @@ export const exportApi = {
     return savedPath;
   },
 
+  // Delete export file (cleanup after download or cancel)
   deleteExport: (jobId: string) =>
     apiCall<{ message: string }>(`/audio/export/${jobId}`, {
       method: 'DELETE',
     }),
 
+  // Quick merge for preview
   mergeSegments: (chapterId: string, pauseMs: number = 500) =>
     apiCall<{
       success: boolean;

@@ -1,3 +1,9 @@
+/**
+ * i18n Configuration
+ *
+ * Internationalization setup for the Audiobook Maker application.
+ * Supports German (de) and English (en).
+ */
 
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
@@ -11,10 +17,10 @@ i18n
       de: { translation: de },
       en: { translation: en }
     },
-    lng: 'de',
+    lng: 'de', // Default language
     fallbackLng: 'en',
     interpolation: {
-      escapeValue: false
+      escapeValue: false // React already escapes values
     }
   });
 

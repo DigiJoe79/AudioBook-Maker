@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS chapters (
     project_id TEXT NOT NULL,
     title TEXT NOT NULL,
     order_index INTEGER NOT NULL,
-    default_engine TEXT NOT NULL,
-    default_model_name TEXT NOT NULL,
+    default_tts_engine TEXT NOT NULL,
+    default_tts_model_name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -28,9 +28,9 @@ CREATE TABLE IF NOT EXISTS segments (
     id TEXT PRIMARY KEY,
     chapter_id TEXT NOT NULL,
     text TEXT NOT NULL,
-    engine TEXT NOT NULL,
-    model_name TEXT NOT NULL,
-    speaker_name TEXT,
+    tts_engine TEXT NOT NULL,
+    tts_model_name TEXT NOT NULL,
+    tts_speaker_name TEXT,
     language TEXT NOT NULL,
     segment_type TEXT DEFAULT 'standard',
     pause_duration INTEGER DEFAULT 0,
@@ -38,9 +38,42 @@ CREATE TABLE IF NOT EXISTS segments (
     order_index INTEGER NOT NULL,
     start_time REAL DEFAULT 0.0,
     end_time REAL DEFAULT 0.0,
-    status TEXT DEFAULT 'pending',
+    status TEXT DEFAULT 'pending', -- pending, queued, processing, completed, failed
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
+);
+
+-- TTS Jobs Table (for persistent job queue)
+CREATE TABLE IF NOT EXISTS tts_jobs (
+    id TEXT PRIMARY KEY,
+    chapter_id TEXT NOT NULL,
+
+    -- Engine Configuration
+    tts_engine TEXT NOT NULL,
+    tts_model_name TEXT NOT NULL,
+    tts_speaker_name TEXT NOT NULL,
+    language TEXT NOT NULL,
+    force_regenerate BOOLEAN DEFAULT FALSE,
+    segment_ids TEXT, -- JSON array of segment IDs (for segment/selection jobs)
+
+    -- Job Status & Progress
+    status TEXT NOT NULL DEFAULT 'pending', -- pending, running, cancelling, cancelled, completed, failed
+    total_segments INTEGER NOT NULL,
+    processed_segments INTEGER DEFAULT 0,
+    failed_segments INTEGER DEFAULT 0,
+    current_segment_id TEXT,
+
+    -- Error Handling
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+
+    -- Timestamps
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL,
+
     FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
 );
 
@@ -105,11 +138,14 @@ CREATE TABLE IF NOT EXISTS speaker_samples (
 CREATE INDEX IF NOT EXISTS idx_chapters_project ON chapters(project_id);
 CREATE INDEX IF NOT EXISTS idx_segments_chapter ON segments(chapter_id);
 CREATE INDEX IF NOT EXISTS idx_segments_order ON segments(chapter_id, order_index);
-CREATE INDEX IF NOT EXISTS idx_segments_engine ON segments(engine);
-CREATE INDEX IF NOT EXISTS idx_segments_speaker ON segments(speaker_name);
+CREATE INDEX IF NOT EXISTS idx_segments_engine ON segments(tts_engine);
+CREATE INDEX IF NOT EXISTS idx_segments_speaker ON segments(tts_speaker_name);
 CREATE INDEX IF NOT EXISTS idx_segments_language ON segments(language);
 CREATE INDEX IF NOT EXISTS idx_projects_order ON projects(order_index);
 CREATE INDEX IF NOT EXISTS idx_segments_type ON segments(segment_type);
+CREATE INDEX IF NOT EXISTS idx_tts_jobs_status ON tts_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_tts_jobs_chapter ON tts_jobs(chapter_id);
+CREATE INDEX IF NOT EXISTS idx_tts_jobs_created ON tts_jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_export_jobs_chapter ON export_jobs(chapter_id);
 CREATE INDEX IF NOT EXISTS idx_export_jobs_status ON export_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_speaker_samples_speaker ON speaker_samples(speaker_id);

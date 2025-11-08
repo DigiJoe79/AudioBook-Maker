@@ -13,8 +13,8 @@ IMPORTANT FOR AI ASSISTANTS:
 Example:
     @router.get("/segments/{id}", response_model=SegmentResponse)
     async def get_segment(id: str):
-        segment = segment_repo.get_by_id(id)
-        return segment
+        segment = segment_repo.get_by_id(id)  # Returns dict with snake_case
+        return segment  # Pydantic auto-converts to camelCase in JSON
 
 Data Flow:
     Database (snake_case)
@@ -31,7 +31,8 @@ Data Flow:
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List, Dict, Any
 
-
+# NOTE: This function is intentionally duplicated in backend/engines/base_server.py
+# because engine servers run in isolated VENVs and need their own copy.
 def to_camel(string: str) -> str:
     """
     Convert snake_case string to camelCase.
@@ -56,16 +57,17 @@ class CamelCaseModel(BaseModel):
         - alias_generator: Converts field names to camelCase in JSON
         - populate_by_name: Allows both snake_case and camelCase in input
         - from_attributes: Allows creating from ORM/SQLAlchemy objects
-        - protected_namespaces: Empty to allow 'model_' prefix fields
     """
     model_config = ConfigDict(
         alias_generator=to_camel,
-        populate_by_name=True,
-        from_attributes=True,
-        protected_namespaces=()
+        populate_by_name=True,       # Accept both snake_case and camelCase input
+        from_attributes=True          # Support ORM objects (if we ever migrate from dicts)
     )
 
 
+# ============================================================================
+# Segment Response Models
+# ============================================================================
 
 class SegmentResponse(CamelCaseModel):
     """
@@ -77,10 +79,10 @@ class SegmentResponse(CamelCaseModel):
     id: str = Field(description="Unique segment identifier")
     chapter_id: str = Field(description="Parent chapter ID")
     text: str = Field(description="Text content to be converted to speech")
-    engine: str = Field(description="TTS engine used (e.g., 'xtts', 'dummy')")
-    model_name: str = Field(description="TTS model version (e.g., 'v2.0.3')")
-    speaker_name: Optional[str] = Field(None, description="Speaker/voice name")
-    language: str = Field(description="Language code (e.g., 'de', 'en')")
+    tts_engine: str = Field(description="TTS engine used")
+    tts_model_name: str = Field(description="TTS model version")
+    tts_speaker_name: Optional[str] = Field(None, description="Speaker/voice name")
+    language: str = Field(description="Language code)")
     segment_type: str = Field(default="standard", description="Segment type: 'standard' or 'divider'")
     pause_duration: int = Field(default=0, description="Pause duration in milliseconds (for divider segments)")
     audio_path: Optional[str] = Field(None, description="URL/path to generated audio file")
@@ -92,6 +94,9 @@ class SegmentResponse(CamelCaseModel):
     updated_at: str = Field(description="ISO timestamp of last update")
 
 
+# ============================================================================
+# Chapter Response Models
+# ============================================================================
 
 class ChapterResponse(CamelCaseModel):
     """
@@ -103,8 +108,8 @@ class ChapterResponse(CamelCaseModel):
     project_id: str = Field(description="Parent project ID")
     title: str = Field(description="Chapter title")
     order_index: int = Field(description="Position within project (0-indexed)")
-    default_engine: str = Field(description="Default TTS engine for new segments")
-    default_model_name: str = Field(description="Default TTS model for new segments")
+    default_tts_engine: str = Field(description="Default TTS engine for new segments")
+    default_tts_model_name: str = Field(description="Default TTS model for new segments")
     created_at: str = Field(description="ISO timestamp of creation")
     updated_at: str = Field(description="ISO timestamp of last update")
 
@@ -118,6 +123,9 @@ class ChapterWithSegmentsResponse(ChapterResponse):
     segments: List[SegmentResponse] = Field(default_factory=list, description="All segments in this chapter")
 
 
+# ============================================================================
+# Project Response Models
+# ============================================================================
 
 class ProjectResponse(CamelCaseModel):
     """
@@ -145,6 +153,9 @@ class ProjectWithChaptersResponse(ProjectResponse):
     )
 
 
+# ============================================================================
+# Speaker Response Models
+# ============================================================================
 
 class SpeakerSampleResponse(CamelCaseModel):
     """
@@ -186,6 +197,9 @@ class SpeakerResponse(CamelCaseModel):
     )
 
 
+# ============================================================================
+# TTS Generation Response Models
+# ============================================================================
 
 class TTSOptionsResponse(CamelCaseModel):
     """TTS generation options."""
@@ -210,12 +224,12 @@ class GenerationConstraints(CamelCaseModel):
 
 class TTSEngineInfo(CamelCaseModel):
     """Full TTS engine information with capabilities."""
-    name: str = Field(description="Unique engine identifier (e.g., 'xtts', 'dummy')")
+    name: str = Field(description="Unique engine identifier")
     display_name: str = Field(description="Human-readable display name")
     supported_languages: List[str] = Field(description="List of supported ISO language codes")
     constraints: GenerationConstraints = Field(description="Engine-specific generation constraints")
     default_parameters: Dict[str, Any] = Field(description="Engine-specific default parameters")
-    model_loaded: bool = Field(description="Whether the model is currently loaded in memory")
+    tts_model_loaded: bool = Field(description="Whether the TTS model is currently loaded in memory")
     device: str = Field(default="cpu", description="Device being used (cpu/cuda)")
 
 
@@ -226,21 +240,9 @@ class EnginesListResponse(CamelCaseModel):
     count: int = Field(description="Number of engines returned")
 
 
-class EngineInitializeResponse(CamelCaseModel):
-    """Response for engine initialization."""
-    success: bool = Field(description="Whether initialization succeeded")
-    engine: str = Field(description="Engine identifier")
-    display_name: str = Field(description="Human-readable engine name")
-    model_name: str = Field(description="Model name/version loaded")
-    languages: List[str] = Field(description="Supported languages")
-    constraints: GenerationConstraints = Field(description="Generation constraints")
-    default_parameters: Dict[str, Any] = Field(description="Default parameters")
-    model_loaded: bool = Field(description="Whether model is loaded in memory")
-
-
 class TTSModelInfo(CamelCaseModel):
     """Information about a specific TTS model."""
-    model_name: str = Field(description="Model identifier (e.g., 'v2.0.2', 'custom')")
+    tts_model_name: str = Field(description="Model identifier (e.g., 'v2.0.2', 'custom')")
     display_name: str = Field(description="Human-readable display name")
     path: str = Field(description="Full path to model directory")
     version: str = Field(description="Version string")
@@ -290,6 +292,9 @@ class ChapterGenerationCancelResponse(CamelCaseModel):
     message: str = Field(description="Human-readable message")
 
 
+# ============================================================================
+# Audio Export Response Models
+# ============================================================================
 
 class ExportResponse(CamelCaseModel):
     """Response when starting an audio export job."""
@@ -333,19 +338,25 @@ class ExportJobResponse(CamelCaseModel):
     completed_at: Optional[str] = Field(None, description="Job completion timestamp")
 
 
+# ============================================================================
+# Settings Response Models
+# ============================================================================
 
 class SettingsResponse(CamelCaseModel):
     """Application settings response."""
     id: str = Field(default="default", description="Settings profile ID")
 
+    # General settings
     theme: str = Field(default="system", description="UI theme: light, dark, system")
     language: str = Field(default="de", description="UI language: de, en")
 
-    default_engine: str = Field(default="dummy", description="Default TTS engine")
-    default_model: str = Field(default="dummy", description="Default TTS model")
+    # TTS settings
+    default_engine: str = Field(default="", description="Default TTS engine")
+    default_model: str = Field(default="", description="Default TTS model")
     default_language: str = Field(default="de", description="Default audio language")
     default_speaker: Optional[str] = Field(None, description="Default speaker name")
 
+    # TTS parameters
     temperature: float = Field(default=0.75, description="Default temperature")
     speed: float = Field(default=1.0, description="Default speed")
     length_penalty: float = Field(default=1.0, description="Default length penalty")
@@ -353,42 +364,86 @@ class SettingsResponse(CamelCaseModel):
     top_k: int = Field(default=50, description="Default top-K")
     top_p: float = Field(default=0.85, description="Default top-P")
 
+    # Text processing
     max_segment_length: int = Field(default=500, description="Max segment length")
     enable_text_splitting: bool = Field(default=True, description="Auto-split long texts")
 
+    # Audio export
     export_format: str = Field(default="mp3", description="Default export format")
     export_bitrate: str = Field(default="192k", description="Default export bitrate")
     export_sample_rate: int = Field(default=24000, description="Default sample rate")
 
+    # Timestamps
     created_at: str = Field(description="Settings creation timestamp")
     updated_at: str = Field(description="Last update timestamp")
 
 
+# ============================================================================
+# TTS Job Management Models (Database-backed)
+# ============================================================================
 
-class GenerationJobStatus(CamelCaseModel):
-    """Status of a single generation job (for fast polling)"""
-    status: str = Field(description="Job status: running, completed, failed, cancelled")
-    progress: int = Field(default=0, description="Current segment index being processed (0-based)")
-    total: int = Field(default=0, description="Total segments to process")
-    current_segment: Optional[str] = Field(default=None, description="ID of current segment being processed")
-    errors: int = Field(default=0, description="Number of errors encountered")
-    updated_at: float = Field(description="Timestamp of last update (Unix time)")
-
-
-class GenerationStatusResponse(CamelCaseModel):
+class TTSJobResponse(CamelCaseModel):
     """
-    Lightweight response for polling active generation jobs.
+    Response model for a single TTS job (database-backed).
 
-    This endpoint is designed for high-frequency polling (250-500ms) to provide
-    real-time UI updates without heavy database queries. Only returns in-memory
-    job status data.
+    TTS jobs represent generation tasks that are persisted in the database
+    and processed by the background worker. They can be chapter-wide or
+    segment-specific.
     """
-    active_jobs: Dict[str, GenerationJobStatus] = Field(
-        default_factory=dict,
-        description="Map of chapter IDs to their generation job status. Only includes running jobs."
+    id: str = Field(description="Unique job identifier (UUID)")
+    chapter_id: Optional[str] = Field(None, description="Chapter being processed (context for UI navigation)")
+    segment_ids: Optional[List[dict]] = Field(None, description="Parsed segment objects with job_status: [{'id': 'seg-1', 'job_status': 'pending'}, ...]")
+
+    # Display Info (from JOINs)
+    chapter_title: Optional[str] = Field(None, description="Chapter title (for UI display)")
+    project_title: Optional[str] = Field(None, description="Project title (for UI display)")
+
+    # Engine Configuration
+    tts_engine: str = Field(description="TTS engine identifier")
+    tts_model_name: str = Field(description="TTS model name")
+    tts_speaker_name: str = Field(description="Speaker/voice name")
+    language: str = Field(description="Language code")
+    force_regenerate: bool = Field(description="Whether to regenerate already completed segments")
+
+    # Progress Tracking
+    status: str = Field(description="Job status: 'pending', 'running', 'cancelling', 'cancelled', 'completed', 'failed'")
+    total_segments: int = Field(description="Total number of segments to process")
+    processed_segments: int = Field(default=0, description="Number of segments successfully processed")
+    failed_segments: int = Field(default=0, description="Number of segments that failed")
+    current_segment_id: Optional[str] = Field(None, description="ID of segment currently being processed")
+
+    # Error Handling
+    error_message: Optional[str] = Field(None, description="Error details if job failed")
+    retry_count: int = Field(default=0, description="Number of retry attempts")
+
+    # Timestamps
+    created_at: str = Field(description="Job creation timestamp (ISO 8601)")
+    started_at: Optional[str] = Field(None, description="Job start timestamp (ISO 8601)")
+    completed_at: Optional[str] = Field(None, description="Job completion timestamp (ISO 8601)")
+    updated_at: str = Field(description="Last update timestamp (ISO 8601)")
+
+
+class TTSJobsListResponse(CamelCaseModel):
+    """
+    Response model for list of TTS jobs.
+
+    Used by endpoints that return multiple jobs with optional filtering.
+    """
+    success: bool = Field(default=True, description="Whether the request was successful")
+    jobs: List[TTSJobResponse] = Field(
+        default_factory=list,
+        description="List of TTS jobs matching the query filters"
     )
+    count: int = Field(description="Number of jobs returned (may be less than limit if filtered)")
 
 
+# ============================================================================
+# Generation Progress Models (Lightweight for fast polling)
+# ============================================================================
+
+# ============================================================================
+# Health & System Response Models
+# ============================================================================
 
 class HealthResponse(CamelCaseModel):
     """Health check response."""
@@ -408,6 +463,9 @@ class RootResponse(CamelCaseModel):
     status: str = Field(description="API status")
 
 
+# ============================================================================
+# Text Processing Response Models
+# ============================================================================
 
 class TextSegmentPreview(CamelCaseModel):
     """Preview of a text segment before creation."""
@@ -433,6 +491,9 @@ class TextSegmentationResponse(CamelCaseModel):
     constraints: Dict[str, int] = Field(description="Min/max length constraints applied")
 
 
+# ============================================================================
+# Generic Response Models
+# ============================================================================
 
 class MessageResponse(CamelCaseModel):
     """Generic success/error message response."""
@@ -453,6 +514,9 @@ class ReorderResponse(CamelCaseModel):
     count: Optional[int] = Field(None, description="Number of items reordered")
 
 
+# ============================================================================
+# Settings Response Models (Extended)
+# ============================================================================
 
 class SettingValueResponse(CamelCaseModel):
     """Response for single setting value."""
@@ -479,6 +543,9 @@ class EngineSchemaResponse(CamelCaseModel):
     parameters: Dict[str, Any] = Field(description="Parameter schema dictionary for UI generation")
 
 
+# ============================================================================
+# Audio Utility Response Models
+# ============================================================================
 
 class MergeResponse(CamelCaseModel):
     """Response for audio merge preview operation."""
@@ -493,6 +560,9 @@ class AudioDurationResponse(CamelCaseModel):
     duration: float = Field(description="Audio duration in seconds")
 
 
+# ============================================================================
+# Markdown Import Response Model
+# ============================================================================
 
 class MarkdownImportResponse(CamelCaseModel):
     """Response for markdown import operation."""
@@ -501,3 +571,42 @@ class MarkdownImportResponse(CamelCaseModel):
     total_segments: int = Field(description="Total standard segments created")
     total_dividers: int = Field(description="Total divider segments created")
     message: str = Field(description="Success message")
+
+
+# ============================================================================
+# TTS Job Control Response Models
+# ============================================================================
+
+class CancelJobResponse(CamelCaseModel):
+    """Response for job cancellation operations."""
+    status: str = Field(description="Cancellation status: cancelled, cancelling, cannot_cancel, not_found")
+    job_id: str = Field(description="Job identifier")
+    message: str = Field(description="Human-readable status message")
+
+
+class QueueSegmentsResponse(CamelCaseModel):
+    """Response for segment regeneration queue operations."""
+    status: str = Field(description="Queue status: queued, error")
+    job_id: str = Field(description="Created job identifier")
+    segment_count: int = Field(description="Number of segments queued")
+    message: str = Field(description="Human-readable status message")
+
+
+class DiscoverEnginesResponse(CamelCaseModel):
+    """Response for engine discovery/rediscovery operations."""
+    success: bool = Field(description="Whether discovery succeeded")
+    engines_discovered: int = Field(description="Number of engines found")
+    engines: List[str] = Field(description="List of discovered engine identifiers")
+
+
+class CleanupJobsResponse(CamelCaseModel):
+    """Response for bulk job cleanup operations."""
+    success: bool = Field(description="Whether cleanup succeeded")
+    deleted: int = Field(description="Number of jobs deleted")
+
+
+class DeleteJobResponse(CamelCaseModel):
+    """Response for single job deletion operations."""
+    success: bool = Field(description="Whether deletion succeeded")
+    deleted: bool = Field(description="Deletion confirmation flag")
+    job_id: str = Field(description="Deleted job identifier")

@@ -1,3 +1,8 @@
+/**
+ * React Query Hooks for Projects
+ *
+ * These hooks replace the old useProjects hook with granular, optimized queries and mutations.
+ */
 
 import {
   useQuery,
@@ -10,54 +15,19 @@ import { projectApi, type ApiProject } from '../services/api'
 import { type Project } from '../types'
 import { queryKeys } from '../services/queryKeys'
 
+// Backend now returns camelCase via Pydantic Response Models
 const transformProject = (apiProject: ApiProject): Project => {
-  const mapStatus = (
-    apiStatus: string
-  ): 'pending' | 'processing' | 'completed' | 'failed' => {
-    switch (apiStatus) {
-      case 'processing':
-        return 'processing'
-      case 'failed':
-        return 'failed'
-      case 'completed':
-        return 'completed'
-      case 'pending':
-      default:
-        return 'pending'
-    }
-  }
-
   return {
-    id: apiProject.id,
-    title: apiProject.title,
-    description: apiProject.description,
-    orderIndex: apiProject.orderIndex,
+    ...apiProject,
     createdAt: new Date(apiProject.createdAt),
     updatedAt: new Date(apiProject.updatedAt),
     chapters: (apiProject.chapters || []).map((chapter: any) => ({
-      id: chapter.id,
-      projectId: chapter.projectId,
-      title: chapter.title,
-      orderIndex: chapter.orderIndex,
-      defaultEngine: chapter.defaultEngine,
-      defaultModelName: chapter.defaultModelName,
+      ...chapter,
       createdAt: new Date(chapter.createdAt),
       updatedAt: new Date(chapter.updatedAt),
       segments: (chapter.segments || []).map((segment: any) => ({
-        id: segment.id,
-        chapterId: segment.chapterId,
-        text: segment.text,
+        ...segment,
         audioPath: segment.audioPath || undefined,
-        orderIndex: segment.orderIndex,
-        startTime: segment.startTime,
-        endTime: segment.endTime,
-        engine: segment.engine,
-        modelName: segment.modelName,
-        speakerName: segment.speakerName,
-        language: segment.language,
-        segmentType: segment.segmentType,
-        pauseDuration: segment.pauseDuration,
-        status: mapStatus(segment.status),
         createdAt: new Date(segment.createdAt),
         updatedAt: new Date(segment.updatedAt),
       })),
@@ -65,6 +35,14 @@ const transformProject = (apiProject: ApiProject): Project => {
   }
 }
 
+/**
+ * Fetch all projects with their chapters and segments
+ *
+ * @example
+ * ```tsx
+ * const { data: projects, isLoading, error } = useProjectsList()
+ * ```
+ */
 export function useProjectsList(): UseQueryResult<Project[], Error> {
   return useQuery({
     queryKey: queryKeys.projects.lists(),
@@ -75,6 +53,14 @@ export function useProjectsList(): UseQueryResult<Project[], Error> {
   })
 }
 
+/**
+ * Fetch a single project by ID
+ *
+ * @example
+ * ```tsx
+ * const { data: project, isLoading } = useProject(projectId)
+ * ```
+ */
 export function useProject(
   projectId: string | null
 ): UseQueryResult<Project, Error> {
@@ -89,6 +75,19 @@ export function useProject(
   })
 }
 
+/**
+ * Create a new project
+ *
+ * @example
+ * ```tsx
+ * const createProject = useCreateProject()
+ *
+ * await createProject.mutateAsync({
+ *   title: 'My Audiobook',
+ *   description: 'A great story'
+ * })
+ * ```
+ */
 export function useCreateProject(): UseMutationResult<
   Project,
   Error,
@@ -102,14 +101,8 @@ export function useCreateProject(): UseMutationResult<
       return transformProject(created)
     },
     onSuccess: (newProject) => {
-      queryClient.setQueryData<Project[]>(
-        queryKeys.projects.lists(),
-        (old) => {
-          if (!old) return [newProject]
-          return [...old, newProject]
-        }
-      )
-
+      // Invalidate to refetch projects list with the new project
+      // Backend is source of truth - may have set additional fields (timestamps, defaults, etc.)
       queryClient.invalidateQueries({
         queryKey: queryKeys.projects.lists(),
       })
@@ -117,6 +110,19 @@ export function useCreateProject(): UseMutationResult<
   })
 }
 
+/**
+ * Update an existing project
+ *
+ * @example
+ * ```tsx
+ * const updateProject = useUpdateProject()
+ *
+ * await updateProject.mutateAsync({
+ *   id: 'project-123',
+ *   data: { title: 'Updated Title' }
+ * })
+ * ```
+ */
 export function useUpdateProject(): UseMutationResult<
   Project,
   Error,
@@ -136,12 +142,15 @@ export function useUpdateProject(): UseMutationResult<
       return transformProject(updated)
     },
     onMutate: async ({ id, data }) => {
+      // Cancel outgoing refetches
       await queryClient.cancelQueries({ queryKey: queryKeys.projects.all })
 
+      // Snapshot previous value
       const previousProjects = queryClient.getQueryData<Project[]>(
         queryKeys.projects.lists()
       )
 
+      // Optimistically update
       queryClient.setQueryData<Project[]>(
         queryKeys.projects.lists(),
         (old) => {
@@ -161,6 +170,7 @@ export function useUpdateProject(): UseMutationResult<
       return { previousProjects }
     },
     onError: (_err, _variables, context) => {
+      // Rollback on error
       if (context?.previousProjects) {
         queryClient.setQueryData(
           queryKeys.projects.lists(),
@@ -168,12 +178,20 @@ export function useUpdateProject(): UseMutationResult<
         )
       }
     },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.all })
-    },
+    // NOTE: No onSettled refetch - optimistic update is already correct on success, rollback handles errors
   })
 }
 
+/**
+ * Delete a project
+ *
+ * @example
+ * ```tsx
+ * const deleteProject = useDeleteProject()
+ *
+ * await deleteProject.mutateAsync('project-123')
+ * ```
+ */
 export function useDeleteProject(): UseMutationResult<void, Error, string> {
   const queryClient = useQueryClient()
 
@@ -182,12 +200,15 @@ export function useDeleteProject(): UseMutationResult<void, Error, string> {
       await projectApi.delete(projectId)
     },
     onMutate: async (projectId) => {
+      // Cancel outgoing refetches
       await queryClient.cancelQueries({ queryKey: queryKeys.projects.all })
 
+      // Snapshot previous value
       const previousProjects = queryClient.getQueryData<Project[]>(
         queryKeys.projects.lists()
       )
 
+      // Optimistically remove
       queryClient.setQueryData<Project[]>(
         queryKeys.projects.lists(),
         (old) => {
@@ -199,6 +220,7 @@ export function useDeleteProject(): UseMutationResult<void, Error, string> {
       return { previousProjects }
     },
     onError: (_err, _projectId, context) => {
+      // Rollback on error
       if (context?.previousProjects) {
         queryClient.setQueryData(
           queryKeys.projects.lists(),
@@ -206,8 +228,6 @@ export function useDeleteProject(): UseMutationResult<void, Error, string> {
         )
       }
     },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.all })
-    },
+    // NOTE: No onSettled refetch - optimistic update is already correct on success, rollback handles errors
   })
 }

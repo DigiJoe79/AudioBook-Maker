@@ -1,3 +1,7 @@
+/**
+ * Quick Create Segment Dialog
+ * Opens after dragging "Text Segment" from CommandToolbar
+ */
 
 import React, { useState } from 'react'
 import {
@@ -14,6 +18,7 @@ import { Add } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { useAppStore } from '../../store/appStore'
 import { useSegmentLimits } from '../../hooks/useSettings'
+import { logger } from '../../utils/logger'
 
 interface QuickCreateSegmentDialogProps {
   open: boolean
@@ -23,6 +28,7 @@ interface QuickCreateSegmentDialogProps {
   onConfirm: (text: string) => Promise<void>
 }
 
+// Fallback limit if API call fails or while loading
 const DEFAULT_MAX_LENGTH = 250
 
 export default function QuickCreateSegmentDialog({
@@ -36,10 +42,13 @@ export default function QuickCreateSegmentDialog({
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const currentEngine = useAppStore((state) => state.getCurrentEngine())
+  // Get current engine from app store
+  const currentEngine = useAppStore((state) => state.getCurrentTtsEngine())
 
+  // Fetch segment limits based on current engine
   const { data: limits } = useSegmentLimits(currentEngine)
 
+  // Use effective limit from API or fallback to default
   const maxSegmentLength = limits?.effectiveLimit || DEFAULT_MAX_LENGTH
 
   const handleConfirm = async () => {
@@ -47,11 +56,24 @@ export default function QuickCreateSegmentDialog({
 
     setLoading(true)
     try {
+      logger.group(
+        '✂️ Segment',
+        'Creating segment',
+        {
+          'Text Length': text.trim().length,
+          'Max Length': maxSegmentLength,
+          'Chapter ID': chapterId,
+          'Order Index': orderIndex,
+          'Text Preview': text.trim().substring(0, 50) + (text.trim().length > 50 ? '...' : '')
+        },
+        '#FF9800'  // Orange badge color
+      )
+
       await onConfirm(text.trim())
       setText('')
       onClose()
     } catch (err) {
-      console.error('Failed to create segment:', err)
+      logger.error('[QuickCreateSegmentDialog] Failed to create segment:', err)
       alert(t('quickCreateSegment.failed'))
     } finally {
       setLoading(false)
@@ -69,6 +91,7 @@ export default function QuickCreateSegmentDialog({
     }
   }
 
+  // Validation
   const isTextValid = text.trim().length > 0 && text.trim().length <= maxSegmentLength
   const isOverLimit = text.length > maxSegmentLength
 
@@ -104,7 +127,7 @@ export default function QuickCreateSegmentDialog({
                 : `${text.length}/${maxSegmentLength} ${t('segments.characters')}`
             }
             inputProps={{
-              maxLength: maxSegmentLength + 50,
+              maxLength: maxSegmentLength + 50, // Allow typing over limit to show error
             }}
           />
         </Box>

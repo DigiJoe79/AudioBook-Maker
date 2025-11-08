@@ -47,9 +47,34 @@
       "maxSegmentLength": "Max. Segmentlänge",
       "maxSegmentLengthDesc": "Maximale Zeichenlänge pro Segment (Engine-Limit)",
       "simulateDelay": "Verzögerung simulieren",
-      "simulateDelayDesc": "Simulierte Generierungsverzögerung in Sekunden (nur Dummy-Engine)",
       "enableTextSplitting": "Text-Aufteilung aktivieren",
-      "enableTextSplittingDesc": "Automatische Aufteilung langer Texte"
+      "enableTextSplittingDesc": "Automatische Aufteilung langer Texte",
+      "xtts": {
+        "temperature": "Temperature",
+        "temperatureDesc": "Die Softmax-Temperature des autoregressiven Modells (Standard: 0.65)",
+        "lengthPenalty": "Length Penalty",
+        "lengthPenaltyDesc": "Ein Längen-Penalty für den autoregressiven Decoder. Höhere Werte führen zu knapperen Ausgaben (Standard: 1.0)",
+        "repetitionPenalty": "Repetition Penalty",
+        "repetitionPenaltyDesc": "Verhindert Wiederholungen im autoregressiven Decoder. Kann lange Pausen oder Ähs reduzieren (Standard: 2.0)",
+        "topK": "Top K",
+        "topKDesc": "Niedrigere Werte führen zu wahrscheinlicheren (aka langweiligeren) Ausgaben (Standard: 50)",
+        "topP": "Top P",
+        "topPDesc": "Niedrigere Werte führen zu wahrscheinlicheren (aka langweiligeren) Ausgaben (Standard: 0.8)",
+        "speed": "Geschwindigkeit",
+        "speedDesc": "Die Geschwindigkeit des generierten Audios. Kann Artefakte erzeugen, wenn weit von 1.0 entfernt (Standard: 1.0)",
+        "enableTextSplitting": "Text-Aufteilung aktivieren",
+        "enableTextSplittingDesc": "Ob Text in Sätze aufgeteilt und für jeden Satz separat Audio generiert wird. Erlaubt unbegrenzte Eingabelänge, kann aber wichtigen Kontext zwischen Sätzen verlieren (Standard: aktiviert)"
+      },
+      "chatterbox": {
+        "exaggeration": "Expressivität",
+        "exaggerationDesc": "Steuert die Ausdrucksstärke der Sprache. Neutral bei 0.5, extreme Werte können instabil sein (Standard: 0.5)",
+        "temperature": "Temperature",
+        "temperatureDesc": "Steuert die Zufälligkeit in der Generierung. Höhere Werte = mehr Variation (Standard: 0.8)",
+        "cfgWeight": "CFG/Pace Weight",
+        "cfgWeightDesc": "CFG-Gewichtung zur Steuerung der Generierung. 0 für Sprach-Transfer (Standard: 0.5)",
+        "seed": "Zufalls-Seed",
+        "seedDesc": "Zufallszahl für reproduzierbare Ergebnisse. 0 = zufällige Generierung (Standard: 0)"
+      }
     },
     "audio": {
       "defaultFormat": "Standard-Format",
@@ -231,7 +256,8 @@
     "textTooLong": "Text ist zu lang! Entfernen Sie {{count}} Zeichen.",
     "textEmpty": "Text darf nicht leer sein",
     "placeholder": "Segmenttext eingeben...",
-    "description": "Bearbeiten Sie den Text für dieses Segment. Die maximale Länge beträgt {{maxLength}} Zeichen aufgrund von TTS-Modellbeschränkungen.",
+    "description": "Bearbeiten Sie den Text für dieses Segment. Die maximale Länge beträgt {{maxLength}} Zeichen.",
+    "engineLimitWarning": "Dieses Segment verwendet Engine '{{segmentEngine}}' (Limit: {{segmentLimit}} Zeichen), aber die aktuell ausgewählte Engine ist '{{currentEngine}}' (Limit: {{currentLimit}} Zeichen). Achten Sie auf unterschiedliche Limits beim Bearbeiten.",
     "noSegments": "Noch keine Segmente. Ziehen Sie Elemente aus der Symbolleiste oben, um Segmente zu erstellen.",
     "noAudio": "Noch kein Audio generiert",
     "generating": "Wird generiert...",
@@ -245,6 +271,10 @@
       "failed": "Fehlgeschlagen",
       "pending": "Ausstehend",
       "noStatus": "Kein Status"
+    },
+    "limitSource": {
+      "userPreference": "Benutzerpräferenz",
+      "engineMaximum": "Engine Limit"
     },
     "actions": {
       "play": "Abspielen",
@@ -416,7 +446,15 @@
     "noSegments": "Keine Segmente",
     "uploadTextHint": "Laden Sie eine Textdatei hoch, um sie automatisch zu segmentieren.",
     "noSegmentsYet": "Dieses Kapitel hat noch keine Segmente. Laden Sie eine Textdatei hoch, um sie automatisch zu segmentieren.",
-    "failedRegenerateSegment": "Segment-Regenerierung fehlgeschlagen"    
+    "failedRegenerateSegment": "Segment-Regenerierung fehlgeschlagen",
+    "cancelling": "Abbrechen...",
+    "cancelGeneration": {
+      "button": "Generierung abbrechen",
+      "title": "Generierung abbrechen?",
+      "message": "Möchten Sie die laufende Audio-Generierung wirklich abbrechen?",
+      "confirm": "Ja, abbrechen",
+      "cancel": "Nein, fortsetzen"
+    }
   },
   "commandToolbar": {
     "title": "Schnellaktionen",
@@ -468,7 +506,58 @@
     "deleteProjectConfirm": "Möchten Sie \"{{title}}\" wirklich löschen?\n\nDies löscht alle Kapitel, Segmente und Audiodateien. Diese Aktion kann nicht rückgängig gemacht werden.",
     "deleteChapterConfirm": "Möchten Sie das Kapitel \"{{title}}\" wirklich löschen?\n\nDies wird alle Segmente und deren Audiodateien löschen. Diese Aktion kann nicht rückgängig gemacht werden.",
     "audioPlaybackError": "Audio-Wiedergabe fehlgeschlagen",
-    "audioPlaybackErrorDetailed": "Audio-Wiedergabe fehlgeschlagen: {{message}}"
+    "audioPlaybackErrorDetailed": "Audio-Wiedergabe fehlgeschlagen: {{message}}",
+    "jobs": {
+      "title": "Jobs",
+      "noJobs": "Keine Jobs vorhanden",
+      "noJobsDescription": "Starten Sie eine Generierung, um Jobs hier zu sehen",
+      "noActiveJobs": "Keine aktiven Jobs",
+      "noFinishedJobs": "Keine abgeschlossenen Jobs",
+      "typeChapter": "Kapitel-Generierung",
+      "typeSegment": "Segment-Generierung",
+      "progress": "Fortschritt",
+      "completedSegments": "{{count}} Segmente generiert"
+    }
+  },
+  "jobs": {
+    "status": {
+      "pending": "Wartend",
+      "running": "Läuft",
+      "completed": "Abgeschlossen",
+      "failed": "Fehlgeschlagen",
+      "paused": "Pausiert"
+    },
+    "sections": {
+      "active": "Aktive Jobs",
+      "finished": "Abgeschlossene Jobs"
+    },
+    "actions": {
+      "pause": "Pausieren",
+      "resume": "Fortsetzen",
+      "delete": "Löschen",
+      "clearHistory": "Verlauf löschen"
+    },
+    "messages": {
+      "pauseSuccess": "Job erfolgreich pausiert",
+      "deleteSuccess": "Job erfolgreich gelöscht",
+      "resumeSuccess": "Job erfolgreich fortgesetzt",
+      "clearHistorySuccess": "Verlauf erfolgreich gelöscht"
+    },
+    "confirmClearHistory": {
+      "title": "Verlauf löschen?",
+      "message": "Alle abgeschlossenen und fehlgeschlagenen Jobs werden gelöscht."
+    },
+    "confirmDeleteJob": {
+      "title": "Job löschen?",
+      "message": "Dieser Job wird endgültig gelöscht."
+    },
+    "errors": {
+      "pauseFailed": "Job konnte nicht pausiert werden",
+      "resumeFailed": "Job konnte nicht fortgesetzt werden",
+      "deleteFailed": "Job konnte nicht gelöscht werden",
+      "clearHistoryFailed": "Verlauf konnte nicht gelöscht werden"
+    },
+    "lastUpdated": "Zuletzt aktualisiert"
   },
   "quickCreateSegment": {
     "title": "Textsegment erstellen",

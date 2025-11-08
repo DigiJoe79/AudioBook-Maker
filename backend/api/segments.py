@@ -17,7 +17,6 @@ router = APIRouter(tags=["segments"])
 
 class SegmentCreate(BaseModel):
     model_config = ConfigDict(
-        protected_namespaces=(),
         alias_generator=to_camel,
         populate_by_name=True
     )
@@ -25,11 +24,11 @@ class SegmentCreate(BaseModel):
     chapter_id: str
     text: str
     order_index: int
-    segment_type: str = 'standard'
-    pause_duration: int = 0
-    engine: str = ''
-    model_name: str = ''
-    speaker_name: Optional[str] = None
+    segment_type: str = 'standard'  # 'standard' or 'divider'
+    pause_duration: int = 0  # milliseconds (for dividers)
+    tts_engine: str = ''
+    tts_model_name: str = ''
+    tts_speaker_name: Optional[str] = None
     language: str = ''
     audio_path: Optional[str] = None
     start_time: float = 0.0
@@ -49,10 +48,10 @@ class SegmentUpdate(BaseModel):
     end_time: Optional[float] = None
     status: Optional[str] = None
     pause_duration: Optional[int] = None
-    engine: Optional[str] = None
-    model_name: Optional[str] = None
+    tts_engine: Optional[str] = None
+    tts_model_name: Optional[str] = None
     language: Optional[str] = None
-    speaker_name: Optional[str] = None
+    tts_speaker_name: Optional[str] = None
 
 
 class ReorderSegmentsRequest(BaseModel):
@@ -93,9 +92,9 @@ async def create_segment(
         chapter_id=segment.chapter_id,
         text=segment.text,
         order_index=segment.order_index,
-        engine=segment.engine,
-        model_name=segment.model_name,
-        speaker_name=segment.speaker_name,
+        tts_engine=segment.tts_engine,
+        tts_model_name=segment.tts_model_name,
+        tts_speaker_name=segment.tts_speaker_name,
         language=segment.language,
         audio_path=segment.audio_path,
         start_time=segment.start_time,
@@ -137,10 +136,10 @@ async def update_segment(
         end_time=segment.end_time,
         status=segment.status,
         pause_duration=segment.pause_duration,
-        engine=segment.engine,
-        model_name=segment.model_name,
+        tts_engine=segment.tts_engine,
+        tts_model_name=segment.tts_model_name,
         language=segment.language,
-        speaker_name=segment.speaker_name
+        tts_speaker_name=segment.tts_speaker_name
     )
 
     if not updated:
@@ -157,22 +156,28 @@ async def delete_segment(segment_id: str, conn: sqlite3.Connection = Depends(get
 
     segment_repo = SegmentRepository(conn)
 
+    # Get segment to delete its audio file
     segment = segment_repo.get_by_id(segment_id)
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
 
+    # Delete audio file if it exists
     if segment.get('audio_path'):
         try:
-            audio_url = segment['audio_path']
-            if '/audio/' in audio_url:
-                filename = audio_url.split('/audio/')[-1]
-                audio_file = Path(OUTPUT_DIR) / filename
+            # audio_path is just the filename (e.g., segment_123.wav)
+            filename = segment['audio_path']
+            audio_file = Path(OUTPUT_DIR) / filename
 
-                if audio_file.exists():
-                    os.remove(audio_file)
+            if audio_file.exists():
+                os.remove(audio_file)
+                logger.info(f"✓ Deleted audio file: {filename}")
+            else:
+                logger.warning(f"Audio file not found: {audio_file}")
         except Exception as e:
+            # Log but don't fail the deletion
             logger.warning(f"Could not delete audio file for segment {segment_id}: {e}")
 
+    # Delete segment from database
     if not segment_repo.delete(segment_id):
         raise HTTPException(status_code=404, detail="Segment not found")
 
@@ -195,6 +200,7 @@ async def reorder_segments(
     """
     segment_repo = SegmentRepository(conn)
 
+    # Validate segments belong to chapter
     for segment_id in data.segment_ids:
         segment = segment_repo.get_by_id(segment_id)
         if not segment:
@@ -205,6 +211,7 @@ async def reorder_segments(
                 detail=f"Segment {segment_id} does not belong to chapter {data.chapter_id}"
             )
 
+    # Reorder
     segment_repo.reorder_batch(data.segment_ids, data.chapter_id)
 
     return {
@@ -234,13 +241,16 @@ async def move_segment(
     segment_repo = SegmentRepository(conn)
     chapter_repo = ChapterRepository(conn)
 
+    # Validate segment exists
     segment = segment_repo.get_by_id(segment_id)
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
 
+    # Validate new chapter exists
     if not chapter_repo.get_by_id(data.new_chapter_id):
         raise HTTPException(status_code=404, detail="Target chapter not found")
 
+    # Move segment
     updated_segment = segment_repo.move_to_chapter(
         segment_id,
         data.new_chapter_id,

@@ -11,6 +11,7 @@ import {
   Audiotrack,
   Description,
   FolderOpen,
+  Cancel,
 } from '@mui/icons-material'
 import { Project, Chapter, Segment } from '../../types'
 import { SegmentList } from '../SegmentList'
@@ -23,7 +24,11 @@ import { ExportDialog } from '../dialogs/ExportDialog'
 import { useState } from 'react'
 import { useChapter, useSegmentText } from '../../hooks/useChaptersQuery'
 import { useDeleteSegment, useUpdateSegment } from '../../hooks/useSegmentsQuery'
-import { useGenerateChapter, useGenerateSegment } from '../../hooks/useTTSQuery'
+import {
+  useGenerateChapter,
+  useGenerateSegment,
+  useActiveTTSJobs,
+} from '../../hooks/useTTSQuery'
 import { useAppStore } from '../../store/appStore'
 import { useConfirm } from '../../hooks/useConfirm'
 import { useTranslation } from 'react-i18next'
@@ -67,66 +72,85 @@ export default function ChapterView({
   const [generateDialogOpen, setGenerateDialogOpen] = useState(false)
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
 
-  const currentEngine = useAppStore((state) => state.getCurrentEngine())
-  const currentModelName = useAppStore((state) => state.getCurrentModelName())
-  const currentSpeaker = useAppStore((state) => state.getCurrentSpeaker())
+  // TTS state from appStore (uses computed getters)
+  const currentEngine = useAppStore((state) => state.getCurrentTtsEngine())
+  const currentModelName = useAppStore((state) => state.getCurrentTtsModelName())
+  const currentSpeaker = useAppStore((state) => state.getCurrentTtsSpeaker())
   const currentLanguage = useAppStore((state) => state.getCurrentLanguage())
 
+  // Query speakers for validation
   const { data: speakers = [] } = useQuery({
     queryKey: ['speakers'],
     queryFn: fetchSpeakers,
   })
 
+  // React Query client for optimistic updates
   const queryClient = useQueryClient()
 
-  const activeGenerations = useAppStore((state) => state.activeGenerations)
-  const isGenerating = chapter?.id ? activeGenerations.has(chapter.id) : false
+  // React Query Hooks
+  // Database-backed job tracking - SSE-aware (no polling needed)
+  const { data: activeJobsData } = useActiveTTSJobs()
+  const activeJob = activeJobsData?.jobs.find(job => job.chapterId === chapter?.id)
+  const isGenerating = !!activeJob
 
-  const { data: freshChapter } = useChapter(chapter?.id, {
-    forcePolling: isGenerating,
-    pollingInterval: 500,
-  })
+  // Fetch chapter data - SSE events trigger automatic cache updates (no polling)
+  const { data: freshChapter } = useChapter(chapter?.id)
 
+  // Use fresh chapter data from React Query if available, otherwise use prop
   const displayChapter = freshChapter || chapter
 
+  // Check if any segment is currently processing (for UI state)
   const isAnySegmentGenerating = displayChapter?.segments.some(
     (s) => s.status === 'processing'
   ) || false
 
+  // TTS Mutations
   const generateChapterMutation = useGenerateChapter()
   const generateSegmentMutation = useGenerateSegment()
+  // Note: Generation progress monitoring is now handled by SSE events (useSSEEventHandlers)
+  // Note: Job cancellation is now handled in JobsPanelDialog
 
+  // Segment Mutations
   const deleteSegmentMutation = useDeleteSegment()
   const updateSegmentMutation = useUpdateSegment()
   const segmentTextMutation = useSegmentText()
 
+  // Text upload handler
   const handleTextUpload = async (data: {
     text: string
     method: 'sentences' | 'paragraphs' | 'smart' | 'length'
     language: string
+    speaker: string
     autoCreate: boolean
   }) => {
     if (!chapter) return
 
+    // Check if speakers are available when autoCreate is enabled
     if (data.autoCreate) {
-      if (!currentSpeaker) {
+      if (!data.speaker) {
         throw new Error(t('textUpload.messages.noDefaultSpeaker'))
       }
 
-      logger.debug('[TextUpload] Current speaker:', currentSpeaker)
-      logger.debug('[TextUpload] Speakers loaded:', speakers?.length || 0)
-      logger.debug('[TextUpload] Speaker data:', speakers?.find(s => s.name === currentSpeaker))
+      // Debug logging
+      logger.group('📋 Operations', 'Text upload speaker validation', {
+        'Selected Speaker': data.speaker,
+        'Speakers Loaded': speakers?.length || 0,
+        'Speaker Found': !!speakers?.find(s => s.name === data.speaker),
+        'Speaker Data': speakers?.find(s => s.name === data.speaker)
+      }, '#2196F3')
 
+      // Check if speakers are loaded
       if (!speakers || speakers.length === 0) {
         throw new Error('Speaker list not loaded yet. Please wait a moment and try again.')
       }
 
-      if (!isActiveSpeaker(currentSpeaker, speakers)) {
-        const speaker = speakers.find(s => s.name === currentSpeaker)
+      // Check if selected speaker is active (has samples)
+      if (!isActiveSpeaker(data.speaker, speakers)) {
+        const speaker = speakers.find(s => s.name === data.speaker)
         if (!speaker) {
-          throw new Error(t('textUpload.messages.speakerInactive', { speaker: `${currentSpeaker} (not found)` }))
+          throw new Error(t('textUpload.messages.speakerInactive', { speaker: `${data.speaker} (not found)` }))
         }
-        throw new Error(t('textUpload.messages.speakerInactive', { speaker: currentSpeaker }))
+        throw new Error(t('textUpload.messages.speakerInactive', { speaker: data.speaker }))
       }
     }
 
@@ -136,23 +160,27 @@ export default function ChapterView({
       options: {
         method: data.method,
         language: data.language,
-        engine: currentEngine,
-        modelName: currentModelName,
-        speakerName: currentSpeaker,
+        ttsEngine: currentEngine, // Use current engine from appStore
+        ttsModelName: currentModelName, // Use current model from appStore
+        ttsSpeakerName: data.speaker, // Use selected speaker from dialog
         autoCreate: data.autoCreate,
       },
     })
+    // No manual refresh needed - React Query auto-updates!
   }
 
+  // Generate audio for all segments
   const handleGenerateAllAudio = async (config: {
     speaker: string
     language: string
-    engine: string
-    modelName: string
+    ttsEngine: string
+    ttsModelName: string
     forceRegenerate: boolean
   }) => {
     if (!chapter) return
 
+    // Optimistic update: Immediately mark all non-divider segments as "processing"
+    // This gives instant visual feedback before backend confirms
     queryClient.setQueryData(
       queryKeys.chapters.detail(chapter.id),
       (old: any) => {
@@ -161,26 +189,33 @@ export default function ChapterView({
           ...old,
           segments: old.segments.map((s: any) => ({
             ...s,
+            // Only mark standard segments as processing, keep dividers unchanged
             status: s.segmentType === 'divider' ? s.status : 'processing'
           }))
         }
       }
     )
 
-    logger.debug('[ChapterView] Optimistically marked segments as processing')
+    logger.group('📋 Operations', 'Optimistic UI update', {
+      'Chapter ID': chapter.id,
+      'Operation': 'Mark segments as processing',
+      'Segment Count': chapter.segments.length
+    }, '#FF9800')
 
+    // Generation tracking is handled by database-backed job system (useActiveTTSJobs hook)
     try {
       await generateChapterMutation.mutateAsync({
         chapterId: chapter.id,
-        speaker: config.speaker,
+        ttsSpeakerName: config.speaker,  
         language: config.language,
-        engine: config.engine,
-        modelName: config.modelName,
+        ttsEngine: config.ttsEngine,
+        ttsModelName: config.ttsModelName,
         forceRegenerate: config.forceRegenerate,
       })
     } catch (err) {
       logger.error('[ChapterView] Failed to start audio generation:', err)
 
+      // On error, revert optimistic update by refetching
       queryClient.invalidateQueries({
         queryKey: queryKeys.chapters.detail(chapter.id)
       })
@@ -189,16 +224,22 @@ export default function ChapterView({
     }
   }
 
+  // Note: Cancel generation is now handled in JobsPanelDialog
+  // Users can cancel jobs by opening the Jobs panel and clicking the cancel button
+
+  // Edit segment text
   const handleSegmentEdit = (segment: Segment) => {
     setEditingSegment(segment)
     setEditDialogOpen(true)
   }
 
+  // Edit segment settings (Engine, Model, Language, Speaker)
   const handleSegmentEditSettings = (segment: Segment) => {
     setEditingSegment(segment)
     setEditSettingsDialogOpen(true)
   }
 
+  // Save edited segment text
   const handleSaveSegment = async (segmentId: string, newText: string) => {
     if (!chapter) return
 
@@ -207,15 +248,17 @@ export default function ChapterView({
       chapterId: chapter.id,
       data: { text: newText }
     })
+    // No manual refresh needed - React Query auto-updates!
   }
 
+  // Save edited segment settings
   const handleSaveSegmentSettings = async (
     segmentId: string,
     updates: {
-      engine?: string
-      modelName?: string
+      ttsEngine?: string
+      ttsModelName?: string
       language?: string
-      speakerName?: string | null
+      ttsSpeakerName?: string | null
     }
   ) => {
     if (!chapter) return
@@ -225,8 +268,10 @@ export default function ChapterView({
       chapterId: chapter.id,
       data: updates
     })
+    // No manual refresh needed - React Query auto-updates!
   }
 
+  // Delete segment
   const handleDeleteSegment = async (segment: Segment) => {
     const confirmed = await confirm(
       t('segments.delete'),
@@ -239,19 +284,22 @@ export default function ChapterView({
         segmentId: segment.id,
         chapterId: chapter?.id || '',
       })
+      // No manual refresh needed - React Query auto-updates!
     } catch (err) {
       logger.error('[ChapterView] Failed to delete segment:', getErrorMessage(err))
       alert(t('segments.messages.error'))
     }
   }
 
+  // Regenerate single segment
   const handleRegenerateSegment = async (segment: Segment) => {
     if (!chapter) return
 
-    const { startGeneration, stopGeneration } = useAppStore.getState()
-    startGeneration(chapter.id)
-
+    // Backend automatically creates job in tts_jobs table
+    // SSE events update UI in real-time (via useSSEEventHandlers)
     try {
+      // All parameters (speaker, language, engine, model, TTS options) are loaded
+      // from the segment's stored values and database settings
       await generateSegmentMutation.mutateAsync({
         segmentId: segment.id,
         chapterId: chapter.id,
@@ -259,10 +307,10 @@ export default function ChapterView({
     } catch (err) {
       logger.error('[ChapterView] Failed to regenerate segment:', getErrorMessage(err))
       alert(t('chapterView.failedRegenerateSegment'))
-      stopGeneration(chapter.id)
     }
   }
 
+  // No project selected
   if (!project) {
     return (
       <Box
@@ -286,9 +334,11 @@ export default function ChapterView({
     )
   }
 
+  // No chapter selected
   if (!chapter) {
     return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Header - Sticky */}
       <Toolbar
         sx={{
           position: 'sticky',
@@ -318,6 +368,7 @@ export default function ChapterView({
           </Button>
       </Toolbar>
 
+      {/* Content - Scrollable */}
       <Box sx={{ flex: 1, overflow: 'auto', px: 2, py: 2 }}>
         <ChapterList
           chapters={project.chapters}
@@ -329,10 +380,12 @@ export default function ChapterView({
     )
   }
 
+  // Chapter view with real-time updates from React Query
   if (!displayChapter) {
     return null
   }
 
+  // Calculate generation progress (only count audio segments, not dividers)
   const audioSegments = displayChapter.segments.filter(s => (s as any).segmentType !== 'divider')
   const completedSegments = audioSegments.filter(s => s.status === 'completed').length
   const totalSegments = audioSegments.length
@@ -340,6 +393,7 @@ export default function ChapterView({
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Header - Sticky */}
       <Toolbar
         sx={{
           position: 'sticky',
@@ -397,6 +451,8 @@ export default function ChapterView({
           </Button>
         )}
 
+        {/* Note: Cancel button moved to JobsPanel - users can cancel jobs from the Jobs badge */}
+
         {displayChapter.segments.length > 0 && completedSegments === totalSegments && (
         <Button
           variant="outlined"
@@ -409,6 +465,7 @@ export default function ChapterView({
         )}
       </Toolbar>
 
+      {/* Content - Scrollable */}
       <Box
         sx={{
           flex: 1,
@@ -416,6 +473,7 @@ export default function ChapterView({
           px: 0,
         }}
       >
+        {/* Segments */}
         {displayChapter.segments.length === 0 ? (
           <Box
             sx={{
@@ -438,6 +496,7 @@ export default function ChapterView({
           </Box>
       ) : (
         <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+          {/* Segment List - Takes remaining space */}
           <Box sx={{ flex: 1, minHeight: 0 }}>
             <SegmentList
               chapterId={displayChapter.id}
@@ -458,12 +517,14 @@ export default function ChapterView({
         )}
       </Box>
 
+      {/* Text Upload Dialog */}
       <TextUploadDialog
         open={uploadDialogOpen}
         onClose={() => setUploadDialogOpen(false)}
         onUpload={handleTextUpload}
       />
 
+      {/* Edit Segment Text Dialog */}
       <EditSegmentDialog
         open={editDialogOpen}
         segment={editingSegment}
@@ -474,6 +535,7 @@ export default function ChapterView({
         onSave={handleSaveSegment}
       />
 
+      {/* Edit Segment Settings Dialog */}
       <EditSegmentSettingsDialog
         open={editSettingsDialogOpen}
         segment={editingSegment}
@@ -484,6 +546,7 @@ export default function ChapterView({
         onSave={handleSaveSegmentSettings}
       />
 
+      {/* Generate Audio Dialog */}
       <GenerateAudioDialog
         open={generateDialogOpen}
         chapter={displayChapter}
@@ -491,6 +554,7 @@ export default function ChapterView({
         onGenerate={handleGenerateAllAudio}
       />
 
+      {/* Export Dialog */}
       <ExportDialog
         open={exportDialogOpen}
         onClose={() => setExportDialogOpen(false)}
@@ -500,6 +564,7 @@ export default function ChapterView({
         completedSegmentCount={completedSegments}
       />
 
+      {/* Confirmation Dialog */}
       <ConfirmDialog />
     </Box>
   )

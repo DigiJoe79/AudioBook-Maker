@@ -23,6 +23,7 @@ class TextSegmenter:
         """
         self.language = language
 
+        # Auto-detect spaCy model based on language
         if model_name is None:
             model_name = self._get_default_model(language)
 
@@ -73,6 +74,7 @@ class TextSegmenter:
         if not self.nlp:
             raise RuntimeError("spaCy model not loaded")
 
+        # Process text with spaCy
         doc = self.nlp(text)
 
         segments = []
@@ -85,6 +87,7 @@ class TextSegmenter:
             if not sent_text:
                 continue
 
+            # If adding this sentence exceeds max_length, save current and start new
             if current_segment and len(current_segment) + len(sent_text) > max_length:
                 segments.append({
                     "text": current_segment.strip(),
@@ -93,12 +96,16 @@ class TextSegmenter:
                 order_index += 1
                 current_segment = sent_text
             else:
+                # Add to current segment with space
                 if current_segment:
                     current_segment += " " + sent_text
                 else:
                     current_segment = sent_text
 
+            # If current segment meets min_length, we can optionally save it
+            # But we'll continue accumulating for now
 
+        # Add remaining segment
         if current_segment.strip():
             segments.append({
                 "text": current_segment.strip(),
@@ -118,6 +125,7 @@ class TextSegmenter:
         Returns:
             List of segment dictionaries with 'text' and 'order_index'
         """
+        # Split by double newlines (paragraph breaks)
         paragraphs = re.split(r'\n\s*\n', text)
 
         segments = []
@@ -152,14 +160,17 @@ class TextSegmenter:
             List of segment dictionaries with 'text' and 'order_index'
         """
         if prefer_paragraphs:
+            # Check if text has paragraph breaks
             para_segments = self.segment_by_paragraphs(text)
 
+            # If paragraphs are reasonable length, use them
             if para_segments and all(
                 min_length <= len(seg["text"]) <= max_length
                 for seg in para_segments
             ):
                 return para_segments
 
+        # Fall back to sentence segmentation
         return self.segment_by_sentences(text, min_length, max_length)
 
     def segment_by_length(
@@ -180,6 +191,7 @@ class TextSegmenter:
             List of segment dictionaries with 'text' and 'order_index'
         """
         if not break_on_sentence:
+            # Simple character-based splitting
             segments = []
             for i in range(0, len(text), target_length):
                 chunk = text[i:i+target_length].strip()
@@ -190,6 +202,7 @@ class TextSegmenter:
                     })
             return segments
 
+        # Use sentence segmentation with target length
         return self.segment_by_sentences(
             text,
             min_length=target_length // 2,
@@ -197,6 +210,7 @@ class TextSegmenter:
         )
 
 
+# Global instance (lazy loaded)
 _segmenter_cache: Dict[str, TextSegmenter] = {}
 
 

@@ -5,7 +5,7 @@ Health check endpoints
 from fastapi import APIRouter
 from models.response_models import HealthResponse, RootResponse
 from services.health_monitor import get_health_monitor
-from services.tts_manager import get_tts_manager
+from core.engine_manager import get_engine_manager
 from version import __version__
 
 router = APIRouter()
@@ -19,10 +19,12 @@ async def health_check():
     Uses a separate monitoring thread to ensure non-blocking responses,
     preventing false "connection lost" warnings during TTS model loading.
     """
+    # Get status from monitoring thread (non-blocking)
     monitor = get_health_monitor()
     status = monitor.get_status()
 
-    tts_manager = get_tts_manager()
+    # Get available TTS engines
+    tts_manager = get_engine_manager()
     engines = tts_manager.list_available_engines()
 
     return {

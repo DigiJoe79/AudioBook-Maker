@@ -2,9 +2,9 @@
 Markdown Parser for Project Import
 
 Parses markdown files into audiobook project structure:
--
--
--
+- # Heading 1 → Project title
+- ## Heading 2 → Ignored (Acts, etc.)
+- ### Heading 3 → Chapter (strip numbering: "Chapter 1: Name" → "Name")
 - *** → Divider marker
 - Text → Chapter content (to be segmented)
 """
@@ -43,7 +43,7 @@ class MarkdownParser:
             }
 
         Raises:
-            ValueError: If required structure is missing (no
+            ValueError: If required structure is missing (no # or ###)
         """
         lines = md_content.split('\n')
 
@@ -57,36 +57,43 @@ class MarkdownParser:
         while i < len(lines):
             line = lines[i].strip()
 
+            # Skip empty lines (but collect them in text blocks)
             if not line:
                 if current_text_block or (current_chapter and current_chapter['content_blocks']):
                     current_text_block.append('')
                 i += 1
                 continue
 
+            # Project title (# Heading 1)
             if line.startswith('# ') and not project_title:
                 project_title = line[2:].strip()
                 logger.debug(f"Found project title: {project_title}")
 
+                # Check next line for description (e.g., "by Author")
                 if i + 1 < len(lines):
                     next_line = lines[i + 1].strip()
                     if next_line and not next_line.startswith('#'):
                         project_description = next_line
                         logger.debug(f"Found project description: {project_description}")
-                        i += 1
+                        i += 1  # Skip description line
                 i += 1
                 continue
 
+            # Ignore ## Heading 2
             if line.startswith('## '):
                 logger.debug(f"Ignoring heading 2: {line[3:]}")
                 i += 1
                 continue
 
+            # Chapter (### Heading 3)
             if line.startswith('### '):
+                # Save previous chapter if exists
                 if current_chapter:
                     MarkdownParser._finalize_text_block(current_chapter, current_text_block)
                     chapters.append(current_chapter)
                     current_text_block = []
 
+                # Extract chapter title (remove numbering)
                 raw_title = line[4:].strip()
                 chapter_title = MarkdownParser._clean_chapter_title(raw_title)
 
@@ -100,25 +107,31 @@ class MarkdownParser:
                 i += 1
                 continue
 
+            # Divider (*** or * * *)
             if re.match(r'^\*\s*\*\s*\*\s*$', line):
                 if current_chapter:
+                    # Finalize current text block
                     MarkdownParser._finalize_text_block(current_chapter, current_text_block)
                     current_text_block = []
 
+                    # Add divider
                     current_chapter['content_blocks'].append({"type": "divider"})
                     logger.debug(f"Found divider in chapter '{current_chapter['title']}'")
                 i += 1
                 continue
 
+            # Regular text line
             if current_chapter:
                 current_text_block.append(line)
 
             i += 1
 
+        # Finalize last chapter
         if current_chapter:
             MarkdownParser._finalize_text_block(current_chapter, current_text_block)
             chapters.append(current_chapter)
 
+        # Validation
         if not project_title:
             raise ValueError("No project title found (missing # heading)")
 
@@ -150,6 +163,7 @@ class MarkdownParser:
             "1 - This is the Name" → "This is the Name"
             "This is the Name" → "This is the Name"
         """
+        # Remove patterns like "Chapter 1:", "Kapitel 1:", "Ch. 1:", etc.
         cleaned = re.sub(
             r'^(Chapter|Kapitel|Ch\.?)\s+\d+\s*:\s*',
             '',
@@ -157,6 +171,7 @@ class MarkdownParser:
             flags=re.IGNORECASE
         )
 
+        # Remove patterns like "1.", "1 -", "1)", etc.
         cleaned = re.sub(r'^\d+[\.\-\)\s]+', '', cleaned)
 
         return cleaned.strip()
@@ -165,6 +180,7 @@ class MarkdownParser:
     def _finalize_text_block(chapter: Dict, text_lines: List[str]):
         """Add accumulated text lines as content block"""
         if text_lines:
+            # Join lines and trim whitespace
             text = '\n'.join(text_lines).strip()
             if text:
                 chapter['content_blocks'].append({

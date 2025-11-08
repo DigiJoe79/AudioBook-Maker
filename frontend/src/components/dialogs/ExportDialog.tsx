@@ -1,3 +1,8 @@
+/**
+ * Export Dialog Component
+ *
+ * Allows users to export a chapter with various audio format options
+ */
 
 import React, { useState, useMemo, useEffect } from 'react'
 import {
@@ -31,6 +36,7 @@ import type { Chapter, Project } from '../../types'
 import { exportApi } from '../../services/api'
 import { useAppStore } from '../../store/appStore'
 import { useTranslation } from 'react-i18next'
+import { logger } from '../../utils/logger'
 
 interface ExportDialogProps {
   open: boolean
@@ -41,6 +47,7 @@ interface ExportDialogProps {
   completedSegmentCount: number
 }
 
+// Quality presets for all formats
 type QualityLevel = 'low' | 'medium' | 'high'
 
 const QUALITY_PRESETS = {
@@ -56,7 +63,7 @@ const QUALITY_PRESETS = {
   },
   wav: {
     low: { label: 'Low (22 kHz)', labelShort: 'Low' },
-    medium: { label: 'Medium (24 kHz, XTTS Standard)', labelShort: 'Medium' },
+    medium: { label: 'Medium (24 kHz)', labelShort: 'Medium' },
     high: { label: 'High (48 kHz)', labelShort: 'High' },
   },
 }
@@ -72,10 +79,12 @@ export function ExportDialog({
   const { t } = useTranslation()
   const settings = useAppStore((state) => state.settings)
 
+  // Initialize from backend settings
   const [format, setFormat] = useState<'mp3' | 'm4a' | 'wav'>(settings?.audio.defaultFormat ?? 'm4a')
   const [quality, setQuality] = useState<QualityLevel>(settings?.audio.defaultQuality ?? 'medium')
   const [customFilename, setCustomFilename] = useState('')
 
+  // Use pause from backend settings
   const pauseBetweenSegments = settings?.audio.pauseBetweenSegments ?? 500
   const [downloadSuccess, setDownloadSuccess] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
@@ -83,11 +92,13 @@ export function ExportDialog({
   const exportWorkflow = useExportWorkflow(chapter.id)
   const { progress, isExporting, startExport, cancelExport, downloadExport } = exportWorkflow
 
+  // Generate default filename and reset settings when dialog opens
   useEffect(() => {
     if (open) {
       const defaultName = `${project.title} - ${chapter.title}`
       setCustomFilename(defaultName)
 
+      // Update format and quality from current settings
       if (settings?.audio.defaultFormat) {
         setFormat(settings.audio.defaultFormat)
       }
@@ -97,18 +108,22 @@ export function ExportDialog({
     }
   }, [open, chapter, project, settings?.audio.defaultFormat, settings?.audio.defaultQuality])
 
+  // Check if all segments are completed
   const canExport = completedSegmentCount === segmentCount && segmentCount > 0
 
+  // Estimate file size (rough calculation based on quality preset)
   const estimatedFileSize = useMemo(() => {
     if (!progress?.duration) return null
 
     const duration = progress.duration
+    // Bitrate mapping for quality levels (in kbps)
     const bitrateMap = {
       mp3: { low: 96, medium: 128, high: 192 },
       m4a: { low: 96, medium: 128, high: 192 },
-      wav: { low: 0, medium: 0, high: 0 },
+      wav: { low: 0, medium: 0, high: 0 }, // Calculate from sample rate for WAV
     }
 
+    // Sample rate mapping for quality levels
     const sampleRateMap = {
       mp3: { low: 22050, medium: 44100, high: 48000 },
       m4a: { low: 24000, medium: 44100, high: 48000 },
@@ -116,13 +131,15 @@ export function ExportDialog({
     }
 
     if (format === 'wav') {
+      // WAV: uncompressed, calculate from sample rate
       const sr = sampleRateMap[format][quality]
-      const bytesPerSecond = sr * 2 * 2
-      return (duration * bytesPerSecond) / (1024 * 1024)
+      const bytesPerSecond = sr * 2 * 2 // 16-bit stereo
+      return (duration * bytesPerSecond) / (1024 * 1024) // MB
     } else {
+      // MP3 / M4A: use bitrate
       const bitrateNum = bitrateMap[format][quality] * 1000
       const bytes = (bitrateNum * duration) / 8
-      return bytes / (1024 * 1024)
+      return bytes / (1024 * 1024) // MB
     }
   }, [format, quality, progress?.duration])
 
@@ -135,18 +152,20 @@ export function ExportDialog({
         customFilename: customFilename,
       })
     } catch (error) {
-      console.error('Failed to start export:', error)
+      logger.error('[ExportDialog] Failed to start export:', error)
     }
   }
 
   const handleClose = async () => {
     if (!isExporting || progress?.status === 'completed') {
+      // Cleanup export file when closing without download
       if (exportWorkflow.jobId && progress?.status === 'completed' && !downloadSuccess) {
         try {
           await exportApi.deleteExport(exportWorkflow.jobId)
-          console.log('Export file cleaned up on dialog close')
+          logger.debug('[ExportDialog] Export file cleaned up on dialog close')
         } catch (error) {
-          console.warn('Failed to cleanup export file:', error)
+          logger.warn('[ExportDialog] Failed to cleanup export file:', error)
+          // Non-critical error, don't block closing
         }
       }
 
@@ -162,29 +181,38 @@ export function ExportDialog({
       setDownloadError(null)
       setDownloadSuccess(false)
 
+      // Generate filename with extension
       const filenameWithExt = `${customFilename}.${format}`
 
       const savedPath = await downloadExport(filenameWithExt)
 
       if (savedPath) {
         setDownloadSuccess(true)
-        console.log(`File saved to: ${savedPath}`)
+        logger.group(
+          '📤 Export',
+          'File saved successfully',
+          { path: savedPath },
+          '#4CAF50'
+        )
 
+        // Cleanup export file after successful download
         if (exportWorkflow.jobId) {
           try {
             await exportApi.deleteExport(exportWorkflow.jobId)
-            console.log('Export file cleaned up successfully')
+            logger.debug('[ExportDialog] Export file cleaned up successfully')
           } catch (error) {
-            console.warn('Failed to cleanup export file:', error)
+            logger.warn('[ExportDialog] Failed to cleanup export file:', error)
+            // Non-critical error, don't show to user
           }
         }
       } else {
-        console.log('Download cancelled by user')
+        // User cancelled
+        logger.debug('[ExportDialog] Download cancelled by user')
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error'
       setDownloadError(errorMsg)
-      console.error('Download failed:', error)
+      logger.error('[ExportDialog] Download failed:', error)
     }
   }
 
@@ -214,12 +242,14 @@ export function ExportDialog({
 
       <DialogContent>
         <Stack spacing={3} sx={{ mt: 2 }}>
+          {/* Warning if not all segments are completed */}
           {!canExport && (
             <Alert severity="warning">
               {t('export.warnings.allSegmentsRequired', { completed: completedSegmentCount, total: segmentCount })}
             </Alert>
           )}
 
+          {/* Export in progress */}
           {isExporting && progress && (
             <Box>
               <Box display="flex" alignItems="center" mb={1}>
@@ -238,6 +268,7 @@ export function ExportDialog({
             </Box>
           )}
 
+          {/* Export completed */}
           {progress?.status === 'completed' && (
             <>
               <Alert
@@ -266,12 +297,14 @@ export function ExportDialog({
                 )}
               </Alert>
 
+              {/* Download success feedback */}
               {downloadSuccess && (
                 <Alert severity="success">
                   {t('export.status.fileSaved')}
                 </Alert>
               )}
 
+              {/* Download error feedback */}
               {downloadError && (
                 <Alert severity="error">
                   {t('export.status.downloadFailed', { error: downloadError })}
@@ -280,14 +313,17 @@ export function ExportDialog({
             </>
           )}
 
+          {/* Export failed */}
           {progress?.status === 'failed' && (
             <Alert severity="error">
               {t('export.status.failed', { error: progress.error || 'Unknown error' })}
             </Alert>
           )}
 
+          {/* Export options (hidden during export) */}
           {!isExporting && progress?.status !== 'completed' && (
             <>
+              {/* Output filename */}
               <TextField
                 label={t('export.filename')}
                 value={customFilename}
@@ -296,6 +332,7 @@ export function ExportDialog({
                 helperText={t('export.filenameHint')}
               />
 
+              {/* Format selection */}
               <FormControl fullWidth>
                 <InputLabel>{t('export.audioFormat')}</InputLabel>
                 <Select
@@ -312,6 +349,7 @@ export function ExportDialog({
                 </FormHelperText>
               </FormControl>
 
+              {/* Quality selector - unified for all formats */}
               <FormControl fullWidth>
                 <InputLabel>{t('export.quality')}</InputLabel>
                 <Select
@@ -330,6 +368,7 @@ export function ExportDialog({
 
 
 
+              {/* File size estimate (if available) */}
               {estimatedFileSize && (
                 <Typography variant="body2" color="text.secondary">
                   {t('export.estimatedSize', { size: estimatedFileSize.toFixed(2) })}
@@ -341,6 +380,7 @@ export function ExportDialog({
       </DialogContent>
 
       <DialogActions>
+        {/* Cancel button (different behavior based on state) */}
         {isExporting && progress?.status === 'running' ? (
           <Button onClick={cancelExport} color="error" startIcon={<CancelIcon />}>
             {t('export.cancelExport')}
@@ -351,6 +391,7 @@ export function ExportDialog({
           </Button>
         )}
 
+        {/* Start export button */}
         {!isExporting && progress?.status !== 'completed' && (
           <Button
             onClick={handleStartExport}

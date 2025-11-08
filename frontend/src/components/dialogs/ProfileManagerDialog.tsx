@@ -1,3 +1,8 @@
+/**
+ * ProfileManagerDialog - Backend Profile CRUD Management
+ *
+ * Allows users to create, edit, and delete backend connection profiles.
+ */
 
 import { useState, useEffect } from 'react'
 import {
@@ -63,8 +68,10 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
   const [formErrors, setFormErrors] = useState<{ name?: string; url?: string }>({})
   const [isFormVisible, setIsFormVisible] = useState(false)
 
+  // Confirmation dialog hook
   const { confirm, ConfirmDialog } = useConfirm()
 
+  // Load profiles on mount and when dialog opens
   useEffect(() => {
     if (open) {
       setProfiles(loadProfiles())
@@ -73,6 +80,7 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
     }
   }, [open])
 
+  // Handle add new profile
   const handleAdd = () => {
     setEditingProfileId(null)
     setFormData({ name: '', url: 'http://127.0.0.1:8765', isDefault: false })
@@ -80,6 +88,7 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
     setIsFormVisible(true)
   }
 
+  // Handle edit existing profile
   const handleEdit = (profile: BackendProfile) => {
     setEditingProfileId(profile.id)
     setFormData({
@@ -91,6 +100,7 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
     setIsFormVisible(true)
   }
 
+  // Handle delete profile
   const handleDelete = async (profile: BackendProfile) => {
     const confirmed = await confirm(
       t('profileManager.deleteTitle'),
@@ -103,18 +113,22 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
     }
   }
 
+  // Handle toggle default
   const handleToggleDefault = (profile: BackendProfile) => {
     updateProfile(profile.id, { isDefault: !profile.isDefault })
     setProfiles(loadProfiles())
     onProfilesChanged()
   }
 
+  // Validate form
   const validateForm = (): boolean => {
     const errors: { name?: string; url?: string } = {}
 
+    // Validate name
     if (!formData.name.trim()) {
       errors.name = t('profileManager.nameRequired')
     } else {
+      // Check for duplicate name (excluding current profile if editing)
       const isDuplicate = profiles.some(
         (p) => p.id !== editingProfileId && p.name.toLowerCase() === formData.name.toLowerCase()
       )
@@ -123,6 +137,7 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
       }
     }
 
+    // Validate URL
     const urlValidation = validateUrl(formData.url)
     if (!urlValidation.valid) {
       errors.url = urlValidation.error
@@ -132,12 +147,15 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
     return Object.keys(errors).length === 0
   }
 
+  // Handle save
   const handleSave = () => {
     if (!validateForm()) return
 
     if (editingProfileId) {
+      // Update existing
       updateProfile(editingProfileId, formData)
     } else {
+      // Create new - add lastConnected: null
       saveProfile({ ...formData, lastConnected: null })
     }
 
@@ -147,6 +165,7 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
     onProfilesChanged()
   }
 
+  // Handle cancel
   const handleCancel = () => {
     setIsFormVisible(false)
     setEditingProfileId(null)
@@ -165,6 +184,7 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
       </DialogTitle>
 
       <DialogContent>
+        {/* Profiles Table */}
         {!isFormVisible && (
           <Box>
             {profiles.length === 0 ? (
@@ -228,6 +248,7 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
           </Box>
         )}
 
+        {/* Profile Form */}
         {isFormVisible && (
           <Box>
             <Typography variant="subtitle2" gutterBottom sx={{ mb: 2 }}>
@@ -282,6 +303,7 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
         <Button onClick={onClose}>{t('common.close')}</Button>
       </DialogActions>
 
+      {/* Confirmation Dialog */}
       <ConfirmDialog />
     </Dialog>
   )

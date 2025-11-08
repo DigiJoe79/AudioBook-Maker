@@ -1,3 +1,7 @@
+/**
+ * Command Toolbar - Draggable items for quick segment creation
+ * Users can drag these items into the segment list
+ */
 
 import { Box, Paper, Typography, Chip, Tooltip } from '@mui/material'
 import { useDraggable, useDroppable } from '@dnd-kit/core'
@@ -7,6 +11,7 @@ import HorizontalRuleIcon from '@mui/icons-material/HorizontalRule'
 import type { CommandItem } from '../types'
 import { useTranslation } from 'react-i18next'
 
+// Available command items - labels will be translated dynamically
 const getCommandItems = (t: any): CommandItem[] => [
   {
     id: 'cmd-text-segment',
@@ -28,6 +33,9 @@ interface DraggableCommandItemProps {
   item: CommandItem
 }
 
+/**
+ * Draggable Command Chip (Compact Style)
+ */
 function DraggableCommandItem({ item }: DraggableCommandItemProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: item.id,
@@ -68,6 +76,10 @@ interface CommandToolbarProps {
   className?: string
 }
 
+/**
+ * Command Toolbar Component
+ * Displays draggable items for quick segment creation
+ */
 export default function CommandToolbar({ className }: CommandToolbarProps) {
   const { t } = useTranslation()
   const { setNodeRef, isOver } = useDroppable({

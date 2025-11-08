@@ -2,7 +2,7 @@
 
 > A modern desktop application for creating audiobooks with advanced text-to-speech and voice cloning capabilities
 
-[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/DigiJoe79/audiobook-maker)
+[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/DigiJoe79/audiobook-maker/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://tauri.app)
 
@@ -19,7 +19,9 @@
 - **🎵 Multiple Export Formats** - Export to MP3, M4A, or WAV with quality presets
 - **✂️ Smart Text Segmentation** - Automatic text splitting using NLP (spaCy)
 - **🎬 Scene Breaks** - Divider segments for customizable pauses
-- **🔌 Multi-Engine Architecture** - Extensible TTS system (XTTS, more coming)
+- **🔌 Plug-and-Play TTS Engines** - Add custom engines without code changes! ([Guide](docs/ENGINE_DEVELOPMENT_GUIDE.md))
+- **⚡ Real-Time Updates** - Server-Sent Events for instant UI feedback (99.5% network reduction)
+- **🔄 Job Management** - Resume cancelled jobs, track progress, persistent queue
 - **💾 Session Recovery** - Automatically restore your work after disconnection
 - **📝 Markdown Import** - Import entire projects from structured markdown files
 
@@ -51,7 +53,8 @@
 
 ### TTS Engines
 - **[XTTS v2](https://github.com/coqui-ai/TTS)** (v2.0.2 & v2.0.3) - High-quality voice cloning with optional GPU acceleration (CUDA)
-- **more TTS Engines coming** 
+- **Chatterbox** (experimental) - Research-grade TTS engine
+- **Add Your Own!** - Plug-and-play system for custom engines ([Development Guide](docs/ENGINE_DEVELOPMENT_GUIDE.md)) 
 
 ## Architecture
 
@@ -59,42 +62,51 @@
 ┌─────────────────────────────────────────────────────────┐
 │                   Tauri Desktop App                     │
 ├─────────────────────────────────────────────────────────┤
-│                                                         │
 │  ┌──────────────────────────────────────────────────┐   │
 │  │         React Frontend (Port 5173)               │   │
-│  │  ┌────────────────────────────────────────────┐  │   │
-│  │  │  StartPage (/)  → Backend Connection       │  │   │
-│  │  └────────────────────────────────────────────┘  │   │
-│  │  ┌────────────────────────────────────────────┐  │   │
-│  │  │  MainApp (/app) → Protected Main UI        │  │   │
-│  │  │   • Drag & Drop Layer (@dnd-kit)           │  │   │
-│  │  │   • State Management (React Query+Zustand) │  │   │
-│  │  │   • HTTP API Client (dynamic backend URL)  │  │   │
-│  │  └────────────────────────────────────────────┘  │   │
+│  │   • Real-Time Updates (SSE)                      │   │
+│  │   • Drag & Drop Layer (@dnd-kit)                 │   │
+│  │   • State Management (React Query + Zustand)     │   │
+│  │   • HTTP API Client (dynamic backend URL)        │   │
 │  └──────────────────────────────────────────────────┘   │
-│                                                         │
 │  ┌──────────────────────────────────────────────────┐   │
 │  │      Rust Backend (Tauri Commands/IPC)           │   │
 │  │   • File dialogs  • Health checks  • System API  │   │
 │  └──────────────────────────────────────────────────┘   │
-│                                                         │
 └─────────────────────────────────────────────────────────┘
                            │
-                           │ HTTP/REST API
+                           │ HTTP/REST API + SSE
                            ▼
 ┌─────────────────────────────────────────────────────────┐
 │              Python Backend (Port 8765)                 │
 ├─────────────────────────────────────────────────────────┤
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
-│  │  FastAPI     │  │  TTS Engines │  │   SQLite     │   │
-│  │  REST API    │  │  (XTTS)      │  │   Database   │   │
+│  │  FastAPI     │  │   SQLite     │  │ TTS Worker   │   │
+│  │  REST + SSE  │  │   Database   │  │ (Job Queue)  │   │
 │  └──────────────┘  └──────────────┘  └──────────────┘   │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
-│  │ Audio Export │  │ Text Segment │  │   Speakers   │   │
-│  │  (FFmpeg)    │  │   (spaCy)    │  │  Management  │   │
+│  │Audio Export  │  │Text Segment  │  │  Speakers    │   │
+│  │  (FFmpeg)    │  │   (spaCy)    │  │ Management   │   │
 │  └──────────────┘  └──────────────┘  └──────────────┘   │
-└─────────────────────────────────────────────────────────┘
+│  ┌──────────────────────────────────────────────────┐   │
+│  │         Engine Manager (Auto-Discovery)          │   │
+│  └──────────────────────────────────────────────────┘   │
+└───────────────────────────┬─────────────────────────────┘
+                            │ HTTP (localhost)
+           ┌────────────────┼────────────────┐
+           ▼                ▼                ▼
+     ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      
+     │XTTS Engine  │  │Chatterbox   │  │Custom Engine│
+     │(Port 8766)  │  │(Port 8767)  │  │(Port 876X)  │
+     │Own VENV     │  │Own VENV     │  │Own VENV     │
+     └─────────────┘  └─────────────┘  └─────────────┘
 ```
+
+**New in v0.2.0:**
+- Engine servers run in separate processes with isolated VENVs
+- Real-time updates via Server-Sent Events (SSE)
+- Database-backed job queue with resume functionality
+- Auto-discovery system for plug-and-play engines
 
 ## Quick Start
 
@@ -115,15 +127,25 @@ git clone https://github.com/DigiJoe79/audiobook-maker.git
 cd audiobook-maker
 ```
 
-#### 2. Backend Setup
+#### 2. Backend Core Setup
+
+**⚠️ Important:** v0.2.0+ uses separate VENVs for backend and engines.
 
 ```bash
-# Windows quick install
 cd backend
-install_backend.bat
+
+# Windows
+setup.bat
+
+# Linux/Mac
+chmod +x setup.sh
+./setup.sh
 ```
 
-**or**
+This installs the backend core (FastAPI, spaCy, SQLite) **without TTS engines**.
+
+<details>
+<summary><b>Manual Setup (click to expand)</b></summary>
 
 ```bash
 cd backend
@@ -137,55 +159,60 @@ venv\Scripts\activate
 # Linux/Mac:
 source venv/bin/activate
 
-# Install PyTorch with CUDA support (optional, for GPU)
-# For CUDA 11.8:
-pip install torch==2.1.1+cu118 torchaudio==2.1.1+cu118 --index-url https://download.pytorch.org/whl/cu118
-# For CUDA 12.1:
-pip install torch==2.1.1+cu121 torchaudio==2.1.1+cu121 --index-url https://download.pytorch.org/whl/cu121
-# For CPU only:
-pip install torch==2.1.1 torchaudio==2.1.1
-
 # Install dependencies
 pip install -r requirements.txt
 
 # Download spaCy language models
 python install_spacy_models.py
-
-# Download recommended XTTS model(2.0.2)
-python install_xtts_models.py
 ```
+</details>
 
-#### 3. Frontend Setup
+#### 3. Engine Setup
 
 ```bash
-cd ../frontend
+cd backend/engines/xtts
+
+# Windows
+setup.bat
+
+# Linux/Mac
+chmod +x setup.sh
+./setup.sh
+```
+
+This creates an **isolated VENV** for XTTS with PyTorch + CUDA support.
+
+```bash
+cd backend/engines/chatterbox
+
+# Windows
+setup.bat
+
+# Linux/Mac
+chmod +x setup.sh
+./setup.sh
+```
+
+This creates an **isolated VENV** for Chatterbox with PyTorch + CUDA support.
+
+#### 4. Frontend Setup
+
+```bash
+cd frontend  # From project root
 npm install
 ```
 
-#### 4. Start the Backend
+#### 5. Start the Application
 
-```bash
-# Windows quick start
-cd backend
-start_backend.bat
-```
-
-**or**
-
+**Terminal 1 - Backend:**
 ```bash
 cd backend
-
-# Activate virtual environment
-# Windows:
-venv\Scripts\activate
-# Linux/Mac:
-source venv/bin/activate
-
-python main.py
+venv\Scripts\python main.py  # Windows
+# OR
+venv/bin/python main.py       # Linux/Mac
 ```
 
-#### 5. Run the Application
-
+**Terminal 2 - Frontend:**
 ```bash
 cd frontend
 npm run dev:tauri
@@ -194,8 +221,9 @@ npm run dev:tauri
 The application will open automatically. On first launch:
 1. Click "Connect to Backend"
 2. Default URL: `http://localhost:8765` (should work automatically)
-3. Create a speaker and upload at least one sample for voice cloning
-4. Start creating audiobooks!
+3. Select a TTS engine
+4. Create a speaker and upload voice samples
+5. Start creating audiobooks!
 
 ## Usage Guide
 
@@ -268,28 +296,52 @@ This is the content of Chapter 3 - Scene 2
 
 ```
 audiobook-maker/
-├── frontend/              # Tauri + React frontend
+├── frontend/                      # Tauri + React frontend
 │   ├── src/
-│   │   ├── components/    # React components
-│   │   ├── hooks/         # Custom React hooks (React Query)
-│   │   ├── pages/         # Route components
-│   │   ├── services/      # API clients
-│   │   ├── store/         # Zustand stores
-│   │   └── types/         # TypeScript definitions
-│   ├── src-tauri/         # Rust backend (Tauri)
-│   └── tests/             # Playwright E2E tests
+│   │   ├── components/            # React components
+│   │   ├── contexts/              # React contexts (SSE)
+│   │   ├── hooks/                 # Custom React hooks (React Query)
+│   │   ├── pages/                 # Route components
+│   │   ├── services/              # API clients
+│   │   ├── store/                 # Zustand stores
+│   │   └── types/                 # TypeScript definitions
+│   ├── src-tauri/                 # Rust backend (Tauri)
+│   └── tests/                     # Playwright E2E tests
 │
-├── backend/               # Python FastAPI backend
-│   ├── api/               # FastAPI route handlers
-│   ├── services/          # Business logic
-│   │   ├── xtts_engine.py
-│   │   ├── audio_service.py
-│   │   └── text_segmenter.py
-│   ├── db/                # Database layer
-│   ├── models/            # Pydantic models
-│   └── data/              # Runtime data (audio, speakers)
+├── backend/                       # Python FastAPI backend
+│   ├── api/                       # FastAPI route handlers
+│   │   ├── tts.py                 # TTS & job management
+│   │   ├── events.py              # Server-Sent Events
+│   │   └── ...
+│   ├── core/                      # Core systems (NEW in v0.2.0)
+│   │   ├── engine_discovery.py    # Auto-discover engines
+│   │   ├── engine_manager.py      # Process management
+│   │   └── tts_worker.py          # Background job worker
+│   ├── services/                  # Business logic
+│   │   ├── event_broadcaster.py   # SSE broadcaster
+│   │   ├── audio_service.py       # Audio export
+│   │   └── text_segmenter.py      # spaCy segmentation
+│   ├── db/                        # Database layer
+│   │   ├── database.py
+│   │   └── repositories.py
+│   ├── models/                    # Pydantic models
+│   │   └── response_models.py     # API response models
+│   ├── engines/                   # TTS Engine Servers (NEW in v0.2.0)
+│   │   ├── base_server.py         # Base class for engines
+│   │   ├── _template/             # Template for new engines
+│   │   ├── xtts/                  # XTTS engine (own VENV)
+│   │   │   ├── server.py
+│   │   │   ├── engine.yaml
+│   │   │   └── venv/
+│   │   └── chatterbox/            # Chatterbox engine (own VENV)
+│   │       ├── server.py
+│   │       ├── engine.yaml
+│   │       └── venv/
+│   └── data/                      # Runtime data (audio, speakers)
 │
-└── database/              # SQLite schema
+├── docs/                          # Documentation
+│
+└── database/                      # SQLite schema
 ```
 
 ### API Documentation
@@ -311,19 +363,26 @@ npm run build:tauri
 ```
 ## Roadmap
 
-### Current Version (0.1.0)
+### Current Version (0.2.0)
 - ✅ Core audiobook creation workflow
 - ✅ XTTS voice cloning integration
 - ✅ Drag & drop organization
 - ✅ Multi-format export (MP3/M4A/WAV)
+- ✅ Real-time updates via Server-Sent Events (SSE)
+- ✅ Database-backed job queue with resume functionality
+- ✅ Plug-and-play engine system with auto-discovery
+- ✅ Isolated VENVs per engine (no dependency conflicts)
 - ✅ Session state preservation
 - ✅ Markdown import
 
 ### Planned Features
-- 🔄 Additional TTS engines (OpenAI TTS, ElevenLabs, Azure)
+- 🔄 Additional TTS engines
 - 🔄 Whisper integration for quality checks
 - 🔄 Pronunciation dictionary
 - 🔄 Audio effects (normalization, noise reduction)
+
+### For Developers
+Want to add your own TTS engine? See the **[Engine Development Guide](docs/ENGINE_DEVELOPMENT_GUIDE.md)**!
 
 ## Troubleshooting
 
@@ -358,7 +417,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 - 🐛 Issues: [GitHub Issues](https://github.com/DigiJoe79/audiobook-maker/issues)
-- 💬 Discussions: [GitHub Discussions](https://github.com/DigiJoe79/audiobook-maker/discussions)
 
 ---
 

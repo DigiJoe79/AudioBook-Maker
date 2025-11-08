@@ -1,3 +1,7 @@
+/**
+ * SegmentList with Drag & Drop support
+ * Supports reordering segments and creating new segments via Command Toolbar
+ */
 
 import React, { useRef, useEffect, useState } from 'react'
 import {
@@ -58,6 +62,7 @@ import { useUpdateSegment } from '../hooks/useSegmentsQuery'
 import { useAppStore } from '../store/appStore'
 import { fetchSpeakers } from '../services/settingsApi'
 import { isActiveSpeaker } from '../utils/speakerHelpers'
+import { logger } from '../utils/logger'
 import type { Segment } from '../types'
 
 interface SegmentListProps {
@@ -75,6 +80,9 @@ interface SegmentListProps {
   onSegmentRegenerate?: (segment: Segment) => void
 }
 
+// ============================================================================
+// SortableSegmentItem - Individual draggable segment
+// ============================================================================
 
 interface SortableSegmentItemProps {
   segment: Segment
@@ -82,7 +90,7 @@ interface SortableSegmentItemProps {
   isSelected: boolean
   isOver: boolean
   hasSpeakers: boolean
-  speakers: any[]
+  speakers: any[] // Speaker list for validation
   onSegmentClick: (segment: Segment) => void
   onSegmentPlay?: (segment: Segment, continuous?: boolean) => void
   onSegmentEdit?: (segment: Segment) => void
@@ -124,6 +132,7 @@ function SortableSegmentItem({
     transition,
   }
 
+  // Divider segment (pause)
   if (segment.segmentType === 'divider') {
     return (
       <div ref={setNodeRef} style={style}>
@@ -141,6 +150,7 @@ function SortableSegmentItem({
     )
   }
 
+  // Standard segment (text/audio)
   const hasAudio = !!segment.audioPath
 
   const getStatusColor = (status?: string): 'default' | 'primary' | 'success' | 'error' | 'warning' => {
@@ -149,6 +159,8 @@ function SortableSegmentItem({
         return 'success'
       case 'processing':
         return 'primary'
+      case 'queued':
+        return 'default'  
       case 'failed':
         return 'error'
       case 'pending':
@@ -163,6 +175,8 @@ function SortableSegmentItem({
         return 'success.main'
       case 'processing':
         return 'warning.main'
+      case 'queued':
+        return 'action.selected'
       case 'failed':
         return 'error.main'
       case 'pending':
@@ -177,6 +191,8 @@ function SortableSegmentItem({
         return t('segments.status.completed')
       case 'processing':
         return t('segments.status.processing')
+      case 'queued':
+        return t('segments.status.queued')
       case 'failed':
         return t('segments.status.failed')
       case 'pending':
@@ -197,10 +213,25 @@ function SortableSegmentItem({
     return formatTime(duration)
   }
 
+  const getHandleColor = (status?: string): string => {
+    switch (status) {
+      case 'completed':
+        return 'success.main'
+      case 'processing':
+      case 'queued':
+        return 'warning.main'  // Yellow/orange handle for both queued and processing
+      case 'failed':
+        return 'error.main'
+      case 'pending':
+      default:
+        return 'action.selected'
+    }
+  }
+
   const getBorderColor = () => {
     if (isPlaying) return 'success.main'
     if (isSelected) return 'primary.main'
-    return getStatusBgColor(segment.status)
+    return getHandleColor(segment.status)
   }
 
   return (
@@ -227,6 +258,7 @@ function SortableSegmentItem({
       >
         <ListItemButton sx={{ py: 1.5, px: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', gap: 1 }}>
+          {/* Drag Handle - Left */}
           <Box
             {...attributes}
             {...listeners}
@@ -243,6 +275,7 @@ function SortableSegmentItem({
             <DragIndicator fontSize="small" />
           </Box>
 
+          {/* Action Buttons */}
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
             <Stack direction="row" spacing={0.5} alignItems="center">
               {onSegmentPlay && (
@@ -263,9 +296,19 @@ function SortableSegmentItem({
               )}
 
               {onSegmentRegenerate && (() => {
-                const speakerIsActive = isActiveSpeaker(segment.speakerName, speakers);
-                const isDisabled = segment.status === 'processing' || !hasSpeakers || !speakerIsActive;
+                const speakerIsActive = isActiveSpeaker(segment.ttsSpeakerName, speakers);
+                const isDisabled = segment.status === 'processing' || segment.status === 'queued' || !hasSpeakers || !speakerIsActive;
 
+                // Always log - we need to see this! JoeLog
+                // console.log('[Regenerate] Segment', segment.orderIndex ?? 'unknown', {
+                //   ttsSpeakerName: segment.ttsSpeakerName,
+                //   hasSpeakers,
+                //   speakersCount: speakers?.length || 0,
+                //   speakerIsActive,
+                //   isDisabled,
+                //   status: segment.status,
+                //   speakers: speakers?.map(s => ({ name: s.name, isActive: s.isActive }))
+                // });
 
                 return (
                   <IconButton
@@ -279,10 +322,12 @@ function SortableSegmentItem({
                       !hasSpeakers
                         ? t('audioGeneration.noSpeakers.title')
                         : !speakerIsActive
-                          ? t('segments.speakerInactive', { speaker: segment.speakerName || t('segments.noSpeaker') })
-                          : segment.status === 'processing'
-                            ? t('segments.generating')
-                            : t('segments.actions.regenerate')
+                          ? t('segments.speakerInactive', { speaker: segment.ttsSpeakerName || t('segments.noSpeaker') })
+                          : segment.status === 'queued'
+                            ? t('segments.queued')
+                            : segment.status === 'processing'
+                              ? t('segments.generating')
+                              : t('segments.actions.regenerate')
                     }
                   >
                     <Refresh fontSize="small" />
@@ -303,7 +348,9 @@ function SortableSegmentItem({
             </Stack>
           </Box>
 
+          {/* Column Layout */}
           <Box sx={{ display: 'flex', gap: 2.5, flex: 1, alignItems: 'center', my: 0.5, ml: 0.5 }}>
+            {/* Column 1: Segment Number (status-colored chip with tooltip) */}
             <Box sx={{ flexShrink: 0 }}>
               <Tooltip title={getStatusText(segment.status)} arrow>
                 <Chip
@@ -324,8 +371,10 @@ function SortableSegmentItem({
               </Tooltip>
             </Box>
 
+            {/* Vertical Divider */}
             <Divider orientation="vertical" flexItem sx={{ height: 24, alignSelf: 'center', borderRightWidth: 2, borderColor: 'white' }} />
 
+            {/* Column 2: Text Content (flexible) */}
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Typography
                 variant="body2"
@@ -346,6 +395,7 @@ function SortableSegmentItem({
         </ListItemButton>
       </ListItem>
 
+      {/* Segment Menu */}
       <SegmentMenu
         anchorEl={menuAnchorEl}
         open={Boolean(menuAnchorEl)}
@@ -359,6 +409,9 @@ function SortableSegmentItem({
   )
 }
 
+// ============================================================================
+// Inline Drop Zone Component - Between segments
+// ============================================================================
 
 interface InlineDropZoneProps {
   id: string
@@ -401,6 +454,9 @@ function InlineDropZone({ id, isActive }: InlineDropZoneProps) {
   )
 }
 
+// ============================================================================
+// Drop Zone Component - For appending at the end
+// ============================================================================
 
 interface DropZoneProps {
   isActive: boolean
@@ -458,6 +514,9 @@ function DropZone({ isActive }: DropZoneProps) {
   )
 }
 
+// ============================================================================
+// Main SegmentList Component
+// ============================================================================
 
 export const SegmentList: React.FC<SegmentListProps> = ({
   chapterId,
@@ -480,41 +539,50 @@ export const SegmentList: React.FC<SegmentListProps> = ({
   const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null)
   const [scrollbarWidth, setScrollbarWidth] = useState(0)
 
+  // Dialog states
   const [showCreateSegmentDialog, setShowCreateSegmentDialog] = useState(false)
   const [showCreateDividerDialog, setShowCreateDividerDialog] = useState(false)
   const [pendingDropIndex, setPendingDropIndex] = useState(0)
 
-  const currentEngine = useAppStore((state) => state.getCurrentEngine())
-  const currentModelName = useAppStore((state) => state.getCurrentModelName())
-  const currentSpeaker = useAppStore((state) => state.getCurrentSpeaker())
+  // Get TTS settings from session store (consistent with other components)
+  const currentEngine = useAppStore((state) => state.getCurrentTtsEngine())
+  const currentModelName = useAppStore((state) => state.getCurrentTtsModelName())
+  const currentSpeaker = useAppStore((state) => state.getCurrentTtsSpeaker())
   const currentLanguage = useAppStore((state) => state.getCurrentLanguage())
 
+  // Query speakers to check availability
   const { data: speakers } = useQuery({
     queryKey: ['speakers'],
     queryFn: fetchSpeakers,
   })
 
+  // Only count active speakers
   const hasSpeakers = (speakers?.filter(s => s.isActive).length ?? 0) > 0
 
+  // React Query mutations
   const reorderMutation = useReorderSegments()
   const createSegmentMutation = useCreateSegment()
   const updateSegmentMutation = useUpdateSegment()
 
+  // Refs for auto-scroll and scrollbar detection
   const segmentRefs = useRef<Map<string, HTMLElement>>(new Map())
   const listRef = useRef<HTMLUListElement>(null)
 
+  // DnD sensors
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 8,
+        distance: 8, // 8px movement required to start drag
       },
     })
   )
 
+  // Sync local state with props
   useEffect(() => {
     setLocalSegments(segments)
   }, [segments])
 
+  // Auto-scroll to playing segment
   useEffect(() => {
     if (playingSegmentId && continuousPlayback) {
       const element = segmentRefs.current.get(playingSegmentId)
@@ -522,6 +590,7 @@ export const SegmentList: React.FC<SegmentListProps> = ({
     }
   }, [playingSegmentId, continuousPlayback])
 
+  // Detect scrollbar width
   useEffect(() => {
     const updateScrollbarWidth = () => {
       if (listRef.current) {
@@ -532,6 +601,7 @@ export const SegmentList: React.FC<SegmentListProps> = ({
 
     updateScrollbarWidth()
 
+    // Create ResizeObserver to update when list size changes
     const resizeObserver = new ResizeObserver(updateScrollbarWidth)
     if (listRef.current) {
       resizeObserver.observe(listRef.current)
@@ -542,6 +612,9 @@ export const SegmentList: React.FC<SegmentListProps> = ({
     }
   }, [localSegments])
 
+  // ============================================================================
+  // Drag & Drop Handlers
+  // ============================================================================
 
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(event.active.id as string)
@@ -560,36 +633,47 @@ export const SegmentList: React.FC<SegmentListProps> = ({
 
     if (!over) return
 
+    // Check if dropped on command toolbar (cancel zone)
     if (over.id === 'command-toolbar-cancel-zone') {
+      // Cancel operation - do nothing
       return
     }
 
+    // Handle command drops (creating new segments)
     if (active.data.current?.type === 'command') {
       const commandType = active.data.current.commandType
 
+      // Calculate drop position
       let newOrderIndex: number
       const overIdStr = String(over.id)
 
       if (overIdStr === 'drop-zone-end') {
+        // Drop in end zone -> append
         newOrderIndex = localSegments.length
       } else if (overIdStr.startsWith('drop-zone-before-')) {
+        // Drop in inline zone -> insert at specific position
         const index = parseInt(overIdStr.replace('drop-zone-before-', ''), 10)
         newOrderIndex = index
       } else {
+        // Drop over existing segment -> insert BEFORE that segment
         const dropIndex = localSegments.findIndex((s) => s.id === over.id)
         newOrderIndex = dropIndex >= 0 ? dropIndex : localSegments.length
       }
 
+      // Store drop index for dialog handlers
       setPendingDropIndex(newOrderIndex)
 
       if (commandType === 'divider') {
+        // Open divider dialog
         setShowCreateDividerDialog(true)
       } else if (commandType === 'text-segment') {
+        // Open text segment dialog
         setShowCreateSegmentDialog(true)
       }
       return
     }
 
+    // Handle segment reordering
     if (active.id !== over.id) {
       const oldIndex = localSegments.findIndex((s) => s.id === active.id)
       const overIdStr = String(over.id)
@@ -599,25 +683,34 @@ export const SegmentList: React.FC<SegmentListProps> = ({
       let newIndex: number
 
       if (overIdStr === 'drop-zone-end') {
+        // Move to end
         newIndex = localSegments.length - 1
       } else if (overIdStr.startsWith('drop-zone-before-')) {
+        // Drop in inline zone -> move to specific position
         newIndex = parseInt(overIdStr.replace('drop-zone-before-', ''), 10)
+        // Adjust index if moving from before to after
         if (oldIndex < newIndex) {
           newIndex = newIndex - 1
         }
       } else {
+        // Normal reordering - drop over existing segment
         newIndex = localSegments.findIndex((s) => s.id === over.id)
         if (newIndex === -1) return
       }
 
+      // Perform reorder
       const reorderedSegments = arrayMove(localSegments, oldIndex, newIndex)
       setLocalSegments(reorderedSegments)
 
+      // Send to backend
       const segmentIds = reorderedSegments.map((s) => s.id)
       reorderMutation.mutate({ chapterId, segmentIds })
     }
   }
 
+  // ============================================================================
+  // Update pause duration
+  // ============================================================================
 
   const handleUpdatePause = (segmentId: string, pauseDuration: number) => {
     updateSegmentMutation.mutate(
@@ -631,15 +724,19 @@ export const SegmentList: React.FC<SegmentListProps> = ({
           setSnackbarMessage(t('segments.pauseUpdated', { seconds: pauseDuration / 1000 }))
         },
         onError: (error) => {
-          console.error('Failed to update pause:', error)
+          logger.error('📋 Failed to update pause:', error)
           setSnackbarMessage(t('segments.pauseUpdateFailed'))
         },
       }
     )
   }
 
+  // ============================================================================
+  // Dialog Handlers
+  // ============================================================================
 
   const handleCreateTextSegment = async (text: string) => {
+    // Check if speakers are available
     if (!hasSpeakers || !currentSpeaker) {
       setSnackbarMessage(t('audioGeneration.noSpeakers.title'))
       return Promise.reject(new Error('No speakers available'))
@@ -651,9 +748,9 @@ export const SegmentList: React.FC<SegmentListProps> = ({
           chapterId: chapterId,
           text,
           orderIndex: pendingDropIndex,
-          engine: currentEngine,
-          modelName: currentModelName,
-          speakerName: currentSpeaker,
+          ttsEngine: currentEngine,
+          ttsModelName: currentModelName,
+          ttsSpeakerName: currentSpeaker,
           language: currentLanguage,
           segmentType: 'standard',
         },
@@ -663,7 +760,7 @@ export const SegmentList: React.FC<SegmentListProps> = ({
             resolve()
           },
           onError: (error) => {
-            console.error('Failed to create text segment:', error)
+            logger.error('📋 Failed to create text segment:', error)
             reject(error)
           },
         }
@@ -678,9 +775,9 @@ export const SegmentList: React.FC<SegmentListProps> = ({
           chapterId: chapterId,
           text: '',
           orderIndex: pendingDropIndex,
-          engine: currentEngine,
-          modelName: currentModelName,
-          speakerName: currentSpeaker,
+          ttsEngine: currentEngine,
+          ttsModelName: currentModelName,
+          ttsSpeakerName: currentSpeaker,
           language: currentLanguage,
           segmentType: 'divider',
           pauseDuration: pauseDuration,
@@ -691,7 +788,7 @@ export const SegmentList: React.FC<SegmentListProps> = ({
             resolve()
           },
           onError: (error) => {
-            console.error('Failed to create divider:', error)
+            logger.error('📋 Failed to create divider:', error)
             reject(error)
           },
         }
@@ -699,11 +796,15 @@ export const SegmentList: React.FC<SegmentListProps> = ({
     })
   }
 
+  // ============================================================================
+  // Render
+  // ============================================================================
 
   const activeSegment = localSegments.find((s) => s.id === activeId)
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* DnD Context wraps BOTH CommandToolbar and SegmentList */}
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -711,11 +812,14 @@ export const SegmentList: React.FC<SegmentListProps> = ({
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
+        {/* Command Toolbar (outside Paper) */}
         <Box sx={{ px: 2, pt: 2, pb: 2, pr: `${16 + scrollbarWidth}px` }}>
           <CommandToolbar />
         </Box>
 
+        {/* Segment List Paper */}
         <Paper elevation={0} sx={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0, bgcolor: 'transparent' }}>
+          {/* Segment List with SortableContext */}
           <SortableContext items={localSegments.map((s) => s.id)} strategy={verticalListSortingStrategy}>
             <List ref={listRef} sx={{ flex: 1, overflow: 'auto', px: 2, py: 0 }}>
             {localSegments.length === 0 ? (
@@ -750,6 +854,7 @@ export const SegmentList: React.FC<SegmentListProps> = ({
               <>
                 {localSegments.map((segment, index) => (
                   <React.Fragment key={segment.id}>
+                    {/* Drop zone before each segment */}
                     <InlineDropZone id={`drop-zone-before-${index}`} isActive={!!activeId} />
 
                     <div
@@ -779,11 +884,13 @@ export const SegmentList: React.FC<SegmentListProps> = ({
               </>
             )}
 
+            {/* Drop Zone for appending at end */}
             {localSegments.length > 0 && <DropZone isActive={!!activeId} />}
           </List>
         </SortableContext>
         </Paper>
 
+        {/* Drag Overlay */}
         <DragOverlay>
           {activeId ? (
             <Chip
@@ -818,6 +925,7 @@ export const SegmentList: React.FC<SegmentListProps> = ({
         </DragOverlay>
       </DndContext>
 
+      {/* Quick Create Dialogs */}
       <QuickCreateSegmentDialog
         open={showCreateSegmentDialog}
         chapterId={chapterId}
@@ -834,6 +942,7 @@ export const SegmentList: React.FC<SegmentListProps> = ({
         onConfirm={handleCreateDivider}
       />
 
+      {/* Snackbar for feedback */}
       <Snackbar
         open={!!snackbarMessage}
         autoHideDuration={3000}

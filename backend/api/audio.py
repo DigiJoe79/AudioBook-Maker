@@ -25,6 +25,7 @@ from pydantic import ConfigDict
 
 router = APIRouter()
 
+# In-memory storage for export jobs (similar to TTS generation jobs)
 export_jobs: Dict[str, Dict[str, Any]] = {}
 
 
@@ -36,18 +37,19 @@ class ExportRequest(BaseModel):
     )
 
     chapter_id: str
-    output_format: str = "mp3"
-    quality: Optional[str] = None
-    bitrate: Optional[str] = None
-    sample_rate: Optional[int] = None
-    pause_between_segments: int = 500
-    custom_filename: Optional[str] = None
+    output_format: str = "mp3"  # mp3, m4a, wav
+    quality: Optional[str] = None  # low, medium, high - preferred over bitrate/sample_rate
+    bitrate: Optional[str] = None  # Legacy support: explicit bitrate (e.g. "192k")
+    sample_rate: Optional[int] = None  # Legacy support: explicit sample rate
+    pause_between_segments: int = 500  # milliseconds
+    custom_filename: Optional[str] = None  # Optional custom filename
 
     def get_export_params(self):
         """
         Convert quality preset to bitrate + sample_rate, or use explicit values.
         Quality presets take precedence over explicit bitrate/sample_rate.
         """
+        # Quality presets for each format
         QUALITY_PRESETS = {
             'mp3': {
                 'low': {'bitrate': '96k', 'sample_rate': 22050},
@@ -66,14 +68,17 @@ class ExportRequest(BaseModel):
             }
         }
 
+        # If quality is specified, use preset
         if self.quality and self.output_format in QUALITY_PRESETS:
             preset = QUALITY_PRESETS[self.output_format].get(self.quality)
             if preset:
                 return preset['bitrate'], preset['sample_rate']
 
+        # Otherwise use explicit values or defaults
         bitrate = self.bitrate or "192k"
         sample_rate = self.sample_rate or 24000
 
+        # WAV doesn't use bitrate
         if self.output_format == 'wav':
             bitrate = None
 
@@ -92,10 +97,12 @@ async def export_task(
     """Background task for exporting audio"""
     from services.health_monitor import get_health_monitor
 
+    # Notify health monitor that a job started
     health_monitor = get_health_monitor()
     health_monitor.increment_active_jobs()
 
     try:
+        # Update job status to running
         export_jobs[job_id] = {
             "status": "running",
             "progress": 0.0,
@@ -105,25 +112,30 @@ async def export_task(
             "started_at": datetime.now()
         }
 
+        # Get database connection
         conn = get_db_connection_simple()
         chapter_repo = ChapterRepository(conn)
         segment_repo = SegmentRepository(conn)
         project_repo = ProjectRepository(conn)
         export_repo = ExportJobRepository(conn)
 
+        # Get chapter details
         chapter = chapter_repo.get_by_id(chapter_id)
         if not chapter:
             raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
 
+        # Get project details for naming
         project = project_repo.get_by_id(chapter['project_id'])
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
+        # Get segments for chapter (includes both standard and divider segments)
         segments = segment_repo.get_by_chapter(chapter_id)
 
         if not segments:
             raise ValueError("No segments to export")
 
+        # Filter segments: completed standard segments + all divider segments
         exportable_segments = [
             s for s in segments
             if (s.get('segment_type') == 'divider') or
@@ -133,6 +145,7 @@ async def export_task(
         if not exportable_segments:
             raise ValueError("No segments to export (no completed audio or dividers)")
 
+        # Update job in database
         export_job = export_repo.get_by_id(job_id)
         if export_job:
             export_repo.update(
@@ -141,27 +154,35 @@ async def export_task(
                 started_at=datetime.now().isoformat()
             )
 
+        # Update total segments count
         export_jobs[job_id]["total_segments"] = len(exportable_segments)
         export_jobs[job_id]["message"] = f"Merging {len(exportable_segments)} segments..."
 
+        # Initialize audio service
         audio_service = AudioService()
 
+        # Generate output filename if not provided
         if not custom_filename:
-            chapter_number = chapter['order_index'] + 1
+            # Format: "Projektname - Kapitel X Kapiteltitel"
+            chapter_number = chapter['order_index'] + 1  # Make 1-based
             custom_filename = f"{project['title']} - Kapitel {chapter_number} {chapter['title']}"
 
+        # Sanitize filename (remove invalid characters)
         custom_filename = "".join(c for c in custom_filename if c.isalnum() or c in ' -_')
 
+        # Progress callback for merging
         def update_progress(current: int, total: int):
             progress = current / total if total > 0 else 0
             export_jobs[job_id].update({
-                "progress": progress * 0.5,
+                "progress": progress * 0.5,  # First 50% for merging
                 "current_segment": current,
                 "message": f"Merging segment {current}/{total}..."
             })
+            # Also update database
             if export_job:
                 export_repo.update(job_id, merged_segments=current)
 
+        # Merge segments (includes standard + divider)
         logger.info(f"Merging {len(exportable_segments)} segments for chapter {chapter_id}")
         temp_wav_path, duration = audio_service.merge_segments_to_file(
             exportable_segments,
@@ -171,14 +192,16 @@ async def export_task(
         )
 
         export_jobs[job_id]["message"] = f"Converting to {output_format.upper()}..."
-        export_jobs[job_id]["progress"] = 0.5
+        export_jobs[job_id]["progress"] = 0.5  # 50% done
 
+        # Prepare metadata
         metadata = {
             "title": f"{project['title']} - Kapitel {chapter['order_index'] + 1}",
             "album": project['title'],
             "track": str(chapter['order_index'] + 1)
         }
 
+        # Convert to target format
         output_path, file_size = audio_service.convert_to_format(
             temp_wav_path,
             output_format,
@@ -187,9 +210,11 @@ async def export_task(
             metadata
         )
 
+        # Generate HTTP URL for the exported file
         relative_path = output_path.relative_to(Path(EXPORTS_DIR))
         audio_url = f"http://localhost:8765/exports/{relative_path.as_posix()}"
 
+        # Update job completion
         export_jobs[job_id].update({
             "status": "completed",
             "progress": 1.0,
@@ -200,6 +225,7 @@ async def export_task(
             "completed_at": datetime.now()
         })
 
+        # Update database
         if export_job:
             export_repo.update(
                 job_id,
@@ -217,6 +243,7 @@ async def export_task(
         error_msg = str(e)
         logger.error(f"Export failed for job {job_id}: {error_msg}")
 
+        # Update job with error
         export_jobs[job_id] = {
             "status": "failed",
             "progress": 0.0,
@@ -225,6 +252,7 @@ async def export_task(
             "completed_at": datetime.now()
         }
 
+        # Update database
         try:
             conn = get_db_connection_simple()
             export_repo = ExportJobRepository(conn)
@@ -237,6 +265,7 @@ async def export_task(
         except Exception as db_error:
             logger.error(f"Failed to update database: {db_error}")
     finally:
+        # Always decrement active jobs count (success or failure)
         health_monitor.decrement_active_jobs()
 
 
@@ -255,17 +284,21 @@ async def start_export(
     4. Adds metadata (title, track number)
     """
     try:
+        # Get database connection
         conn = get_db_connection_simple()
         chapter_repo = ChapterRepository(conn)
         segment_repo = SegmentRepository(conn)
         export_repo = ExportJobRepository(conn)
 
+        # Validate chapter exists
         chapter = chapter_repo.get_by_id(request.chapter_id)
         if not chapter:
             raise HTTPException(status_code=404, detail="Chapter not found")
 
+        # Get segments
         segments = segment_repo.get_by_chapter(request.chapter_id)
 
+        # Check if all STANDARD segments have audio (dividers don't need audio)
         incomplete_segments = [
             s for s in segments
             if s.get('segment_type', 'standard') == 'standard' and s.get('status') != 'completed'
@@ -279,8 +312,10 @@ async def start_export(
         if not segments:
             raise HTTPException(status_code=400, detail="Chapter has no segments")
 
+        # Get bitrate and sample_rate from quality preset or explicit values
         bitrate, sample_rate = request.get_export_params()
 
+        # Create export job in database
         export_job = export_repo.create(
             chapter_id=request.chapter_id,
             output_format=request.output_format,
@@ -292,6 +327,7 @@ async def start_export(
 
         job_id = export_job['id']
 
+        # Initialize job in memory
         export_jobs[job_id] = {
             "status": "pending",
             "progress": 0.0,
@@ -301,6 +337,7 @@ async def start_export(
             "created_at": datetime.now()
         }
 
+        # Start background task
         background_tasks.add_task(
             export_task,
             job_id,
@@ -333,6 +370,7 @@ async def get_export_progress(job_id: str):
     Returns current status and progress information for tracking
     the export operation in the UI.
     """
+    # Check in-memory job first
     if job_id in export_jobs:
         job = export_jobs[job_id]
         return ExportProgressResponse(
@@ -348,6 +386,7 @@ async def get_export_progress(job_id: str):
             error=job.get("error")
         )
 
+    # Fall back to database
     try:
         conn = get_db_connection_simple()
         export_repo = ExportJobRepository(conn)
@@ -385,7 +424,9 @@ async def cancel_export(job_id: str):
     Attempts to stop an in-progress export operation.
     """
     try:
+        # Check if job exists
         if job_id not in export_jobs:
+            # Check database
             conn = get_db_connection_simple()
             export_repo = ExportJobRepository(conn)
             export_job = export_repo.get_by_id(job_id)
@@ -396,10 +437,12 @@ async def cancel_export(job_id: str):
             if export_job['status'] in ['completed', 'failed', 'cancelled']:
                 return {"success": True, "message": f"Job already {export_job['status']}"}
 
+        # Update job status
         if job_id in export_jobs:
             export_jobs[job_id]['status'] = 'cancelled'
             export_jobs[job_id]['message'] = 'Export cancelled by user'
 
+        # Update database
         conn = get_db_connection_simple()
         export_repo = ExportJobRepository(conn)
         export_repo.update(
@@ -409,6 +452,7 @@ async def cancel_export(job_id: str):
             completed_at=datetime.now().isoformat()
         )
 
+        # Clean up any temporary files
         audio_service = AudioService()
         audio_service.cleanup_temp_files(job_id)
 
@@ -429,6 +473,7 @@ async def download_export(job_id: str):
     Returns the exported file for download once the job is completed.
     """
     try:
+        # Get job details
         conn = get_db_connection_simple()
         export_repo = ExportJobRepository(conn)
         export_job = export_repo.get_by_id(job_id)
@@ -445,12 +490,14 @@ async def download_export(job_id: str):
         if not export_job.get('output_path'):
             raise HTTPException(status_code=404, detail="Export file not found")
 
+        # Convert URL back to file path
         audio_service = AudioService()
         local_path = audio_service.url_to_local_path(export_job['output_path'])
 
         if not local_path.exists():
             raise HTTPException(status_code=404, detail="Export file no longer exists")
 
+        # Return file for download
         return FileResponse(
             path=str(local_path),
             media_type='audio/mpeg' if local_path.suffix == '.mp3' else 'audio/wav',
@@ -473,6 +520,7 @@ async def delete_export(job_id: str):
     Removes the exported audio file and any temporary files.
     """
     try:
+        # Get job details
         conn = get_db_connection_simple()
         export_repo = ExportJobRepository(conn)
         export_job = export_repo.get_by_id(job_id)
@@ -482,6 +530,7 @@ async def delete_export(job_id: str):
 
         audio_service = AudioService()
 
+        # Delete the main export file if it exists
         if export_job.get('output_path'):
             try:
                 local_path = audio_service.url_to_local_path(export_job['output_path'])
@@ -491,14 +540,17 @@ async def delete_export(job_id: str):
             except Exception as e:
                 logger.warning(f"Failed to delete export file: {e}")
 
+        # Cleanup any temporary files (WAV, etc.)
         audio_service.cleanup_temp_files(job_id)
 
+        # Update job status to deleted
         export_repo.update(
             job_id,
             status='deleted',
             completed_at=datetime.now().isoformat()
         )
 
+        # Remove from in-memory cache
         if job_id in export_jobs:
             del export_jobs[job_id]
 
@@ -539,19 +591,23 @@ async def merge_segments(request: MergeSegmentsRequest):
         conn = get_db_connection_simple()
         segment_repo = SegmentRepository(conn)
 
+        # Get segments
         segments = segment_repo.get_by_chapter(request.chapter_id)
 
         if not segments:
             raise HTTPException(status_code=400, detail="No segments found")
 
+        # Initialize audio service
         audio_service = AudioService()
 
+        # Quick merge to WAV
         output_path, duration = audio_service.merge_segments_to_file(
             segments,
             f"preview_{request.chapter_id}",
             request.pause_ms
         )
 
+        # Return URL for playback
         relative_path = output_path.relative_to(Path(EXPORTS_DIR))
         audio_url = f"http://localhost:8765/exports/{relative_path.as_posix()}"
 

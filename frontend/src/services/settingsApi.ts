@@ -1,3 +1,8 @@
+/**
+ * Settings API Client
+ *
+ * API calls for settings and speaker management.
+ */
 
 import { useAppStore } from '../store/appStore';
 import type { GlobalSettings } from '../store/appStore';
@@ -9,6 +14,7 @@ function getApiBaseUrl(): string {
   return url;
 }
 
+// Settings API
 export async function fetchSettings(): Promise<GlobalSettings> {
   const response = await fetch(`${getApiBaseUrl()}/api/settings/`);
   if (!response.ok) throw new Error('Failed to fetch settings');
@@ -54,9 +60,10 @@ export async function fetchEngineSchema(
   );
   if (!response.ok) throw new Error('Failed to fetch engine schema');
   const data = await response.json();
-  return data.parameters;
+  return data.parameters; // Extract 'parameters' field from EngineSchemaResponse
 }
 
+// Speaker API
 export async function fetchSpeakers(): Promise<Speaker[]> {
   const response = await fetch(`${getApiBaseUrl()}/api/speakers/`);
   if (!response.ok) throw new Error('Failed to fetch speakers');

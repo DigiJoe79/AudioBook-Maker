@@ -1,10 +1,22 @@
+/**
+ * Type Guards
+ *
+ * Runtime type validation functions for safe type checking.
+ * Use these instead of unsafe type casts (as any, as unknown as Type).
+ */
 
 import type { Segment, Speaker, Chapter } from '../types';
 
+/**
+ * Check if error is an Error instance
+ */
 export function isError(error: unknown): error is Error {
   return error instanceof Error;
 }
 
+/**
+ * Convert unknown error to string safely
+ */
 export function getErrorMessage(error: unknown): string {
   if (isError(error)) {
     return error.message;
@@ -15,6 +27,9 @@ export function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
+/**
+ * Check if value is a valid Segment
+ */
 export function isSegment(value: unknown): value is Segment {
   if (!value || typeof value !== 'object') {
     return false;
@@ -38,6 +53,9 @@ export function isSegment(value: unknown): value is Segment {
   );
 }
 
+/**
+ * Check if value is a valid Speaker
+ */
 export function isSpeaker(value: unknown): value is Speaker {
   if (!value || typeof value !== 'object') {
     return false;
@@ -54,6 +72,9 @@ export function isSpeaker(value: unknown): value is Speaker {
   );
 }
 
+/**
+ * Check if value is a valid Chapter
+ */
 export function isChapter(value: unknown): value is Chapter {
   if (!value || typeof value !== 'object') {
     return false;
@@ -66,12 +87,15 @@ export function isChapter(value: unknown): value is Chapter {
     typeof chapter.projectId === 'string' &&
     typeof chapter.title === 'string' &&
     typeof chapter.orderIndex === 'number' &&
-    typeof chapter.defaultEngine === 'string' &&
-    typeof chapter.defaultModelName === 'string' &&
+    typeof chapter.defaultTtsEngine === 'string' &&
+    typeof chapter.defaultTtsModelName === 'string' &&
     Array.isArray(chapter.segments)
   );
 }
 
+/**
+ * Check if value is a valid FileReader result
+ */
 export function isFileReaderResult(value: unknown): value is string | ArrayBuffer | null {
   return (
     value === null ||
@@ -80,12 +104,18 @@ export function isFileReaderResult(value: unknown): value is string | ArrayBuffe
   );
 }
 
+/**
+ * Assert that a value is defined (not null or undefined)
+ */
 export function assertDefined<T>(value: T | null | undefined, message?: string): asserts value is T {
   if (value === null || value === undefined) {
     throw new Error(message || 'Value must be defined');
   }
 }
 
+/**
+ * Safe JSON parse with type validation
+ */
 export function safeJsonParse<T>(
   json: string,
   validator: (value: unknown) => value is T

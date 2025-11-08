@@ -1,20 +1,32 @@
+/**
+ * React Query hooks for drag & drop operations (reorder, move)
+ */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi, chapterApi, segmentApi } from '../services/api'
 import { queryKeys } from '../services/queryKeys'
 import type { Project, Chapter, Segment } from '../services/api'
 
+// ============================================================================
+// Project Drag & Drop Hooks
+// ============================================================================
 
+/**
+ * Reorder projects
+ */
 export function useReorderProjects() {
   const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: (projectIds: string[]) => projectApi.reorder(projectIds),
     onMutate: async (projectIds) => {
+      // Cancel outgoing refetches
       await queryClient.cancelQueries({ queryKey: queryKeys.projects.all })
 
+      // Snapshot previous value
       const previousProjects = queryClient.getQueryData<Project[]>(queryKeys.projects.lists())
 
+      // Optimistically update
       if (previousProjects) {
         const reorderedProjects = projectIds
           .map(id => previousProjects.find(p => p.id === id))
@@ -27,17 +39,22 @@ export function useReorderProjects() {
       return { previousProjects }
     },
     onError: (err, variables, context) => {
+      // Rollback on error
       if (context?.previousProjects) {
         queryClient.setQueryData(queryKeys.projects.lists(), context.previousProjects)
       }
     },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.all })
-    },
+    // NOTE: No onSettled refetch - optimistic update is already correct on success, rollback handles errors
   })
 }
 
+// ============================================================================
+// Chapter Drag & Drop Hooks
+// ============================================================================
 
+/**
+ * Reorder chapters within a project
+ */
 export function useReorderChapters() {
   const queryClient = useQueryClient()
 
@@ -45,11 +62,14 @@ export function useReorderChapters() {
     mutationFn: ({ projectId, chapterIds }: { projectId: string; chapterIds: string[] }) =>
       chapterApi.reorder(projectId, chapterIds),
     onMutate: async ({ projectId, chapterIds }) => {
+      // Cancel outgoing refetches
       await queryClient.cancelQueries({ queryKey: queryKeys.projects.all })
 
+      // Snapshot previous values
       const previousProject = queryClient.getQueryData<Project>(queryKeys.projects.detail(projectId))
       const previousProjects = queryClient.getQueryData<Project[]>(queryKeys.projects.lists())
 
+      // Optimistically update project detail
       if (previousProject) {
         const reorderedChapters = chapterIds
           .map(id => previousProject.chapters.find((c: any) => c.id === id))
@@ -62,6 +82,7 @@ export function useReorderChapters() {
         })
       }
 
+      // Optimistically update projects list (used by AppLayout)
       if (previousProjects) {
         const reorderedChapters = chapterIds
           .map(id => previousProjects.find(p => p.id === projectId)?.chapters.find((c: any) => c.id === id))
@@ -80,6 +101,7 @@ export function useReorderChapters() {
       return { previousProject, previousProjects }
     },
     onError: (err, variables, context) => {
+      // Rollback on error
       if (context?.previousProject) {
         queryClient.setQueryData(queryKeys.projects.detail(variables.projectId), context.previousProject)
       }
@@ -87,14 +109,13 @@ export function useReorderChapters() {
         queryClient.setQueryData(queryKeys.projects.lists(), context.previousProjects)
       }
     },
-    onSettled: (data, error, variables) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.detail(variables.projectId) })
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.lists() })
-      queryClient.invalidateQueries({ queryKey: queryKeys.chapters.all })
-    },
+    // NOTE: No onSettled refetch - optimistic update is already correct on success, rollback handles errors
   })
 }
 
+/**
+ * Move chapter to different project
+ */
 export function useMoveChapter() {
   const queryClient = useQueryClient()
 
@@ -109,6 +130,7 @@ export function useMoveChapter() {
       newOrderIndex: number
     }) => chapterApi.move(chapterId, newProjectId, newOrderIndex),
     onSuccess: (updatedChapter) => {
+      // Invalidate both source and target projects
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.all })
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.lists() })
       queryClient.invalidateQueries({ queryKey: queryKeys.chapters.detail(updatedChapter.id) })
@@ -116,7 +138,13 @@ export function useMoveChapter() {
   })
 }
 
+// ============================================================================
+// Segment Drag & Drop Hooks
+// ============================================================================
 
+/**
+ * Reorder segments within a chapter
+ */
 export function useReorderSegments() {
   const queryClient = useQueryClient()
 
@@ -124,11 +152,14 @@ export function useReorderSegments() {
     mutationFn: ({ chapterId, segmentIds }: { chapterId: string; segmentIds: string[] }) =>
       segmentApi.reorder(chapterId, segmentIds),
     onMutate: async ({ chapterId, segmentIds }) => {
+      // Cancel outgoing refetches
       await queryClient.cancelQueries({ queryKey: queryKeys.projects.all })
 
+      // Snapshot previous values
       const previousChapter = queryClient.getQueryData<Chapter>(queryKeys.chapters.detail(chapterId))
       const previousProjects = queryClient.getQueryData<Project[]>(queryKeys.projects.lists())
 
+      // Optimistically update chapter detail
       if (previousChapter) {
         const reorderedSegments = segmentIds
           .map(id => previousChapter.segments.find((s: any) => s.id === id))
@@ -141,6 +172,7 @@ export function useReorderSegments() {
         })
       }
 
+      // Optimistically update projects list (segments are nested: projects → chapters → segments)
       if (previousProjects) {
         const updatedProjects = previousProjects.map(project => {
           const chapter = project.chapters.find((c: any) => c.id === chapterId)
@@ -167,6 +199,7 @@ export function useReorderSegments() {
       return { previousChapter, previousProjects }
     },
     onError: (err, variables, context) => {
+      // Rollback on error
       if (context?.previousChapter) {
         queryClient.setQueryData(queryKeys.chapters.detail(variables.chapterId), context.previousChapter)
       }
@@ -174,13 +207,13 @@ export function useReorderSegments() {
         queryClient.setQueryData(queryKeys.projects.lists(), context.previousProjects)
       }
     },
-    onSettled: (data, error, variables) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.chapters.detail(variables.chapterId) })
-      queryClient.invalidateQueries({ queryKey: queryKeys.projects.lists() })
-    },
+    // NOTE: No onSettled refetch - optimistic update is already correct on success, rollback handles errors
   })
 }
 
+/**
+ * Move segment to different chapter
+ */
 export function useMoveSegment() {
   const queryClient = useQueryClient()
 
@@ -195,6 +228,7 @@ export function useMoveSegment() {
       newOrderIndex: number
     }) => segmentApi.move(segmentId, newChapterId, newOrderIndex),
     onSuccess: (updatedSegment, variables) => {
+      // Invalidate both source and target chapters
       queryClient.invalidateQueries({ queryKey: queryKeys.chapters.all })
       queryClient.invalidateQueries({ queryKey: queryKeys.projects.lists() })
       queryClient.invalidateQueries({ queryKey: queryKeys.segments.detail(variables.segmentId) })
@@ -203,7 +237,13 @@ export function useMoveSegment() {
   })
 }
 
+// ============================================================================
+// Segment Creation Hook (for Command Toolbar)
+// ============================================================================
 
+/**
+ * Create new segment (standard or divider)
+ */
 export function useCreateSegment() {
   const queryClient = useQueryClient()
 
@@ -212,16 +252,23 @@ export function useCreateSegment() {
       chapterId: string
       text: string
       orderIndex: number
-      engine: string
-      modelName: string
-      speakerName?: string
+      ttsEngine: string
+      ttsModelName: string
+      ttsSpeakerName?: string
       language: string
       segmentType?: 'standard' | 'divider'
       pauseDuration?: number
     }) => segmentApi.create(data),
     onSuccess: (newSegment) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.chapters.detail(newSegment.chapterId) })
-      queryClient.invalidateQueries({ queryKey: queryKeys.chapters.all })
+      // Invalidate to refetch with correct orderIndices
+      // When inserting a segment, backend adjusts orderIndices of all following segments
+      // We only get the new segment back, not the updated others, so we must refetch
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.chapters.detail(newSegment.chapterId)
+      })
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.projects.lists()
+      })
     },
   })
 }

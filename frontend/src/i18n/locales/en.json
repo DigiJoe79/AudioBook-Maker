@@ -47,9 +47,34 @@
       "maxSegmentLength": "Max. Segment Length",
       "maxSegmentLengthDesc": "Maximum character length per segment (engine limit)",
       "simulateDelay": "Simulate Delay",
-      "simulateDelayDesc": "Simulated generation delay in seconds (dummy engine only)",
       "enableTextSplitting": "Enable Text Splitting",
-      "enableTextSplittingDesc": "Automatic splitting of long texts"
+      "enableTextSplittingDesc": "Automatic splitting of long texts",
+      "xtts": {
+        "temperature": "Temperature",
+        "temperatureDesc": "The softmax temperature of the autoregressive model (0.65 default)",
+        "lengthPenalty": "Length Penalty",
+        "lengthPenaltyDesc": "A length penalty applied to the autoregressive decoder. Higher settings cause the model to produce more terse outputs (1.0 default)",
+        "repetitionPenalty": "Repetition Penalty",
+        "repetitionPenaltyDesc": "A penalty that prevents the autoregressive decoder from repeating itself. Can be used to reduce long silences or uhhs (2.0 default)",
+        "topK": "Top K",
+        "topKDesc": "Lower values mean the decoder produces more likely (aka boring) outputs (50 default)",
+        "topP": "Top P",
+        "topPDesc": "Lower values mean the decoder produces more likely (aka boring) outputs (0.8 default)",
+        "speed": "Speed",
+        "speedDesc": "The speed rate of the generated audio. Can produce artifacts if far from 1.0 (1.0 default)",
+        "enableTextSplitting": "Enable Text Splitting",
+        "enableTextSplittingDesc": "Whether to split the text into sentences and generate audio for each sentence. Allows infinite input length but might lose important context between sentences (true default)"
+      },
+      "chatterbox": {
+        "exaggeration": "Exaggeration",
+        "exaggerationDesc": "Controls speech expressiveness. Neutral at 0.5, extreme values may be unstable (0.5 default)",
+        "temperature": "Temperature",
+        "temperatureDesc": "Controls randomness in generation. Higher values = more varied (0.8 default)",
+        "cfgWeight": "CFG/Pace Weight",
+        "cfgWeightDesc": "CFG weight controlling generation guidance. 0 for language transfer (0.5 default)",
+        "seed": "Random Seed",
+        "seedDesc": "Random seed for reproducible results. 0 = random generation (0 default)"
+      }
     },
     "audio": {
       "defaultFormat": "Default Format",
@@ -232,7 +257,8 @@
     "textTooLong": "Text is too long! Remove {{count}} characters.",
     "textEmpty": "Text cannot be empty",
     "placeholder": "Enter segment text...",
-    "description": "Edit the text for this segment. Maximum length is {{maxLength}} characters due to TTS model limitations.",
+    "description": "Edit the text for this segment. Maximum length is {{maxLength}} characters.",
+    "engineLimitWarning": "This segment uses engine '{{segmentEngine}}' (limit: {{segmentLimit}} characters), but the currently selected engine is '{{currentEngine}}' (limit: {{currentLimit}} characters). Be aware of different limits when editing.",
     "noSegments": "No segments yet. Drag items from the toolbar above to create segments.",
     "noAudio": "No audio generated yet",
     "generating": "Generating...",
@@ -246,6 +272,10 @@
       "failed": "Failed",
       "pending": "Pending",
       "noStatus": "No status"
+    },
+    "limitSource": {
+      "userPreference": "User Preference",
+      "engineMaximum": "Engine Limit"
     },
     "actions": {
       "play": "Play",
@@ -417,7 +447,15 @@
     "noSegments": "No Segments",
     "uploadTextHint": "Upload a text file to segment it automatically.",
     "noSegmentsYet": "This chapter has no segments yet. Upload a text file to segment it automatically.",
-    "failedRegenerateSegment": "Failed to regenerate segment"
+    "failedRegenerateSegment": "Failed to regenerate segment",
+    "cancelling": "Cancelling...",
+    "cancelGeneration": {
+      "button": "Cancel Generation",
+      "title": "Cancel Generation?",
+      "message": "Do you really want to cancel the running audio generation?",
+      "confirm": "Yes, cancel",
+      "cancel": "No, continue"
+    }
   },
   "commandToolbar": {
     "title": "Quick Actions",
@@ -469,7 +507,58 @@
     "deleteProjectConfirm": "Are you sure you want to delete \"{{title}}\"?\n\nThis will delete all chapters, segments, and audio files. This action cannot be undone.",
     "deleteChapterConfirm": "Are you sure you want to delete the chapter \"{{title}}\"?\n\nThis will delete all {{count}} segments and their audio files. This action cannot be undone.",
     "audioPlaybackError": "Failed to play audio segment",
-    "audioPlaybackErrorDetailed": "Failed to play audio: {{message}}"
+    "audioPlaybackErrorDetailed": "Failed to play audio: {{message}}",
+    "jobs": {
+      "title": "Jobs",
+      "noJobs": "No jobs available",
+      "noJobsDescription": "Start a generation to see jobs here",
+      "noActiveJobs": "No active jobs",
+      "noFinishedJobs": "No finished jobs",
+      "typeChapter": "Chapter Generation",
+      "typeSegment": "Segment Generation",
+      "progress": "Progress",
+      "completedSegments": "{{count}} segments generated"
+    }
+  },
+  "jobs": {
+    "status": {
+      "pending": "Pending",
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed",
+      "paused": "Paused"
+    },
+    "sections": {
+      "active": "Active Jobs",
+      "finished": "Finished Jobs"
+    },
+    "actions": {
+      "pause": "Pause",
+      "resume": "Resume",
+      "delete": "Delete",
+      "clearHistory": "Clear History"
+    },
+    "messages": {
+      "pauseSuccess": "Job paused successfully",
+      "deleteSuccess": "Job deleted successfully",
+      "resumeSuccess": "Job resumed successfully",
+      "clearHistorySuccess": "History cleared successfully"
+    },
+    "confirmClearHistory": {
+      "title": "Clear History?",
+      "message": "All completed and failed jobs will be deleted."
+    },
+    "confirmDeleteJob": {
+      "title": "Delete Job?",
+      "message": "This job will be permanently deleted."
+    },
+    "errors": {
+      "pauseFailed": "Failed to pause job",
+      "resumeFailed": "Failed to resume job",
+      "deleteFailed": "Failed to delete job",
+      "clearHistoryFailed": "Failed to clear history"
+    },
+    "lastUpdated": "Last updated"
   },
   "quickCreateSegment": {
     "title": "Create Text Segment",

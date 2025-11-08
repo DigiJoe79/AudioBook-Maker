@@ -1,3 +1,7 @@
+/**
+ * SegmentMenu - Dropdown menu for secondary segment actions
+ * Accessed via the ⋮ (more) icon in segment items
+ */
 
 import React from 'react'
 import { Menu, MenuItem, ListItemIcon, ListItemText, Divider } from '@mui/material'
@@ -63,6 +67,7 @@ export default function SegmentMenu({
         </ListItemText>
       </MenuItem>
 
+      {/* Settings option only for standard segments */}
       {segmentType === 'standard' && onEditSettings && (
         <MenuItem onClick={handleEditSettings}>
           <ListItemIcon>

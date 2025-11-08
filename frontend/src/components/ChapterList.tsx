@@ -1,3 +1,7 @@
+/**
+ * ChapterList - Display chapters with status information
+ * Similar to SegmentList but for chapter overview
+ */
 
 import {
   Box,
@@ -34,6 +38,7 @@ export default function ChapterList({
 }: ChapterListProps) {
   const { t } = useTranslation()
 
+  // Get pause settings
   const settings = useAppStore((state) => state.settings)
   const pauseBetweenSegments = settings?.audio.pauseBetweenSegments ?? 500
 
@@ -42,12 +47,13 @@ export default function ChapterList({
     const total = segments.filter(s => s.segmentType !== 'divider').length
     const completed = segments.filter(s => s.status === 'completed' && s.segmentType !== 'divider').length
     const processing = segments.filter(s => s.status === 'processing' && s.segmentType !== 'divider').length
+    const queued = segments.filter(s => s.status === 'queued' && s.segmentType !== 'divider').length
     const failed = segments.filter(s => s.status === 'failed' && s.segmentType !== 'divider').length
     const pending = segments.filter(s => s.status === 'pending' && s.segmentType !== 'divider').length
 
     const progress = total > 0 ? (completed / total) * 100 : 0
 
-    return { total, completed, processing, failed, pending, progress }
+    return { total, completed, processing, queued, failed, pending, progress }
   }
 
   const getStatusIcon = (stats: ReturnType<typeof getChapterStats>) => {
@@ -60,6 +66,9 @@ export default function ChapterList({
     if (stats.completed === stats.total && stats.total > 0) {
       return <CheckCircle sx={{ fontSize: 20, color: 'success.main' }} />
     }
+    if (stats.queued > 0) {
+      return <HourglassEmpty sx={{ fontSize: 20, color: 'warning.main' }} />
+    }
     if (stats.pending > 0) {
       return <HourglassEmpty sx={{ fontSize: 20, color: 'text.disabled' }} />
     }
@@ -68,6 +77,7 @@ export default function ChapterList({
 
   const getStatusColor = (stats: ReturnType<typeof getChapterStats>) => {
     if (stats.processing > 0) return 'warning.main'
+    if (stats.queued > 0) return 'warning.main'
     if (stats.failed > 0) return 'error.main'
     if (stats.completed === stats.total && stats.total > 0) return 'success.main'
     return 'action.hover'
@@ -78,12 +88,15 @@ export default function ChapterList({
 
     let totalMs = 0
 
+    // Add audio duration of standard segments
     const standardSegments = segments.filter(s => s.segmentType !== 'divider')
     totalMs += standardSegments.reduce((sum, s) => sum + ((s.endTime - s.startTime) * 1000), 0)
 
+    // Add pause duration of divider segments
     const dividerSegments = segments.filter(s => s.segmentType === 'divider')
     totalMs += dividerSegments.reduce((sum, s) => sum + (s.pauseDuration || 0), 0)
 
+    // Add pauses between segments (between all segments, not just standard ones)
     if (segments.length > 1) {
       totalMs += (segments.length - 1) * pauseBetweenSegments
     }
@@ -152,11 +165,14 @@ export default function ChapterList({
                 sx={{ py: 2, px: 2 }}
               >
                 <Box sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', gap: 2 }}>
+                  {/* Status Icon */}
                   <Box sx={{ pt: 0.5 }}>
                     {getStatusIcon(stats)}
                   </Box>
 
+                  {/* Chapter Info */}
                   <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                    {/* Title and Chapter Number */}
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                       <Typography
                         variant="caption"
@@ -175,6 +191,7 @@ export default function ChapterList({
                       </Typography>
                     </Box>
 
+                    {/* Progress Bar (only if there are segments) */}
                     {stats.total > 0 && (
                       <Box sx={{ mb: 1 }}>
                         <LinearProgress
@@ -187,6 +204,7 @@ export default function ChapterList({
                             '& .MuiLinearProgress-bar': {
                               bgcolor: stats.failed > 0 ? 'error.main' :
                                        stats.processing > 0 ? 'warning.main' :
+                                       stats.queued > 0 ? 'warning.main' :
                                        'success.main',
                             },
                           }}
@@ -194,8 +212,10 @@ export default function ChapterList({
                       </Box>
                     )}
 
+                    {/* Status Chips */}
                     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
 
+                      {/* Completed */}
                       {stats.completed > 0 && (
                         <Chip
                           size="small"
@@ -206,6 +226,7 @@ export default function ChapterList({
                         />
                       )}
 
+                      {/* Processing */}
                       {stats.processing > 0 && (
                         <Chip
                           size="small"
@@ -215,6 +236,18 @@ export default function ChapterList({
                         />
                       )}
 
+                      {/* Queued */}
+                      {stats.queued > 0 && (
+                        <Chip
+                          size="small"
+                          icon={<HourglassEmpty />}
+                          label={stats.queued}
+                          color="warning"
+                          variant="outlined"
+                        />
+                      )}
+
+                      {/* Failed */}
                       {stats.failed > 0 && (
                         <Chip
                           size="small"
@@ -224,6 +257,7 @@ export default function ChapterList({
                         />
                       )}
 
+                      {/* Pending */}
                       {stats.pending > 0 && (
                         <Chip
                           size="small"
@@ -233,6 +267,7 @@ export default function ChapterList({
                         />
                       )}
 
+                      {/* Duration (if audio exists) */}
                       {stats.completed > 0 && (
                         <Chip
                           size="small"

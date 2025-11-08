@@ -1,3 +1,11 @@
+/**
+ * StartPage - Backend Connection & Profile Management
+ *
+ * This is the entry point of the application where users:
+ * - Select/manage backend connection profiles
+ * - Check backend status
+ * - Connect to a backend before entering the main app
+ */
 
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -37,15 +45,18 @@ export default function StartPage() {
   const setBackendConnection = useAppStore((state) => state.setBackendConnection)
   const loadSettings = useAppStore((state) => state.loadSettings)
 
+  // Profile management state
   const [profiles, setProfiles] = useState<BackendProfile[]>([])
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null)
   const [manageDialogOpen, setManageDialogOpen] = useState(false)
 
+  // Initialize profiles on mount
   useEffect(() => {
     initializeDefaultProfile()
     const loadedProfiles = loadProfiles()
     setProfiles(loadedProfiles)
 
+    // Auto-select default profile or first available
     const defaultProfile = loadedProfiles.find((p) => p.isDefault)
     const profileToSelect = defaultProfile || loadedProfiles[0]
     if (profileToSelect) {
@@ -53,6 +64,7 @@ export default function StartPage() {
     }
   }, [])
 
+  // Listen to localStorage changes from other tabs
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'audiobook-maker:backend-profiles') {
@@ -66,6 +78,7 @@ export default function StartPage() {
 
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId)
 
+  // Backend health check (with polling)
   const { isOnline, version, ttsEngines, busy, activeJobs, isLoading, error } = useBackendHealth(
     selectedProfile?.url || null,
     {
@@ -75,62 +88,181 @@ export default function StartPage() {
     }
   )
 
+  // Handle connect button
   const handleConnect = async () => {
-    logger.info('[StartPage] Connect button clicked', {
-      profileName: selectedProfile?.name,
-      isOnline,
-      version,
-    })
+    logger.group(
+      '🔌 Connection Request',
+      'User clicked connect button',
+      {
+        'Profile Name': selectedProfile?.name || 'None',
+        'Backend Online': isOnline,
+        'Backend Version': version || 'Unknown',
+        'Profile URL': selectedProfile?.url || 'N/A'
+      },
+      '#2196F3' // Blue for connection operations
+    )
 
     if (!selectedProfile || !isOnline) {
-      logger.debug('[StartPage] Connect blocked - missing requirements')
+      logger.group(
+        '⚠️ Connection Blocked',
+        'Missing requirements for connection',
+        {
+          'Has Profile': !!selectedProfile,
+          'Backend Online': isOnline,
+          'Reason': !selectedProfile ? 'No profile selected' : 'Backend offline'
+        },
+        '#FF9800' // Orange for warning
+      )
       return
     }
 
-    logger.info('[StartPage] Connecting to backend...')
+    logger.group(
+      '🔌 Connecting to Backend',
+      'Establishing backend connection',
+      {
+        'Profile': selectedProfile.name,
+        'URL': selectedProfile.url,
+        'Version': version || 'unknown'
+      },
+      '#2196F3' // Blue for connection
+    )
 
+    // Update last connected timestamp
     markProfileAsConnected(selectedProfile.id)
 
+    // Set backend connection in store
+    // Use version if available, otherwise default to "unknown"
     setBackendConnection(selectedProfile, version || 'unknown')
-    logger.info('[StartPage] Backend connection set in store')
 
+    logger.group(
+      '✅ Backend Connected',
+      'Connection established in store',
+      {
+        'Profile': selectedProfile.name,
+        'Version': version || 'unknown',
+        'Store Updated': true
+      },
+      '#4CAF50' // Green for success
+    )
+
+    // Load global settings from backend
     try {
       const settings = await fetchSettings()
       loadSettings(settings)
 
-      logger.info('[StartPage] Global settings loaded from backend:', {
-        engine: settings.tts.defaultEngine,
-        model: settings.tts.defaultModelName,
-        speaker: settings.tts.defaultSpeaker,
-      })
+      logger.group(
+        '⚙️ Settings Loaded',
+        'Global settings fetched from backend',
+        {
+          'Default Engine': settings.tts.defaultTtsEngine || 'Not set',
+          'Default Model': settings.tts.defaultTtsModelName || 'Not set',
+          'Default Speaker': settings.tts.defaultTtsSpeaker || 'Not set',
+          'Source': 'Backend /api/settings'
+        },
+        '#607D8B' // Gray for settings
+      )
 
-      if (!settings.tts.defaultSpeaker) {
-        logger.debug('[StartPage] No default speaker in settings, fetching from backend...')
+      // If no default speaker is set in settings, get it from backend and save to settings
+      if (!settings.tts.defaultTtsSpeaker) {
+        logger.group(
+          '🎤 Speaker Discovery',
+          'No default speaker in settings, fetching from backend',
+          {
+            'Current Speaker': 'None',
+            'Action': 'Query backend for default speaker',
+            'Will Persist': true
+          },
+          '#9C27B0' // Purple for speaker operations
+        )
+
         try {
           const defaultSpeaker = await getDefaultSpeaker()
           if (defaultSpeaker) {
-            logger.info('[StartPage] Found default speaker from backend:', defaultSpeaker.name)
+            logger.group(
+              '🎤 Default Speaker Found',
+              'Speaker retrieved from backend',
+              {
+                'Speaker Name': defaultSpeaker.name,
+                'Speaker ID': defaultSpeaker.id,
+                'Action': 'Saving to settings'
+              },
+              '#9C27B0' // Purple for speaker
+            )
+
+            // Update settings in backend to persist the default speaker
             const updatedTtsSettings = {
               ...settings.tts,
-              defaultSpeaker: defaultSpeaker.name
+              defaultTtsSpeaker: defaultSpeaker.name
             }
             await updateSettings('tts', updatedTtsSettings)
+            // Update local store
             loadSettings({ ...settings, tts: updatedTtsSettings })
-            logger.info('[StartPage] Default speaker saved to settings:', defaultSpeaker.name)
+
+            logger.group(
+              '✅ Speaker Saved',
+              'Default speaker persisted to backend',
+              {
+                'Speaker': defaultSpeaker.name,
+                'Updated in Backend': true,
+                'Updated in Store': true
+              },
+              '#4CAF50' // Green for success
+            )
           } else {
-            logger.warn('[StartPage] No default speaker found in backend (no speakers with is_default=TRUE)')
+            logger.group(
+              '⚠️ No Default Speaker',
+              'Backend has no default speaker configured',
+              {
+                'Speakers Table': 'No rows with is_default=TRUE',
+                'Action': 'Continuing without default speaker',
+                'User Impact': 'Must select speaker manually'
+              },
+              '#FF9800' // Orange for warning
+            )
           }
         } catch (error) {
-          logger.warn('[StartPage] Failed to fetch/save default speaker:', error)
+          logger.group(
+            '❌ Speaker Fetch Failed',
+            'Failed to fetch/save default speaker',
+            {
+              'Error': error instanceof Error ? error.message : String(error),
+              'Action': 'Continuing without default speaker'
+            },
+            '#F44336' // Red for error
+          )
         }
       }
 
+      // IMPORTANT: No longer setting session overrides here!
+      // The appStore uses computed getters (getCurrentTtsEngine(), etc.) that automatically
+      // read from settings.tts.defaultTtsEngine, settings.tts.defaultTtsSpeaker, etc.
+      // Session overrides are only set when user explicitly changes values during session.
     } catch (error) {
-      logger.warn('[StartPage] Failed to load global settings:', error)
+      logger.group(
+        '❌ Settings Load Failed',
+        'Failed to load global settings from backend',
+        {
+          'Error': error instanceof Error ? error.message : String(error),
+          'Action': 'Continuing with defaults',
+          'User Impact': 'Will use hardcoded defaults'
+        },
+        '#F44336' // Red for error
+      )
+      // Continue anyway - will use defaults
     }
 
+    // Navigate to main app
+    logger.group(
+      '🚀 Navigation',
+      'Navigating to main application',
+      {
+        'Route': '/app',
+        'Connection Established': true,
+        'Settings Loaded': true
+      },
+      '#4CAF50' // Green for success/navigation
+    )
     navigate('/app')
-    logger.info('[StartPage] Navigating to /app')
   }
 
   return (
@@ -152,6 +284,7 @@ export default function StartPage() {
           width: '100%',
         }}
       >
+          {/* Header */}
           <Box sx={{ textAlign: 'center', mb: 4 }}>
             <Typography variant="h4" gutterBottom>
               🎙️ Audiobook Maker
@@ -161,12 +294,14 @@ export default function StartPage() {
             </Typography>
           </Box>
 
+          {/* Profile Selection */}
           <Box sx={{ mb: 3 }}>
             <Typography variant="overline" color="text.secondary" sx={{ fontWeight: 'bold' }}>
               {t('startPage.backendConnection')}
             </Typography>
 
             <Paper variant="outlined" sx={{ p: 3, mt: 1 }}>
+              {/* Profile Dropdown */}
               <Box sx={{ display: 'flex', gap: 2, mb: 2, alignItems: 'flex-start' }}>
                 <FormControl size="small" sx={{ flex: '0 1 65%' }}>
                   <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5 }}>
@@ -209,6 +344,7 @@ export default function StartPage() {
                 </Button>
               </Box>
 
+              {/* URL Display */}
               {selectedProfile && (
                 <Box sx={{ mb: 2 }}>
                   <Typography variant="caption" color="text.secondary">
@@ -229,6 +365,7 @@ export default function StartPage() {
                 </Box>
               )}
 
+              {/* Status Display */}
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Typography variant="caption" color="text.secondary">
                   {t('startPage.status')}:
@@ -265,6 +402,7 @@ export default function StartPage() {
             </Paper>
           </Box>
 
+          {/* Backend Information (only when online) */}
           {isOnline && version && (
             <Box sx={{ mb: 3 }}>
               <Typography variant="overline" color="text.secondary" sx={{ fontWeight: 'bold' }}>
@@ -315,6 +453,7 @@ export default function StartPage() {
             </Box>
           )}
 
+          {/* Connect Button */}
           <Button
             variant="contained"
             size="large"
@@ -325,6 +464,7 @@ export default function StartPage() {
             {t('startPage.connect')}
           </Button>
 
+          {/* Helper text */}
           {!selectedProfile && (
             <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block', textAlign: 'center' }}>
               {t('startPage.createProfileHint')}
@@ -332,13 +472,16 @@ export default function StartPage() {
           )}
       </Paper>
 
+      {/* Profile Manager Dialog */}
       <ProfileManagerDialog
         open={manageDialogOpen}
         onClose={() => setManageDialogOpen(false)}
         onProfilesChanged={() => {
+          // Reload profiles when changed
           const loadedProfiles = loadProfiles()
           setProfiles(loadedProfiles)
 
+          // If current selection was deleted, select first available
           if (!loadedProfiles.find((p) => p.id === selectedProfileId)) {
             setSelectedProfileId(loadedProfiles[0]?.id || null)
           }
@@ -348,6 +491,9 @@ export default function StartPage() {
   )
 }
 
+/**
+ * Format a date as relative time (e.g., "2 minutes ago")
+ */
 function formatRelativeTime(date: Date, t: any): string {
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()

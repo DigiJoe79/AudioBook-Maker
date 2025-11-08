@@ -1,3 +1,10 @@
+/**
+ * App - Root Component with Routing
+ *
+ * Sets up React Router with two main routes:
+ * - / (StartPage): Backend connection & profile management
+ * - /app (MainApp): Protected main application (requires backend connection)
+ */
 
 import { useEffect, useRef, useMemo, useState } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
@@ -14,45 +21,84 @@ import { useUISettingsStore } from './store/uiSettingsStore'
 import { logger } from './utils/logger'
 
 function App() {
+  // Window reference for theme management
   const windowRef = useRef(getCurrentWindow())
   const { i18n } = useTranslation()
 
+  // Load backend settings (React Query) - only when connected
   useSettings()
 
+  // Use UI settings from local store (always available)
   const uiSettings = useUISettingsStore((state) => state.settings)
 
+  // Detect system theme preference using Tauri's native API
   const [prefersDarkMode, setPrefersDarkMode] = useState(false)
 
+  // Get initial theme and listen for changes
   useEffect(() => {
     const checkTheme = async () => {
       try {
         const currentTheme = await windowRef.current.theme()
         const isDark = currentTheme === 'dark'
-        logger.debug('[App] Tauri theme detection:', {
-          theme: currentTheme,
-          isDark
-        })
+
+        logger.group(
+          '🎨 Theme Detection',
+          'System theme detected via Tauri API',
+          {
+            'Tauri Theme': currentTheme,
+            'Is Dark Mode': isDark,
+            'Source': 'Tauri window.theme()'
+          },
+          '#9C27B0' // Purple for theme detection
+        )
+
         setPrefersDarkMode(isDark)
       } catch (err) {
         logger.warn('[App] Failed to get theme:', err)
+
+        // Fallback to media query
         const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-        logger.debug('[App] Fallback to media query:', isDark ? 'dark' : 'light')
+
+        logger.group(
+          '⚠️ Theme Detection Fallback',
+          'Using media query fallback',
+          {
+            'Media Query Result': isDark ? 'dark' : 'light',
+            'Source': 'window.matchMedia()',
+            'Reason': 'Tauri API failed'
+          },
+          '#FF9800' // Orange for warning/fallback
+        )
+
         setPrefersDarkMode(isDark)
       }
     }
 
+    // Initial check
     checkTheme()
 
+    // Listen for theme changes using Tauri's event system
     let unlisten: (() => void) | undefined
 
     const setupListener = async () => {
       try {
         unlisten = await windowRef.current.onThemeChanged((event) => {
-          logger.debug('[App] System theme changed (Tauri event):', event.payload)
+          logger.group(
+            '🔄 Theme Change',
+            'System theme changed',
+            {
+              'New Theme': event.payload,
+              'Is Dark Mode': event.payload === 'dark',
+              'Source': 'Tauri theme change event'
+            },
+            '#2196F3' // Blue for events
+          )
+
           setPrefersDarkMode(event.payload === 'dark')
         })
       } catch (err) {
         logger.warn('[App] Could not setup theme listener:', err)
+        // Fallback to polling
         const pollInterval = setInterval(checkTheme, 5000)
         unlisten = () => clearInterval(pollInterval)
       }
@@ -65,21 +111,42 @@ function App() {
     }
   }, [])
 
+  // Determine effective theme mode
   const themeMode = useMemo(() => {
+    // Use UI settings (always available from localStorage)
     const themeSetting = uiSettings.theme
-    logger.debug('[App] Theme calculation:', {
-      themeSetting,
-      prefersDarkMode,
-      resultingMode: themeSetting === 'system' ? (prefersDarkMode ? 'dark' : 'light') : themeSetting
-    })
-    if (themeSetting === 'system') {
-      return prefersDarkMode ? 'dark' : 'light'
-    }
-    return themeSetting
+    const resultingMode = themeSetting === 'system'
+      ? (prefersDarkMode ? 'dark' : 'light')
+      : themeSetting
+
+    logger.group(
+      '⚙️ Theme Calculation',
+      'Computing effective theme mode',
+      {
+        'User Setting': themeSetting,
+        'System Prefers Dark': prefersDarkMode,
+        'Resulting Mode': resultingMode
+      },
+      '#607D8B' // Gray for computation
+    )
+
+    return resultingMode
   }, [uiSettings.theme, prefersDarkMode])
 
+  // Create theme based on mode
   const theme = useMemo(() => {
-    logger.debug('[App] Creating theme with mode:', themeMode)
+    logger.group(
+      '🎨 Theme Creation',
+      'Building Material-UI theme',
+      {
+        'Mode': themeMode,
+        'Primary Color': '#1976d2',
+        'Secondary Color': '#dc004e',
+        'Dark Background': themeMode === 'dark' ? '#121212' : 'default'
+      },
+      '#9C27B0' // Purple for theme creation
+    )
+
     return createTheme({
       palette: {
         mode: themeMode,
@@ -99,26 +166,64 @@ function App() {
     })
   }, [themeMode])
 
+  // Sync i18n language with UI settings
   useEffect(() => {
     i18n.changeLanguage(uiSettings.uiLanguage)
   }, [uiSettings.uiLanguage, i18n])
 
+  // Sync Tauri window theme with app theme
   useEffect(() => {
     if (uiSettings.theme === 'system') {
-      logger.debug('[App] Resetting to system theme')
+      // Reset to system theme (null = follow OS)
+      logger.group(
+        '🔄 Window Theme Sync',
+        'Resetting to system theme',
+        {
+          'Action': 'setTheme(null)',
+          'Mode': 'Follow OS',
+          'User Setting': 'system'
+        },
+        '#2196F3' // Blue for sync operations
+      )
+
       windowRef.current.setTheme(null).catch((err) => {
         logger.error('[App] Failed to reset window theme:', err)
       })
     } else {
+      // Set explicit theme
       const tauriTheme: Theme = themeMode === 'dark' ? 'dark' : 'light'
-      logger.debug('[App] Setting Tauri window theme:', tauriTheme)
+
+      logger.group(
+        '🔄 Window Theme Sync',
+        'Setting explicit window theme',
+        {
+          'Action': `setTheme('${tauriTheme}')`,
+          'Theme Mode': themeMode,
+          'User Setting': uiSettings.theme
+        },
+        '#2196F3' // Blue for sync operations
+      )
+
       windowRef.current.setTheme(tauriTheme).catch((err) => {
         logger.error('[App] Failed to set window theme:', err)
       })
     }
   }, [themeMode, uiSettings.theme])
 
+  // Show window when React is fully loaded and ready
   useEffect(() => {
+    logger.group(
+      '🚀 App Initialization',
+      'React fully loaded, showing window',
+      {
+        'Action': 'invoke(show_main_window)',
+        'Delay': '50ms',
+        'Reason': 'Ensure all components are mounted'
+      },
+      '#4CAF50' // Green for success/initialization
+    )
+
+    // Small delay to ensure all components are mounted
     const timer = setTimeout(() => {
       invoke('show_main_window').catch((err) => {
         logger.error('[App] Failed to show window:', err)
@@ -133,6 +238,7 @@ function App() {
       <CssBaseline />
       <BrowserRouter>
         <Routes>
+          {/* Start Page - Backend Connection */}
           <Route
             path="/"
             element={
@@ -142,6 +248,7 @@ function App() {
             }
           />
 
+          {/* Main App - Protected (requires backend connection) */}
           <Route
             path="/app"
             element={

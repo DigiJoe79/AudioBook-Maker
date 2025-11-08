@@ -1,3 +1,9 @@
+/**
+ * Speaker Manager Content
+ *
+ * Inline speaker management for Settings Dialog Speakers tab.
+ * Embedded version without separate dialog wrapper.
+ */
 
 import React, { useState } from 'react';
 import {
@@ -42,6 +48,7 @@ import {
   setDefaultSpeaker
 } from '../../services/settingsApi';
 import { useConfirm } from '../../hooks/useConfirm';
+import { logger } from '../../utils/logger';
 import type { Speaker, SpeakerSample } from '../../types';
 
 interface SpeakerFormData {
@@ -53,7 +60,7 @@ interface SpeakerFormData {
 
 interface SampleToUpload {
   file: File;
-  id: string;
+  id: string; // temporary ID for display
 }
 
 export default function SpeakerManagerContent() {
@@ -73,11 +80,13 @@ export default function SpeakerManagerContent() {
   const [samplesToUpload, setSamplesToUpload] = useState<SampleToUpload[]>([]);
   const [currentSpeakerSamples, setCurrentSpeakerSamples] = useState<SpeakerSample[]>([]);
 
+  // Query speakers
   const { data: speakers, isLoading, error } = useQuery({
     queryKey: ['speakers'],
     queryFn: fetchSpeakers
   });
 
+  // Mutations
   const createMutation = useMutation({
     mutationFn: createSpeaker,
     onSuccess: () => {
@@ -115,7 +124,10 @@ export default function SpeakerManagerContent() {
       transcript?: string;
     }) => uploadSpeakerSample(speakerId, file, transcript),
     onSuccess: () => {
+      // Invalidate speakers to show updated state (e.g., newly activated speaker)
       queryClient.invalidateQueries({ queryKey: ['speakers'] });
+      // Note: Settings are NOT invalidated here to avoid overwriting unsaved changes
+      // in the Settings Dialog. Settings will be invalidated when the dialog closes.
     }
   });
 
@@ -131,6 +143,7 @@ export default function SpeakerManagerContent() {
     mutationFn: (speakerId: string) => setDefaultSpeaker(speakerId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['speakers'] });
+      // Also invalidate settings since defaultSpeaker is stored there
       queryClient.invalidateQueries({ queryKey: ['settings'] });
     }
   });
@@ -177,6 +190,7 @@ export default function SpeakerManagerContent() {
       let speakerId: string;
 
       if (isCreating) {
+        // Create new speaker
         const speakerData: Omit<Speaker, 'id' | 'isActive' | 'isDefault' | 'createdAt' | 'updatedAt' | 'samples'> = {
           name: data.name,
           description: data.description,
@@ -187,12 +201,14 @@ export default function SpeakerManagerContent() {
         const newSpeaker = await createMutation.mutateAsync(speakerData);
         speakerId = newSpeaker.id;
       } else if (editingId) {
+        // Update existing speaker
         await updateMutation.mutateAsync({ id: editingId, data });
         speakerId = editingId;
       } else {
         return;
       }
 
+      // Upload new samples
       for (const sampleToUpload of samplesToUpload) {
         await uploadSampleMutation.mutateAsync({
           speakerId,
@@ -200,12 +216,13 @@ export default function SpeakerManagerContent() {
         });
       }
 
+      // Success - reset form
       setIsCreating(false);
       setEditingId(null);
       resetForm();
       queryClient.invalidateQueries({ queryKey: ['speakers'] });
     } catch (error) {
-      console.error('Error saving speaker:', error);
+      logger.error('🎤 Error saving speaker:', error);
     }
   };
 
@@ -220,6 +237,7 @@ export default function SpeakerManagerContent() {
     }
   };
 
+  // Handler for adding samples in the dialog (before saving)
   const handleAddSamplesToDialog = () => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -239,10 +257,12 @@ export default function SpeakerManagerContent() {
     input.click();
   };
 
+  // Handler for removing a sample from the dialog (before saving)
   const handleRemoveSampleFromDialog = (sampleId: string) => {
     setSamplesToUpload((prev) => prev.filter((s) => s.id !== sampleId));
   };
 
+  // Handler for deleting existing samples during edit
   const handleDeleteExistingSample = async (sampleId: string) => {
     if (!editingId) return;
 
@@ -253,6 +273,7 @@ export default function SpeakerManagerContent() {
 
     if (confirmed) {
       await deleteSampleMutation.mutateAsync({ speakerId: editingId, sampleId });
+      // Update local state
       setCurrentSpeakerSamples((prev) => prev.filter((s) => s.id !== sampleId));
     }
   };
@@ -287,6 +308,7 @@ export default function SpeakerManagerContent() {
 
   return (
     <Box>
+      {/* Header with Add Button */}
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
         <Typography variant="h6">{t('speakers.list')}</Typography>
         <Button
@@ -299,6 +321,7 @@ export default function SpeakerManagerContent() {
         </Button>
       </Box>
 
+      {/* Create/Edit Form */}
       {(isCreating || editingId) && (
         <Box mb={2} p={2} border={1} borderColor="divider" borderRadius={1}>
           <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
@@ -351,6 +374,7 @@ export default function SpeakerManagerContent() {
               </Select>
             </FormControl>
 
+            {/* Audio Samples Section */}
             <Box mt={2}>
               <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
                 <Typography variant="subtitle2">{t('speakers.audioSamples')}</Typography>
@@ -364,6 +388,7 @@ export default function SpeakerManagerContent() {
                 </Button>
               </Box>
 
+              {/* Existing samples (during edit) */}
               {editingId && currentSpeakerSamples.length > 0 && (
                 <Box mb={1}>
                   <Typography variant="caption" color="text.secondary" display="block" mb={0.5}>
@@ -397,6 +422,7 @@ export default function SpeakerManagerContent() {
                 </Box>
               )}
 
+              {/* New samples to upload */}
               {samplesToUpload.length > 0 && (
                 <Box mb={1}>
                   <Typography variant="caption" color="text.secondary" display="block" mb={0.5}>
@@ -429,6 +455,7 @@ export default function SpeakerManagerContent() {
                 </Box>
               )}
 
+              {/* Status warning */}
               {(isCreating || editingId) && currentSpeakerSamples.length === 0 && samplesToUpload.length === 0 && (
                 <Alert severity="warning" sx={{ mt: 1 }}>
                   {t('speakers.messages.minOneSample')}
@@ -466,10 +493,12 @@ export default function SpeakerManagerContent() {
         </Box>
       )}
 
+      {/* Speaker List */}
       <List sx={{ maxHeight: 400, overflow: 'auto' }}>
         {speakers?.map((speaker) => (
           <React.Fragment key={speaker.id}>
             <ListItem>
+              {/* Expand/Collapse Button */}
               {speaker.samples.length > 0 && (
                 <IconButton
                   size="small"
@@ -546,6 +575,7 @@ export default function SpeakerManagerContent() {
               </ListItemSecondaryAction>
             </ListItem>
 
+            {/* Samples List - Only show when expanded */}
             {speaker.samples.length > 0 && expandedSpeakers.has(speaker.id) && (
               <Box pl={4} pb={1}>
                 {speaker.samples.map((sample) => (
@@ -579,6 +609,7 @@ export default function SpeakerManagerContent() {
         )}
       </List>
 
+      {/* Confirmation Dialog */}
       <ConfirmDialog />
     </Box>
   );

@@ -1,3 +1,6 @@
+/**
+ * DividerSegmentItem - Visual representation of pause/scene break segments
+ */
 
 import { useState } from 'react'
 import {
@@ -30,6 +33,10 @@ interface DividerSegmentItemProps {
   dragHandleProps?: any
 }
 
+/**
+ * Divider Segment Item Component
+ * Displays pause/scene break segments with editable duration
+ */
 export default function DividerSegmentItem({
   segment,
   isSelected,
@@ -46,6 +53,7 @@ export default function DividerSegmentItem({
 
   const handleUpdatePause = async (newDuration: number) => {
     onUpdatePause(newDuration)
+    // Give mutation a moment to start
     await new Promise(resolve => setTimeout(resolve, 100))
   }
 
@@ -71,6 +79,7 @@ export default function DividerSegmentItem({
       <ListItem disablePadding>
         <ListItemButton sx={{ py: 1.5, px: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', gap: 1 }}>
+            {/* Drag Handle - Left */}
             <Box
               {...dragHandleProps}
               sx={{
@@ -86,8 +95,10 @@ export default function DividerSegmentItem({
               <DragIndicatorIcon fontSize="small" />
             </Box>
 
+        {/* Action Buttons */}
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
           <Stack direction="row" spacing={0.5} alignItems="center">
+            {/* Invisible spacers to align More button with normal segments */}
             <IconButton size="small" sx={{ visibility: 'hidden' }} disabled>
               <MoreVertIcon fontSize="small" />
             </IconButton>
@@ -108,7 +119,9 @@ export default function DividerSegmentItem({
           </Stack>
         </Box>
 
+        {/* Column Layout - Same as normal segments */}
         <Box sx={{ display: 'flex', gap: 2.5, flex: 1, alignItems: 'center', my: 0.5, ml: 0.5 }}>
+          {/* Column 1: Segment Number (blue chip with tooltip) */}
           <Box sx={{ flexShrink: 0 }}>
             <Tooltip title={t('dividerSegment.sceneBreak')} arrow>
               <Chip
@@ -129,8 +142,10 @@ export default function DividerSegmentItem({
             </Tooltip>
           </Box>
 
+          {/* Vertical Divider */}
           <Divider orientation="vertical" flexItem sx={{ height: 24, alignSelf: 'center', borderRightWidth: 2, borderColor: 'white' }} />
 
+          {/* Column 2: Description with duration */}
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Typography variant="body2" color="text.disabled" fontStyle="italic">
               {t('dividerSegment.description', { seconds: pauseSeconds })}
@@ -141,6 +156,7 @@ export default function DividerSegmentItem({
         </ListItemButton>
       </ListItem>
 
+      {/* Segment Menu */}
       <SegmentMenu
         anchorEl={menuAnchorEl}
         open={Boolean(menuAnchorEl)}
@@ -150,6 +166,7 @@ export default function DividerSegmentItem({
         segmentType="divider"
       />
 
+      {/* Edit Pause Duration Dialog */}
       <QuickCreateDividerDialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}

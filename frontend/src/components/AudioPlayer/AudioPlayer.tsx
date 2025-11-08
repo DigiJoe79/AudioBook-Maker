@@ -16,6 +16,7 @@ import {
 import { useState, useEffect, RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Chapter, Segment } from '../../types'
+import { logger } from '../../utils/logger'
 
 interface AudioPlayerProps {
   chapter?: Chapter
@@ -42,8 +43,10 @@ export default function AudioPlayer({
 
   const isPlaying = !!playingSegmentId
 
+  // Get current playing segment
   const currentSegment = chapter?.segments.find(s => s.id === playingSegmentId)
 
+  // Sync with audio element
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
@@ -54,6 +57,7 @@ export default function AudioPlayer({
     audio.addEventListener('timeupdate', updateTime)
     audio.addEventListener('loadedmetadata', updateDuration)
 
+    // Set initial volume
     audio.volume = volume / 100
 
     return () => {
@@ -62,6 +66,7 @@ export default function AudioPlayer({
     }
   }, [audioRef, volume])
 
+  // Reset time/duration when playback stops
   useEffect(() => {
     if (!playingSegmentId) {
       setCurrentTime(0)
@@ -78,20 +83,24 @@ export default function AudioPlayer({
 
   const handlePlayPause = () => {
     if (isPlaying) {
+      // Stop current playback
       onStopPlayback?.()
     } else if (chapter && chapter.segments.length > 0) {
+      // Big play button: ALWAYS starts continuous playback (continuous=true)
+      // Priority: 1. Selected segment, 2. First segment with audio
 
       if (selectedSegmentId) {
         const selectedSegment = chapter.segments.find(s => s.id === selectedSegmentId)
         if (selectedSegment?.audioPath) {
-          onPlaySegment?.(selectedSegment, true)
+          onPlaySegment?.(selectedSegment, true)  // continuous=true for autoplay
           return
         }
       }
 
+      // Fallback: Play first segment with audio
       const firstSegmentWithAudio = chapter.segments.find(s => s.audioPath)
       if (firstSegmentWithAudio) {
-        onPlaySegment?.(firstSegmentWithAudio, true)
+        onPlaySegment?.(firstSegmentWithAudio, true)  // continuous=true for autoplay
       }
     }
   }
@@ -99,31 +108,43 @@ export default function AudioPlayer({
   const handlePrevious = () => {
     if (!chapter) return
 
-    console.log('[AudioPlayer] Previous button clicked', {
-      playingSegmentId,
-      selectedSegmentId
-    })
+    logger.group(
+      '⏮️ Navigation',
+      'Previous button clicked',
+      { playingSegmentId, selectedSegmentId },
+      '#2196F3'
+    )
 
+    // Use playing segment as reference, fallback to selected segment
     const referenceSegmentId = playingSegmentId || selectedSegmentId
     if (!referenceSegmentId) {
+      // No reference point - play last segment with audio
       const lastSegmentWithAudio = [...chapter.segments].reverse().find(s => s.audioPath)
       if (lastSegmentWithAudio) {
-        console.log('[AudioPlayer] No reference, playing last segment with audio')
+        logger.group(
+          '⏮️ Navigation',
+          'No reference, playing last segment',
+          { segmentId: lastSegmentWithAudio.id },
+          '#2196F3'
+        )
         onPlaySegment?.(lastSegmentWithAudio, true)
       }
       return
     }
 
     const currentIndex = chapter.segments.findIndex(s => s.id === referenceSegmentId)
-    if (currentIndex <= 0) return
+    if (currentIndex <= 0) return // Already at first segment or not found
 
+    // Find previous segment with audio
     for (let i = currentIndex - 1; i >= 0; i--) {
       if (chapter.segments[i].audioPath) {
-        console.log('[AudioPlayer] Playing previous segment', {
-          segmentId: chapter.segments[i].id,
-          continuous: true,
-          index: i
-        })
+        // Previous button: ALWAYS continue with autoplay (continuous=true)
+        logger.group(
+          '⏮️ Navigation',
+          'Playing previous segment',
+          { segmentId: chapter.segments[i].id, continuous: true, index: i },
+          '#2196F3'
+        )
         onPlaySegment?.(chapter.segments[i], true)
         return
       }
@@ -133,31 +154,43 @@ export default function AudioPlayer({
   const handleNext = () => {
     if (!chapter) return
 
-    console.log('[AudioPlayer] Next button clicked', {
-      playingSegmentId,
-      selectedSegmentId
-    })
+    logger.group(
+      '⏭️ Navigation',
+      'Next button clicked',
+      { playingSegmentId, selectedSegmentId },
+      '#2196F3'
+    )
 
+    // Use playing segment as reference, fallback to selected segment
     const referenceSegmentId = playingSegmentId || selectedSegmentId
     if (!referenceSegmentId) {
+      // No reference point - play first segment with audio
       const firstSegmentWithAudio = chapter.segments.find(s => s.audioPath)
       if (firstSegmentWithAudio) {
-        console.log('[AudioPlayer] No reference, playing first segment with audio')
+        logger.group(
+          '⏭️ Navigation',
+          'No reference, playing first segment',
+          { segmentId: firstSegmentWithAudio.id },
+          '#2196F3'
+        )
         onPlaySegment?.(firstSegmentWithAudio, true)
       }
       return
     }
 
     const currentIndex = chapter.segments.findIndex(s => s.id === referenceSegmentId)
-    if (currentIndex === -1 || currentIndex >= chapter.segments.length - 1) return
+    if (currentIndex === -1 || currentIndex >= chapter.segments.length - 1) return // Not found or at last segment
 
+    // Find next segment with audio
     for (let i = currentIndex + 1; i < chapter.segments.length; i++) {
       if (chapter.segments[i].audioPath) {
-        console.log('[AudioPlayer] Playing next segment', {
-          segmentId: chapter.segments[i].id,
-          continuous: true,
-          index: i
-        })
+        // Next button: ALWAYS continue with autoplay (continuous=true)
+        logger.group(
+          '⏭️ Navigation',
+          'Playing next segment',
+          { segmentId: chapter.segments[i].id, continuous: true, index: i },
+          '#2196F3'
+        )
         onPlaySegment?.(chapter.segments[i], true)
         return
       }
@@ -190,6 +223,7 @@ export default function AudioPlayer({
     audio.volume = newMuted ? 0 : volume / 100
   }
 
+  // No chapter selected
   if (!chapter) {
     return (
       <Box
@@ -221,6 +255,7 @@ export default function AudioPlayer({
         gap: 1,
       }}
     >
+      {/* Timeline Slider */}
       <Box sx={{ px: 1 }}>
         <Slider
           value={currentTime}
@@ -237,18 +272,21 @@ export default function AudioPlayer({
         />
       </Box>
 
+      {/* Controls */}
       <Stack
         direction="row"
         spacing={1}
         alignItems="center"
         sx={{ px: 1 }}
       >
+        {/* Time Display */}
         <Typography variant="caption" color="text.secondary" sx={{ minWidth: 90 }}>
           {formatTime(currentTime)} / {formatTime(duration)}
         </Typography>
 
         <Box sx={{ flexGrow: 1 }} />
 
+        {/* Playback Controls */}
         <IconButton
           size="small"
           disabled={!hasAudio}
@@ -286,6 +324,7 @@ export default function AudioPlayer({
 
         <Box sx={{ flexGrow: 1 }} />
 
+        {/* Volume Control */}
         <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 150 }}>
           <IconButton size="small" onClick={toggleMute}>
             {isMuted || volume === 0 ? <VolumeOff /> : <VolumeUp />}
