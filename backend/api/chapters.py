@@ -3,14 +3,15 @@ API endpoints for chapter management
 """
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, ConfigDict
-from typing import Optional, Literal, List
+from typing import Optional, List
 import sqlite3
 from loguru import logger
 
 from db.database import get_db
+from services.event_broadcaster import broadcaster, EventType
 from db.repositories import ChapterRepository, SegmentRepository
-from services.text_segmenter import get_segmenter
-from core.engine_manager import get_engine_manager
+from core.text_engine_manager import get_text_engine_manager
+from core.tts_engine_manager import get_tts_engine_manager
 from models.response_models import (
     ChapterResponse,
     ChapterWithSegmentsResponse,
@@ -33,8 +34,6 @@ class ChapterCreate(BaseModel):
     project_id: str
     title: str
     order_index: int
-    default_tts_engine: str
-    default_tts_model_name: str
 
 
 class ChapterUpdate(BaseModel):
@@ -74,14 +73,14 @@ class SegmentTextRequest(BaseModel):
     )
 
     text: str
-    method: Literal["sentences", "paragraphs", "smart", "length"] = "smart"
-    language: str
+    # Note: Always uses sentence-based segmentation (segment_by_sentences)
+    language: str  # Text engine language for segmentation
     tts_engine: str  # Engine selection (required - determines max/min length constraints)
     tts_model_name: str  # Model name for TTS generation (required)
+    tts_language: Optional[str] = None  # TTS language (optional, defaults to segmentation language if not provided)
     tts_speaker_name: Optional[str] = None  # Speaker for TTS generation (optional)
     min_length: Optional[int] = None  # Optional override (auto-detected from engine if not provided)
     max_length: Optional[int] = None  # Optional override (auto-detected from engine if not provided)
-    auto_create: bool = False  # Automatically create segments in DB
 
 
 @router.post("/chapters", response_model=ChapterResponse)
@@ -89,36 +88,68 @@ async def create_chapter(
     chapter: ChapterCreate,
     conn: sqlite3.Connection = Depends(get_db)
 ):
-    """Create a new chapter"""
-    chapter_repo = ChapterRepository(conn)
+    """
+    Create a new chapter.
 
-    new_chapter = chapter_repo.create(
-        chapter.project_id,
-        chapter.title,
-        chapter.order_index,
-        chapter.default_tts_engine,
-        chapter.default_tts_model_name
-    )
+    Broadcasts chapter.created SSE event.
+    """
+    try:
+        chapter_repo = ChapterRepository(conn)
 
-    # Add empty segments list
-    new_chapter['segments'] = []
-    return new_chapter
+        new_chapter = chapter_repo.create(
+            chapter.project_id,
+            chapter.title,
+            chapter.order_index
+        )
+
+        # Emit SSE event
+        try:
+            await broadcaster.broadcast_chapter_crud(
+                {
+                    "chapterId": new_chapter['id'],
+                    "projectId": new_chapter['project_id'],
+                    "title": new_chapter['title'],
+                    "orderIndex": new_chapter['order_index']
+                },
+                event_type=EventType.CHAPTER_CREATED
+            )
+        except Exception as sse_err:
+            logger.warning(f"Failed to broadcast chapter.created event: {sse_err}")
+
+        # Add empty segments list
+        new_chapter['segments'] = []
+        return new_chapter
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create chapter: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"[CHAPTER_CREATE_FAILED]error:{str(e)}")
 
 
 @router.get("/chapters/{chapter_id}", response_model=ChapterWithSegmentsResponse)
 async def get_chapter(chapter_id: str, conn: sqlite3.Connection = Depends(get_db)):
-    """Get a chapter with its segments"""
-    chapter_repo = ChapterRepository(conn)
-    segment_repo = SegmentRepository(conn)
+    """
+    Get a chapter with its segments.
 
-    chapter = chapter_repo.get_by_id(chapter_id)
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+    Used for chapter detail view and segment list rendering.
+    """
+    try:
+        chapter_repo = ChapterRepository(conn)
+        segment_repo = SegmentRepository(conn)
 
-    segments = segment_repo.get_by_chapter(chapter_id)
-    chapter['segments'] = segments
+        chapter = chapter_repo.get_by_id(chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
 
-    return chapter
+        segments = segment_repo.get_by_chapter(chapter_id)
+        chapter['segments'] = segments
+
+        return chapter
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get chapter {chapter_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"[CHAPTER_GET_FAILED]chapterId:{chapter_id};error:{str(e)}")
 
 
 @router.put("/chapters/{chapter_id}", response_model=ChapterWithSegmentsResponse)
@@ -127,23 +158,47 @@ async def update_chapter(
     chapter: ChapterUpdate,
     conn: sqlite3.Connection = Depends(get_db)
 ):
-    """Update a chapter"""
-    chapter_repo = ChapterRepository(conn)
-    segment_repo = SegmentRepository(conn)
+    """
+    Update chapter title and order.
 
-    updated = chapter_repo.update(
-        chapter_id,
-        title=chapter.title,
-        order_index=chapter.order_index
-    )
+    Broadcasts chapter.updated SSE event.
+    """
+    try:
+        chapter_repo = ChapterRepository(conn)
+        segment_repo = SegmentRepository(conn)
 
-    if not updated:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+        updated = chapter_repo.update(
+            chapter_id,
+            title=chapter.title,
+            order_index=chapter.order_index
+        )
 
-    segments = segment_repo.get_by_chapter(chapter_id)
-    updated['segments'] = segments
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
 
-    return updated
+        segments = segment_repo.get_by_chapter(chapter_id)
+        updated['segments'] = segments
+
+        # Emit SSE event
+        try:
+            await broadcaster.broadcast_chapter_crud(
+                {
+                    "chapterId": updated['id'],
+                    "projectId": updated['project_id'],
+                    "title": updated['title'],
+                    "orderIndex": updated.get('order_index')
+                },
+                event_type=EventType.CHAPTER_UPDATED
+            )
+        except Exception as sse_err:
+            logger.warning(f"Failed to broadcast chapter.updated event: {sse_err}")
+
+        return updated
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update chapter {chapter_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"[CHAPTER_UPDATE_FAILED]chapterId:{chapter_id};error:{str(e)}")
 
 
 @router.post("/chapters/{chapter_id}/segment", response_model=TextSegmentationResponse)
@@ -153,36 +208,35 @@ async def segment_chapter_text(
     conn: sqlite3.Connection = Depends(get_db)
 ):
     """
-    Segment chapter text into natural segments using spaCy
+    Segment chapter text into natural segments using text engine and create them in the database
 
     Args:
         chapter_id: Chapter ID to segment
         request: Segmentation parameters (including engine for constraint detection)
 
     Returns:
-        List of segments (preview if auto_create=False, or created segments if auto_create=True)
+        Created segments with validation status
     """
     chapter_repo = ChapterRepository(conn)
     segment_repo = SegmentRepository(conn)
 
-    # Verify chapter exists
     chapter = chapter_repo.get_by_id(chapter_id)
     if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+        raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
 
     # Get engine constraints (lightweight - don't load model)
-    manager = get_engine_manager()
+    tts_manager = get_tts_engine_manager()
 
     try:
         # Check if engine type is valid
-        if request.tts_engine not in manager.list_available_engines():
+        if request.tts_engine not in tts_manager.list_available_engines():
             raise HTTPException(
                 status_code=400,
-                detail=f"Unknown engine type: {request.tts_engine}. Available engines: {manager.list_available_engines()}"
+                detail=f"[CHAPTER_UNKNOWN_ENGINE]engine:{request.tts_engine};available:{','.join(tts_manager.list_available_engines())}"
             )
 
         # Get engine constraints from metadata
-        metadata = manager._engine_metadata[request.tts_engine]
+        metadata = tts_manager._engine_metadata[request.tts_engine]
         constraints = metadata.get('constraints', {})
 
         engine_max = constraints.get('max_text_length', 500)
@@ -204,125 +258,209 @@ async def segment_chapter_text(
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to get engine constraints: {str(e)}"
+            detail=f"[CHAPTER_ENGINE_CONSTRAINTS_FAILED]error:{str(e)}"
         )
 
-    # Get text segmenter for the specified language
+    # Get text engine manager
+    text_manager = get_text_engine_manager()
+
+    # Resolve text engine: settings > first available
+    text_engine_name = settings_service.get_setting('text.defaultTextEngine') or ""
+
+    if not text_engine_name and text_manager._engine_metadata:
+        text_engine_name = next(iter(text_manager._engine_metadata.keys()))
+
+    if not text_engine_name:
+        raise HTTPException(status_code=400, detail="[TEXT_NO_ENGINE_AVAILABLE]")
+
+    # Pass language code - engine will select appropriate model
     try:
-        segmenter = get_segmenter(request.language)
+        await text_manager.ensure_engine_ready(text_engine_name, request.language)
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to load text segmenter: {str(e)}"
+            detail=f"[TEXT_SEGMENTER_LOAD_FAILED]language:{request.language};error:{str(e)}"
         )
 
-    # Perform segmentation based on method
-    if request.method == "sentences":
-        segments = segmenter.segment_by_sentences(
-            request.text,
-            min_length=min_length,
-            max_length=max_length
+    # Perform sentence-based segmentation via TextEngineManager
+    # This ensures segments never break in the middle of sentences (maintains TTS quality)
+    try:
+        segment_response = await text_manager.segment_with_engine(
+            engine_name=text_engine_name,
+            text=request.text,
+            language=request.language,
+            parameters={'max_length': max_length}
         )
-    elif request.method == "paragraphs":
-        segments = segmenter.segment_by_paragraphs(request.text)
-    elif request.method == "smart":
-        segments = segmenter.segment_smart(
-            request.text,
-            min_length=min_length,
-            max_length=max_length
-        )
-    elif request.method == "length":
-        segments = segmenter.segment_by_length(
-            request.text,
-            target_length=(min_length + max_length) // 2
-        )
-    else:
-        raise HTTPException(status_code=400, detail=f"Invalid method: {request.method}")
 
-    # If auto_create is enabled, create segments in database
-    if request.auto_create:
-        logger.info(f"[Text Segmentation] Creating {len(segments)} segments")
-        logger.info(f"[Text Segmentation] Speaker: '{request.tts_speaker_name}' (type: {type(request.tts_speaker_name)})")
-        logger.info(f"[Text Segmentation] Engine: {request.tts_engine}, Model: {request.tts_model_name}")
+        # Convert response format from text engine to expected format
+        # Text engine returns: {"segments": [{"text": str, "start": int, "end": int}, ...], ...}
+        # We need: [{"text": str, "order_index": int, "status": str, ...}, ...]
+        segments = []
+        for idx, seg in enumerate(segment_response.get('segments', [])):
+            seg_text = seg.get('text', '')
+            seg_length = len(seg_text)
 
-        created_segments = []
-        for seg in segments:
-            created_seg = segment_repo.create(
-                chapter_id=chapter_id,
-                text=seg["text"],
-                order_index=seg["order_index"],
-                tts_engine=request.tts_engine,
-                tts_model_name=request.tts_model_name,  # Required - no fallback
-                tts_speaker_name=request.tts_speaker_name,
-                language=request.language,
-                status="pending"
+            # Check if segment exceeds max_length (mark as failed)
+            if seg_length > max_length:
+                segments.append({
+                    "text": seg_text,
+                    "order_index": idx,
+                    "status": "failed",
+                    "length": seg_length,
+                    "max_length": max_length,
+                    "issue": "sentence_too_long"
+                })
+            else:
+                segments.append({
+                    "text": seg_text,
+                    "order_index": idx,
+                    "status": "ok"
+                })
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"[TEXT_SEGMENTATION_FAILED]error:{str(e)}"
+        )
+
+    # Create segments in database
+    logger.info(f"[Text Segmentation] Creating {len(segments)} segments")
+    logger.info(f"[Text Segmentation] Speaker: '{request.tts_speaker_name}' (type: {type(request.tts_speaker_name)})")
+    logger.info(f"[Text Segmentation] Engine: {request.tts_engine}, Model: {request.tts_model_name}")
+
+    from services.segment_validator import SegmentValidator
+
+    # Get existing segments count to append new segments at the end
+    existing_segments = segment_repo.get_by_chapter(chapter_id)
+    offset = len(existing_segments)
+    logger.info(f"[Text Segmentation] Found {offset} existing segments, new segments will start at index {offset}")
+
+    created_segments = []
+    for seg in segments:
+        # Check if text engine already marked segment as failed (oversized sentence)
+        engine_status = seg.get("status", "ok")
+
+        if engine_status == "failed":
+            # Text engine detected single sentence > max_length
+            # Trust engine's decision (intelligent sentence-boundary detection)
+            segment_status = 'failed'
+            logger.warning(
+                f"Segment {seg['order_index']} marked as 'failed' by text engine: "
+                f"Single sentence exceeds max_length ({seg.get('length')}/{seg.get('max_length')} chars). "
+                f"User must shorten or split this sentence."
             )
-            if seg["order_index"] == 0:  # Log first segment
-                logger.info(f"[Text Segmentation] First segment tts_speaker_name: '{created_seg.get('tts_speaker_name')}'")
-            created_segments.append(created_seg)
+        else:
+            # Validate segment text length against engine constraints
+            # (Secondary check for edge cases)
+            validation = SegmentValidator.validate_text_length(
+                text=seg["text"],
+                engine_name=request.tts_engine,
+                language=request.language,
+                constraints=constraints
+            )
 
-        return {
-            "success": True,
-            "message": f"Created {len(created_segments)} segments using {request.tts_engine} constraints (min={min_length}, max={max_length})",
-            "segments": created_segments,
-            "segment_count": len(created_segments),
-            "engine": request.tts_engine,
-            "constraints": {
-                "min_length": min_length,
-                "max_length": max_length
-            }
-        }
+            # Determine status based on validation
+            if validation['is_valid']:
+                segment_status = 'pending'
+            else:
+                segment_status = 'failed'
+                logger.warning(
+                    f"Segment {seg['order_index']} exceeds max length: "
+                    f"{validation['text_length']}/{validation['max_length']} chars. "
+                    f"Created as 'failed'. User must edit to shorten text."
+                )
 
-    # Otherwise return preview
-    return {
-        "success": True,
-        "message": f"Generated {len(segments)} segments (preview mode) using {request.tts_engine} constraints",
-        "segments": segments,
-        "segment_count": len(segments),
-        "engine": request.tts_engine,
-        "constraints": {
+        created_seg = segment_repo.create(
+            chapter_id=chapter_id,
+            text=seg["text"],
+            order_index=seg["order_index"] + offset,  # Append after existing segments
+            tts_engine=request.tts_engine,
+            tts_model_name=request.tts_model_name,  # Required - no fallback
+            tts_speaker_name=request.tts_speaker_name,
+            language=request.tts_language or request.language,  # Use TTS language if provided, otherwise text segmentation language
+            status=segment_status
+        )
+        if seg["order_index"] == 0:  # Log first segment
+            logger.info(f"[Text Segmentation] First segment tts_speaker_name: '{created_seg.get('tts_speaker_name')}'")
+        created_segments.append(created_seg)
+
+    return TextSegmentationResponse(
+        success=True,
+        message=f"Created {len(created_segments)} segments using {request.tts_engine} constraints (min={min_length}, max={max_length})",
+        segments=created_segments,
+        segment_count=len(created_segments),
+        engine=request.tts_engine,
+        constraints={
             "min_length": min_length,
             "max_length": max_length
         }
-    }
+    )
 
 
 @router.delete("/chapters/{chapter_id}", response_model=DeleteResponse)
 async def delete_chapter(chapter_id: str, conn: sqlite3.Connection = Depends(get_db)):
-    """Delete a chapter and its audio files"""
-    from pathlib import Path
-    import os
+    """
+    Delete a chapter and its audio files.
 
-    chapter_repo = ChapterRepository(conn)
-    segment_repo = SegmentRepository(conn)
+    Cascade deletes all segments. Broadcasts chapter.deleted SSE event.
+    """
+    try:
+        from pathlib import Path
+        import os
 
-    # Get all segments to delete their audio files
-    segments = segment_repo.get_by_chapter(chapter_id)
+        chapter_repo = ChapterRepository(conn)
+        segment_repo = SegmentRepository(conn)
 
-    # Delete audio files
-    deleted_files = 0
-    for segment in segments:
-        if segment.get('audio_path'):
-            try:
-                # audio_path is just the filename (e.g., segment_123.wav)
-                filename = segment['audio_path']
-                audio_file = Path(OUTPUT_DIR) / filename
+        # Get chapter info before deletion (for SSE event)
+        chapter = chapter_repo.get_by_id(chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
 
-                if audio_file.exists():
-                    os.remove(audio_file)
-                    deleted_files += 1
-            except Exception as e:
-                # Log but don't fail the deletion
-                logger.warning(f"Could not delete audio file for segment {segment['id']}: {e}")
+        # Get all segments to delete their audio files
+        segments = segment_repo.get_by_chapter(chapter_id)
 
-    # Delete chapter (CASCADE will delete segments)
-    if not chapter_repo.delete(chapter_id):
-        raise HTTPException(status_code=404, detail="Chapter not found")
+        # Delete audio files
+        deleted_files = 0
+        for segment in segments:
+            if segment.get('audio_path'):
+                try:
+                    # audio_path is just the filename (e.g., segment_123.wav)
+                    filename = segment['audio_path']
+                    audio_file = Path(OUTPUT_DIR) / filename
 
-    return {
-        "success": True,
-        "message": f"Chapter deleted (removed {deleted_files} audio files)"
-    }
+                    if audio_file.exists():
+                        os.remove(audio_file)
+                        deleted_files += 1
+                except Exception as e:
+                    # Log but don't fail the deletion
+                    logger.warning(f"Could not delete audio file for segment {segment['id']}: {e}")
+
+        # Delete chapter (CASCADE will delete segments)
+        if not chapter_repo.delete(chapter_id):
+            raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
+
+        # Emit SSE event
+        try:
+            await broadcaster.broadcast_chapter_crud(
+                {
+                    "chapterId": chapter_id,
+                    "projectId": chapter['project_id'],
+                    "title": chapter['title']
+                },
+                event_type=EventType.CHAPTER_DELETED
+            )
+        except Exception as sse_err:
+            logger.warning(f"Failed to broadcast chapter.deleted event: {sse_err}")
+
+        return DeleteResponse(
+            success=True,
+            message=f"Chapter deleted (removed {deleted_files} audio files)"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete chapter {chapter_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"[CHAPTER_DELETE_FAILED]chapterId:{chapter_id};error:{str(e)}")
 
 
 @router.post("/chapters/reorder", response_model=ReorderResponse)
@@ -331,35 +469,53 @@ async def reorder_chapters(
     conn: sqlite3.Connection = Depends(get_db)
 ):
     """
-    Reorder chapters within a project
+    Reorder chapters within a project.
 
-    Request body:
-    {
-      "chapter_ids": ["ch1", "ch2", "ch3"],
-      "project_id": "proj1"
-    }
+    Array index determines new position. Broadcasts chapter.reordered SSE event.
     """
-    chapter_repo = ChapterRepository(conn)
+    try:
+        chapter_repo = ChapterRepository(conn)
 
-    # Validate chapters belong to project
-    for chapter_id in data.chapter_ids:
-        chapter = chapter_repo.get_by_id(chapter_id)
-        if not chapter:
-            raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
-        if chapter['project_id'] != data.project_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Chapter {chapter_id} does not belong to project {data.project_id}"
+        # Validate chapters belong to project
+        for chapter_id in data.chapter_ids:
+            chapter = chapter_repo.get_by_id(chapter_id)
+            if not chapter:
+                raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
+            if chapter['project_id'] != data.project_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"[CHAPTER_PROJECT_MISMATCH]chapterId:{chapter_id};projectId:{data.project_id}"
+                )
+
+        # Reorder
+        chapter_repo.reorder_batch(data.chapter_ids, data.project_id)
+
+        # Emit SSE event with updated chapter order
+        try:
+            chapters_order = [
+                {"chapterId": chapter_id, "orderIndex": idx}
+                for idx, chapter_id in enumerate(data.chapter_ids)
+            ]
+            await broadcaster.broadcast_chapter_crud(
+                {
+                    "projectId": data.project_id,
+                    "chapters": chapters_order
+                },
+                event_type=EventType.CHAPTER_REORDERED
             )
+        except Exception as sse_err:
+            logger.warning(f"Failed to broadcast chapter.reordered event: {sse_err}")
 
-    # Reorder
-    chapter_repo.reorder_batch(data.chapter_ids, data.project_id)
-
-    return {
-        "success": True,
-        "message": f"Reordered {len(data.chapter_ids)} chapters",
-        "count": len(data.chapter_ids)
-    }
+        return ReorderResponse(
+            success=True,
+            message=f"Reordered {len(data.chapter_ids)} chapters",
+            count=len(data.chapter_ids)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to reorder chapters: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"[CHAPTER_REORDER_FAILED]projectId:{data.project_id};error:{str(e)}")
 
 
 @router.put("/chapters/{chapter_id}/move", response_model=ChapterWithSegmentsResponse)
@@ -369,38 +525,40 @@ async def move_chapter(
     conn: sqlite3.Connection = Depends(get_db)
 ):
     """
-    Move chapter to another project
+    Move chapter to another project.
 
-    Request body:
-    {
-      "new_project_id": "proj2",
-      "new_order_index": 0
-    }
+    Updates project_id and reorders chapters in both source and target projects.
     """
-    from db.repositories import ProjectRepository
+    try:
+        from db.repositories import ProjectRepository
 
-    chapter_repo = ChapterRepository(conn)
-    project_repo = ProjectRepository(conn)
+        chapter_repo = ChapterRepository(conn)
+        project_repo = ProjectRepository(conn)
 
-    # Validate chapter exists
-    chapter = chapter_repo.get_by_id(chapter_id)
-    if not chapter:
-        raise HTTPException(status_code=404, detail="Chapter not found")
+        # Validate chapter exists
+        chapter = chapter_repo.get_by_id(chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
 
-    # Validate new project exists
-    if not project_repo.get_by_id(data.new_project_id):
-        raise HTTPException(status_code=404, detail="Target project not found")
+        # Validate new project exists
+        if not project_repo.get_by_id(data.new_project_id):
+            raise HTTPException(status_code=404, detail=f"[TARGET_PROJECT_NOT_FOUND]projectId:{data.new_project_id}")
 
-    # Move chapter
-    updated_chapter = chapter_repo.move_to_project(
-        chapter_id,
-        data.new_project_id,
-        data.new_order_index
-    )
+        # Move chapter
+        updated_chapter = chapter_repo.move_to_project(
+            chapter_id,
+            data.new_project_id,
+            data.new_order_index
+        )
 
-    # Load segments for response
-    segment_repo = SegmentRepository(conn)
-    segments = segment_repo.get_by_chapter(chapter_id)
-    updated_chapter['segments'] = segments
+        # Load segments for response
+        segment_repo = SegmentRepository(conn)
+        segments = segment_repo.get_by_chapter(chapter_id)
+        updated_chapter['segments'] = segments
 
-    return updated_chapter
+        return updated_chapter
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to move chapter {chapter_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"[CHAPTER_MOVE_FAILED]chapterId:{chapter_id};error:{str(e)}")

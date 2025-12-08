@@ -12,9 +12,10 @@ import {
   type UseQueryResult,
   type UseMutationResult,
 } from '@tanstack/react-query'
-import { segmentApi, type ApiSegment } from '../services/api'
-import { type Segment } from '../types'
-import { queryKeys } from '../services/queryKeys'
+import { produce } from 'immer'
+import { segmentApi, type ApiSegment } from '@services/api'
+import { type Segment, type Chapter } from '@types'
+import { queryKeys } from '@services/queryKeys'
 
 // Transform API segment to app segment
 // Backend now returns camelCase via Pydantic Response Models
@@ -24,29 +25,8 @@ const transformSegment = (apiSegment: ApiSegment): Segment => {
     audioPath: apiSegment.audioPath || undefined,
     createdAt: new Date(apiSegment.createdAt),
     updatedAt: new Date(apiSegment.updatedAt),
+    isFrozen: apiSegment.isFrozen ?? false, // Default to false if not present
   }
-}
-
-/**
- * Fetch a single segment by ID (rarely needed)
- *
- * @example
- * ```tsx
- * const { data: segment } = useSegment(segmentId)
- * ```
- */
-export function useSegment(
-  segmentId: string | null | undefined
-): UseQueryResult<Segment, Error> {
-  return useQuery({
-    queryKey: queryKeys.segments.detail(segmentId || ''),
-    queryFn: async () => {
-      if (!segmentId) throw new Error('Segment ID is required')
-      const data = await segmentApi.getById(segmentId)
-      return transformSegment(data)
-    },
-    enabled: !!segmentId,
-  })
 }
 
 /**
@@ -120,20 +100,20 @@ export function useUpdateSegment(): UseMutationResult<
       const previousSegment = queryClient.getQueryData(queryKeys.segments.detail(segmentId))
 
       // Optimistically update segment in chapter query
-      queryClient.setQueryData<any>(queryKeys.chapters.detail(chapterId), (old: any) => {
+      queryClient.setQueryData<Chapter>(queryKeys.chapters.detail(chapterId), (old: Chapter | undefined) => {
         if (!old) return old
         return {
           ...old,
-          segments: old.segments.map((s: any) =>
-            s.id === segmentId ? { ...s, ...data } : s
+          segments: old.segments.map((s: Segment) =>
+            s.id === segmentId ? { ...s, ...data } as Segment : s
           ),
         }
       })
 
       // Optimistically update segment detail query
-      queryClient.setQueryData<any>(queryKeys.segments.detail(segmentId), (old: any) => {
+      queryClient.setQueryData<Segment>(queryKeys.segments.detail(segmentId), (old: Segment | undefined) => {
         if (!old) return old
-        return { ...old, ...data }
+        return { ...old, ...data } as Segment
       })
 
       return { previousChapter, previousSegment, chapterId, segmentId }
@@ -155,13 +135,13 @@ export function useUpdateSegment(): UseMutationResult<
       )
 
       // Also update segment in chapter query with backend response
-      queryClient.setQueryData<any>(
+      queryClient.setQueryData<Chapter>(
         queryKeys.chapters.detail(variables.chapterId),
-        (old: any) => {
+        (old: Chapter | undefined) => {
           if (!old) return old
           return {
             ...old,
-            segments: old.segments.map((s: any) =>
+            segments: old.segments.map((s: Segment) =>
               s.id === variables.segmentId ? updatedSegment : s
             ),
           }
@@ -207,13 +187,13 @@ export function useDeleteSegment(): UseMutationResult<
       )
 
       // Optimistically remove segment from chapter
-      queryClient.setQueryData<any>(
+      queryClient.setQueryData<Chapter>(
         queryKeys.chapters.detail(chapterId),
-        (old: any) => {
+        (old: Chapter | undefined) => {
           if (!old) return old
           return {
             ...old,
-            segments: old.segments.filter((s: any) => s.id !== segmentId),
+            segments: old.segments.filter((s: Segment) => s.id !== segmentId),
           }
         }
       )
@@ -239,6 +219,144 @@ export function useDeleteSegment(): UseMutationResult<
       queryClient.invalidateQueries({
         queryKey: queryKeys.chapters.detail(variables.chapterId),
       })
+    },
+  })
+}
+
+/**
+ * Freeze a segment (protect from regeneration and STT analysis)
+ *
+ * @example
+ * ```tsx
+ * const freezeMutation = useFreezeSegment()
+ * await freezeMutation.mutateAsync({ segmentId: 'seg-123', chapterId: 'ch-456' })
+ * ```
+ */
+export function useFreezeSegment(): UseMutationResult<
+  Segment,
+  Error,
+  { segmentId: string; chapterId: string }
+> {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ segmentId, chapterId }: { segmentId: string; chapterId: string }) => {
+      const response = await segmentApi.freeze(segmentId, true)
+      return transformSegment(response)
+    },
+    onMutate: async ({ segmentId, chapterId }) => {
+      // Cancel outgoing refetches
+      await queryClient.cancelQueries({ queryKey: queryKeys.chapters.detail(chapterId) })
+
+      // Snapshot previous chapter
+      const previousChapter = queryClient.getQueryData<Chapter>(
+        queryKeys.chapters.detail(chapterId)
+      )
+
+      // Optimistically freeze segment using immer (O(1) performance)
+      queryClient.setQueryData<Chapter>(
+        queryKeys.chapters.detail(chapterId),
+        produce((draft: Chapter | undefined) => {
+          if (!draft) return
+          const segment = draft.segments.find(s => s.id === segmentId)
+          if (segment) {
+            segment.isFrozen = true
+          }
+        })
+      )
+
+      return { previousChapter, chapterId }
+    },
+    onError: (_err, _variables, context) => {
+      // Rollback on error
+      if (context?.previousChapter) {
+        queryClient.setQueryData(
+          queryKeys.chapters.detail(context.chapterId),
+          context.previousChapter
+        )
+      }
+    },
+    onSuccess: (updatedSegment, variables) => {
+      // Update chapter cache with backend response (ensure consistency)
+      queryClient.setQueryData<Chapter>(
+        queryKeys.chapters.detail(variables.chapterId),
+        produce((draft: Chapter | undefined) => {
+          if (!draft) return
+          const segment = draft.segments.find(s => s.id === variables.segmentId)
+          if (segment) {
+            segment.isFrozen = true
+          }
+        })
+      )
+    },
+  })
+}
+
+/**
+ * Unfreeze a segment (allow regeneration and STT analysis)
+ *
+ * @example
+ * ```tsx
+ * const unfreezeMutation = useUnfreezeSegment()
+ * await unfreezeMutation.mutateAsync({ segmentId: 'seg-123', chapterId: 'ch-456' })
+ * ```
+ */
+export function useUnfreezeSegment(): UseMutationResult<
+  Segment,
+  Error,
+  { segmentId: string; chapterId: string }
+> {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ segmentId, chapterId }: { segmentId: string; chapterId: string }) => {
+      const response = await segmentApi.freeze(segmentId, false)
+      return transformSegment(response)
+    },
+    onMutate: async ({ segmentId, chapterId }) => {
+      // Cancel outgoing refetches
+      await queryClient.cancelQueries({ queryKey: queryKeys.chapters.detail(chapterId) })
+
+      // Snapshot previous chapter
+      const previousChapter = queryClient.getQueryData<Chapter>(
+        queryKeys.chapters.detail(chapterId)
+      )
+
+      // Optimistically unfreeze segment using immer (O(1) performance)
+      queryClient.setQueryData<Chapter>(
+        queryKeys.chapters.detail(chapterId),
+        produce((draft: Chapter | undefined) => {
+          if (!draft) return
+          const segment = draft.segments.find(s => s.id === segmentId)
+          if (segment) {
+            segment.isFrozen = false
+          }
+        })
+      )
+
+      return { previousChapter, chapterId }
+    },
+    onError: (_err, _variables, context) => {
+      // Rollback on error
+      if (context?.previousChapter) {
+        queryClient.setQueryData(
+          queryKeys.chapters.detail(context.chapterId),
+          context.previousChapter
+        )
+      }
+    },
+    onSuccess: (updatedSegment, variables) => {
+      // Update chapter cache with backend response (ensure consistency)
+      queryClient.setQueryData<Chapter>(
+        queryKeys.chapters.detail(variables.chapterId),
+        produce((draft: Chapter | undefined) => {
+          if (!draft) return
+          const segment = draft.segments.find(s => s.id === variables.segmentId)
+          if (segment) {
+            segment.isFrozen = false
+          }
+        })
+      )
     },
   })
 }

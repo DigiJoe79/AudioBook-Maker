@@ -1,0 +1,83 @@
+# Template Text Processing Engine
+# TODO: Rename and customize for your engine
+
+name: "template_text"
+display_name: "Template Text Processor"
+type: text
+# Note: version is read dynamically from pip package via get_package_version()
+
+description: |
+  Template text processing engine.
+  TODO: Add description of your engine's capabilities.
+
+# Python version requirement (used by setup scripts)
+python_version: "3.10"  # TODO: Specify required Python version
+
+# Path to virtual environment (relative to this file)
+venv_path: "./venv"
+
+# Default enabled state
+enabled: true
+
+# Device configuration (cpu or cuda)
+device: "cpu"
+
+# Capabilities
+capabilities:
+  supports_model_hotswap: true
+  supports_gpu: false
+  # TODO: Add your engine's capabilities
+
+# Constraints
+constraints:
+  max_text_length: 1000000
+
+# Supported languages
+# TODO: Add languages your engine supports
+supported_languages:
+  - en
+  - de
+  - es
+  - fr
+
+# Model configuration
+# For multi-language processors, models are typically per-language
+default_model: "default"
+models:
+  - name: "default"
+    display_name: "Default Configuration"
+  # TODO: Add language-specific models if applicable
+  # - name: "en"
+  #   display_name: "English"
+  # - name: "de"
+  #   display_name: "German"
+
+# Configuration parameters (exposed in Settings UI)
+config:
+  parameter_schema:
+    max_length:
+      type: "int"
+      label: "settings.text.template.maxLength"
+      description: "settings.text.template.maxLengthDesc"
+      default: 250
+      min: 50
+      max: 500
+      step: 10
+      category: "segmentation"
+
+    min_length:
+      type: "int"
+      label: "settings.text.template.minLength"
+      description: "settings.text.template.minLengthDesc"
+      default: 10
+      min: 1
+      max: 100
+      step: 5
+      category: "segmentation"
+
+    mark_oversized:
+      type: "bool"
+      label: "settings.text.template.markOversized"
+      description: "settings.text.template.markOversizedDesc"
+      default: true
+      category: "segmentation"

@@ -1,0 +1,31 @@
+# Kani TTS Engine Dependencies
+# NOTE: Requires Python 3.11+
+# See: https://github.com/nineninesix-ai/kani-tts
+
+# Core dependencies (required for all engines)
+fastapi==0.109.2
+uvicorn==0.27.0
+pydantic==2.6.1
+loguru==0.7.2
+httpx==0.26.0
+
+# Audio processing
+scipy>=1.10.0
+numpy>=1.24.0
+librosa
+soundfile
+huggingface_hub
+
+# PyTorch (CUDA 12.1 for GPU support) - install first via setup script
+# --extra-index-url https://download.pytorch.org/whl/cu121
+# torch>=2.1.0
+# torchaudio>=2.1.0
+
+# NeMo toolkit (TTS only, not [all] which has Linux-only NVIDIA packages)
+nemo_toolkit[tts]
+
+# Transformers - needs latest from git for LFM2 model type support
+# Install via: pip install -U "git+https://github.com/huggingface/transformers.git"
+
+# Kani TTS
+kani-tts

@@ -26,95 +26,87 @@ EXPORTS_DIR = os.getenv("EXPORTS_DIR", str(Path(CONTENT_DIR) / "exports"))
 # Speaker samples directory
 SPEAKER_SAMPLES_DIR = os.getenv("SPEAKER_SAMPLES_DIR", str(Path(CONTENT_DIR) / "speaker_samples"))
 
-# Test audio directory (for dummy TTS engine)
-TEST_AUDIO_DIR = os.getenv("TEST_AUDIO_DIR", str(Path(CONTENT_DIR) / "test_audio"))
-
 
 # ===== File Paths =====
 
 # Database file path
 DATABASE_PATH = os.getenv("DATABASE_PATH", str(Path(DATA_DIR) / "audiobook_maker.db"))
 
-# Template audio file for dummy engine
-DUMMY_TEMPLATE_AUDIO = os.getenv("DUMMY_TEMPLATE_AUDIO", str(Path(TEST_AUDIO_DIR) / "test.wav"))
+
+# ===== Engine Configuration =====
+
+# HTTP client timeout for engine communication (seconds)
+ENGINE_HTTP_TIMEOUT = int(os.getenv("ENGINE_HTTP_TIMEOUT", "300"))
+
+# Engine startup/shutdown timeout (seconds)
+ENGINE_SHUTDOWN_TIMEOUT = int(os.getenv("ENGINE_SHUTDOWN_TIMEOUT", "10"))
+
+# Engine health check timeout (seconds)
+ENGINE_HEALTH_CHECK_TIMEOUT = int(os.getenv("ENGINE_HEALTH_CHECK_TIMEOUT", "5"))
+
+# Engine analysis timeout for STT/Audio operations (seconds)
+ENGINE_ANALYSIS_TIMEOUT = int(os.getenv("ENGINE_ANALYSIS_TIMEOUT", "120"))
+
+# Discovery mode engine auto-stop timeout (seconds)
+ENGINE_DISCOVERY_TIMEOUT = int(os.getenv("ENGINE_DISCOVERY_TIMEOUT", "30"))
+
+# Idle engine check interval (seconds)
+IDLE_ENGINE_CHECK_INTERVAL = int(os.getenv("IDLE_ENGINE_CHECK_INTERVAL", "60"))
+
+# Port allocation range
+ENGINE_PORT_START = int(os.getenv("ENGINE_PORT_START", "8766"))
+ENGINE_PORT_MAX = int(os.getenv("ENGINE_PORT_MAX", "65535"))
 
 
-# ===== TTS Configuration =====
+# ===== Worker Configuration =====
 
-# Enable dummy TTS engine (for development without GPU)
-ENABLE_DUMMY_TTS = os.getenv("ENABLE_DUMMY_TTS", "true").lower() == "true"
+# TTS worker poll interval (seconds)
+TTS_WORKER_POLL_INTERVAL = float(os.getenv("TTS_WORKER_POLL_INTERVAL", "1.0"))
 
-# Models base path (new architecture: backend/models/)
-MODELS_BASE_PATH = os.getenv("MODELS_BASE_PATH", str(BACKEND_ROOT / "models"))
+# Quality worker poll interval (seconds)
+QUALITY_WORKER_POLL_INTERVAL = float(os.getenv("QUALITY_WORKER_POLL_INTERVAL", "1.0"))
 
-# XTTS models directory (legacy, kept for backwards compatibility)
-XTTS_MODELS_DIR = os.getenv("XTTS_MODELS_DIR", str(BACKEND_ROOT / "xtts_models"))
-
-# Default device for TTS (cuda/cpu)
-DEFAULT_DEVICE = os.getenv("DEFAULT_DEVICE", "cpu")
+# Worker stop timeout (seconds)
+WORKER_STOP_TIMEOUT = float(os.getenv("WORKER_STOP_TIMEOUT", "10.0"))
 
 
-# ===== Audio Processing =====
+# ===== Database Configuration =====
 
-# Default audio format for exports
-DEFAULT_EXPORT_FORMAT = os.getenv("DEFAULT_EXPORT_FORMAT", "mp3")
+# Database connection timeout (seconds)
+DB_CONNECTION_TIMEOUT = float(os.getenv("DB_CONNECTION_TIMEOUT", "30.0"))
 
-# Default bitrate for MP3/M4A exports
-DEFAULT_BITRATE = os.getenv("DEFAULT_BITRATE", "192k")
+# Database retry configuration
+DB_LOCK_MAX_RETRIES = int(os.getenv("DB_LOCK_MAX_RETRIES", "5"))
+DB_LOCK_INITIAL_DELAY = float(os.getenv("DB_LOCK_INITIAL_DELAY", "0.1"))
 
-# Default sample rate for audio
-DEFAULT_SAMPLE_RATE = int(os.getenv("DEFAULT_SAMPLE_RATE", "24000"))
-
-# Default pause between segments (milliseconds)
-DEFAULT_PAUSE_MS = int(os.getenv("DEFAULT_PAUSE_MS", "500"))
-
-
-# ===== Server Configuration =====
-
-# Backend host
-HOST = os.getenv("HOST", "127.0.0.1")
-
-# Backend port
-PORT = int(os.getenv("PORT", "8765"))
-
-# CORS allowed origins
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:1420").split(",")
+# Database query limits
+DB_JOBS_ACTIVE_LIMIT = int(os.getenv("DB_JOBS_ACTIVE_LIMIT", "100"))
+DB_JOBS_EXISTENCE_CHECK_LIMIT = int(os.getenv("DB_JOBS_EXISTENCE_CHECK_LIMIT", "1"))
+DB_PRONUNCIATION_RULES_LIMIT = int(os.getenv("DB_PRONUNCIATION_RULES_LIMIT", "1000"))
 
 
-# ===== Logging =====
+# ===== SSE Configuration =====
 
-# Log level
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+# SSE keepalive timeout (seconds)
+SSE_KEEPALIVE_TIMEOUT = float(os.getenv("SSE_KEEPALIVE_TIMEOUT", "15.0"))
 
+# Health monitor check interval (seconds)
+HEALTH_MONITOR_INTERVAL = int(os.getenv("HEALTH_MONITOR_INTERVAL", "1"))
 
-# ===== Helper Functions =====
-
-def ensure_directories():
-    """Create all required directories if they don't exist"""
-    directories = [
-        DATA_DIR,
-        OUTPUT_DIR,
-        EXPORTS_DIR,
-        SPEAKER_SAMPLES_DIR,
-        TEST_AUDIO_DIR,
-    ]
-
-    for directory in directories:
-        Path(directory).mkdir(parents=True, exist_ok=True)
+# Health monitor stop timeout (seconds)
+HEALTH_MONITOR_STOP_TIMEOUT = float(os.getenv("HEALTH_MONITOR_STOP_TIMEOUT", "2.0"))
 
 
-def get_config_summary() -> dict:
-    """Get configuration summary for logging/debugging"""
-    return {
-        "data_dir": DATA_DIR,
-        "output_dir": OUTPUT_DIR,
-        "exports_dir": EXPORTS_DIR,
-        "speaker_samples_dir": SPEAKER_SAMPLES_DIR,
-        "test_audio_dir": TEST_AUDIO_DIR,
-        "database_path": DATABASE_PATH,
-        "dummy_template_audio": DUMMY_TEMPLATE_AUDIO,
-        "enable_dummy_tts": ENABLE_DUMMY_TTS,
-        "host": HOST,
-        "port": PORT,
-        "cors_origins": CORS_ORIGINS,
-    }
+# ===== HTTP Cache Configuration =====
+
+# Static audio files cache max-age (seconds) - 1 year for immutable content
+STATIC_AUDIO_CACHE_MAX_AGE = int(os.getenv("STATIC_AUDIO_CACHE_MAX_AGE", "31536000"))
+
+
+# ===== Import Validation Configuration =====
+
+# Maximum chapter length for import validation (characters)
+IMPORT_MAX_CHAPTER_LENGTH = int(os.getenv("IMPORT_MAX_CHAPTER_LENGTH", "30000"))
+
+# Maximum segment length for import validation (characters)
+IMPORT_MAX_SEGMENT_LENGTH = int(os.getenv("IMPORT_MAX_SEGMENT_LENGTH", "1000"))

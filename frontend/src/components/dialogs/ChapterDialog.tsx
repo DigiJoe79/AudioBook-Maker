@@ -7,9 +7,13 @@ import {
   TextField,
   Button,
   Stack,
+  Box,
+  Typography,
 } from '@mui/material';
+import { Description as ChapterIcon } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';
-import { logger } from '../../utils/logger';
+import { useError } from '@hooks/useError';
+import { logger } from '@utils/logger';
 
 interface ChapterDialogProps {
   open: boolean;
@@ -29,6 +33,7 @@ export const ChapterDialog: React.FC<ChapterDialogProps> = ({
   nextOrderIndex = 0,
 }) => {
   const { t } = useTranslation();
+  const { showError, ErrorDialog } = useError();
   const [title, setTitle] = useState('');
   const [orderIndex, setOrderIndex] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -56,19 +61,39 @@ export const ChapterDialog: React.FC<ChapterDialogProps> = ({
       onClose();
     } catch (err) {
       logger.error('[ChapterDialog] Failed to save chapter:', err);
-      alert(t('chapters.messages.error'));
+      await showError(
+        mode === 'create' ? t('chapters.create') : t('chapters.edit'),
+        t('chapters.messages.error')
+      );
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>
-        {mode === 'create' ? t('chapters.create') : t('chapters.edit')}
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="sm"
+      fullWidth
+      data-testid="chapter-dialog"
+      PaperProps={{
+        sx: {
+          bgcolor: 'background.paper',
+          backgroundImage: 'none',
+        },
+      }}
+    >
+      <DialogTitle sx={{ borderBottom: 1, borderColor: 'divider' }}>
+        <Box display="flex" alignItems="center" gap={1.5}>
+          <ChapterIcon />
+          <Typography variant="h6">
+            {mode === 'create' ? t('chapters.create') : t('chapters.edit')}
+          </Typography>
+        </Box>
       </DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
+      <DialogContent dividers sx={{ bgcolor: 'background.default' }}>
+        <Stack spacing={2}>
           <TextField
             label={t('chapters.chapterTitle')}
             value={title}
@@ -76,6 +101,7 @@ export const ChapterDialog: React.FC<ChapterDialogProps> = ({
             fullWidth
             required
             autoFocus
+            data-testid="chapter-title-input"
           />
           <TextField
             label={t('chapters.orderIndex')}
@@ -83,21 +109,26 @@ export const ChapterDialog: React.FC<ChapterDialogProps> = ({
             value={orderIndex}
             onChange={(e) => setOrderIndex(parseInt(e.target.value) || 0)}
             fullWidth
+            data-testid="chapter-order-input"
           />
         </Stack>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={saving}>
+      <DialogActions sx={{ borderTop: 1, borderColor: 'divider', p: 2 }}>
+        <Button onClick={onClose} disabled={saving} data-testid="chapter-cancel-button">
           {t('common.cancel')}
         </Button>
         <Button
           onClick={handleSave}
           variant="contained"
           disabled={!title.trim() || saving}
+          data-testid="chapter-save-button"
         >
           {saving ? t('common.saving') : mode === 'create' ? t('common.create') : t('common.save')}
         </Button>
       </DialogActions>
+
+      {/* Error Dialog */}
+      <ErrorDialog />
     </Dialog>
   );
 };

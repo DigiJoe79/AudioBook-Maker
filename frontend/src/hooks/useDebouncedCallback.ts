@@ -17,8 +17,10 @@ import { useCallback, useRef } from 'react'
  *
  * @example
  * ```tsx
+ * import { logger } from '@/utils/logger'
+ *
  * const saveData = useDebouncedCallback(() => {
- *   console.log('Saving data...')
+ *   logger.debug('Saving data...')
  * }, 1000)
  *
  * // Will only execute once after 1 second of inactivity
@@ -31,7 +33,7 @@ export function useDebouncedCallback<T extends (...args: any[]) => any>(
   callback: T,
   delay: number
 ): T {
-  const timeoutRef = useRef<number>()
+  const timeoutRef = useRef<number | undefined>(undefined)
 
   return useCallback(
     (...args: Parameters<T>) => {
@@ -39,7 +41,7 @@ export function useDebouncedCallback<T extends (...args: any[]) => any>(
         clearTimeout(timeoutRef.current)
       }
 
-      timeoutRef.current = setTimeout(() => {
+      timeoutRef.current = window.setTimeout(() => {
         callback(...args)
       }, delay)
     },

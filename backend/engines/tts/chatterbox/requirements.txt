@@ -1,0 +1,50 @@
+# Chatterbox Multilingual Engine Dependencies
+#
+# WARNING: Do NOT use "pip install -r requirements.txt" directly!
+#          Use setup.bat instead - it handles:
+#          1. pkuseg build issue (requires numpy + --no-build-isolation)
+#          2. CUDA PyTorch installation (must be installed BEFORE chatterbox-tts)
+#
+# See README.md for manual installation instructions.
+#
+# This file documents the required versions for reference only.
+
+# Build dependencies (install first)
+numpy>=1.24.0,<1.26.0
+cython
+
+# PyTorch with CUDA (install BEFORE chatterbox-tts)
+# pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0
+torchaudio==2.6.0
+
+# Chatterbox TTS (install with --no-deps to preserve CUDA PyTorch)
+# pip install --no-build-isolation --no-deps chatterbox-tts
+chatterbox-tts>=0.1.4,<0.2.0
+
+# Chatterbox dependencies (install with --no-build-isolation)
+transformers==4.46.3
+diffusers==0.29.0
+librosa==0.11.0
+safetensors==0.5.3
+conformer==0.3.2
+resemble-perth==1.0.1
+s3tokenizer
+pykakasi==2.3.0
+spacy-pkuseg
+
+# FastAPI Server Stack
+fastapi>=0.115.0,<1.0.0
+uvicorn>=0.32.0,<1.0.0
+pydantic>=2.10.0,<3.0.0
+
+# Utilities
+loguru>=0.7.2,<0.8.0
+httpx>=0.28.0,<1.0.0
+
+# Audio processing (for resampling if needed)
+scipy>=1.11.0,<2.0.0
+
+# CUDA support - PyTorch 2.6.0 supports CUDA 11.8, 12.1, 12.4
+# Uncomment for GPU acceleration:
+# --extra-index-url https://download.pytorch.org/whl/cu124

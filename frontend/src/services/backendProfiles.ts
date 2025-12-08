@@ -5,23 +5,37 @@
  * stored in localStorage for persistence.
  */
 
-import type { BackendProfile } from '../types/backend'
-import { logger } from '../utils/logger'
+import type { BackendProfile, ApiBackendProfile } from '@types'
+import { transformBackendProfile } from '@/types/api'
+import { logger } from '@utils/logger'
 
 const STORAGE_KEY = 'audiobook-maker:backend-profiles'
+
+/**
+ * Internal: Convert BackendProfile to ApiBackendProfile for serialization
+ */
+function toApiProfile(profile: BackendProfile): ApiBackendProfile {
+  return {
+    ...profile,
+    lastConnected: profile.lastConnected ? profile.lastConnected.toISOString() : null,
+    createdAt: profile.createdAt.toISOString(),
+  }
+}
 
 /**
  * Internal: Persist profiles to localStorage
  */
 function persist(profiles: BackendProfile[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles))
+    const apiProfiles = profiles.map(toApiProfile)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(apiProfiles))
   } catch (error) {
     if (error instanceof DOMException && error.name === 'QuotaExceededError') {
       logger.error('[BackendProfiles] localStorage quota exceeded')
-      alert('Storage limit reached. Please delete some backend profiles.')
+      throw new Error('Storage limit reached. Please delete some backend profiles.')
     } else {
       logger.error('[BackendProfiles] Failed to save to localStorage:', error)
+      throw new Error('Failed to save profile to storage')
     }
   }
 }
@@ -34,12 +48,8 @@ export function loadProfiles(): BackendProfile[] {
   if (!stored) return []
 
   try {
-    const parsed = JSON.parse(stored)
-    return parsed.map((p: any) => ({
-      ...p,
-      lastConnected: p.lastConnected ? new Date(p.lastConnected) : null,
-      createdAt: new Date(p.createdAt),
-    }))
+    const parsed: ApiBackendProfile[] = JSON.parse(stored)
+    return parsed.map(transformBackendProfile)
   } catch (error) {
     logger.error('[BackendProfiles] Failed to parse profiles from localStorage:', error)
     return []
@@ -175,9 +185,9 @@ export function initializeDefaultProfile(): void {
   const profiles = loadProfiles()
 
   if (profiles.length === 0) {
-    logger.info('[BackendProfiles] No profiles found, creating default "Local Development" profile')
+    logger.info('[BackendProfiles] No profiles found, creating default "Local Backend" profile')
     saveProfile({
-      name: 'Local Development',
+      name: 'Local Backend',
       url: 'http://127.0.0.1:8765',
       isDefault: true,
       lastConnected: null,

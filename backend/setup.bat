@@ -53,13 +53,6 @@ if errorlevel 1 (
 )
 
 echo.
-echo Downloading spaCy language models...
-echo - German (de_core_news_sm)
-python -m spacy download de_core_news_sm
-echo - English (en_core_web_sm)
-python -m spacy download en_core_web_sm
-
-echo.
 echo ========================================
 echo Setup complete!
 echo ========================================
@@ -68,9 +61,10 @@ echo Virtual environment created at: venv\
 echo Python executable: venv\Scripts\python.exe
 echo.
 echo Next steps:
-echo   1. Setup engine servers (e.g., engines\xtts\setup.bat)
-echo   2. Start backend: venv\Scripts\python.exe main.py
+echo   1. Setup TTS engine: engines\tts\xtts\setup.bat
+echo   2. Setup Text engine: engines\text_processing\spacy\setup.bat
+echo   3. Start backend: venv\Scripts\python.exe main.py
 echo.
-echo Note: TTS engines run in separate VENVs (no PyTorch in core backend)
+echo Note: All engines run in separate VENVs
 echo.
 pause

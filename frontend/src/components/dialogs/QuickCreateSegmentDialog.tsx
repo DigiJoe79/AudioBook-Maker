@@ -3,7 +3,7 @@
  * Opens after dragging "Text Segment" from CommandToolbar
  */
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   Dialog,
   DialogTitle,
@@ -16,9 +16,10 @@ import {
 } from '@mui/material'
 import { Add } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
-import { useAppStore } from '../../store/appStore'
-import { useSegmentLimits } from '../../hooks/useSettings'
-import { logger } from '../../utils/logger'
+import { useError } from '@hooks/useError'
+import { useAppStore } from '@store/appStore'
+import { useSegmentLimits } from '@hooks/useSettings'
+import { logger } from '@utils/logger'
 
 interface QuickCreateSegmentDialogProps {
   open: boolean
@@ -39,17 +40,29 @@ export default function QuickCreateSegmentDialog({
   onConfirm,
 }: QuickCreateSegmentDialogProps) {
   const { t } = useTranslation()
+  const { showError, ErrorDialog } = useError()
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // Get current engine from app store
-  const currentEngine = useAppStore((state) => state.getCurrentTtsEngine())
+  // Get default engine from app store (DB)
+  const defaultEngine = useAppStore((state) => state.getDefaultTtsEngine())
 
-  // Fetch segment limits based on current engine
-  const { data: limits } = useSegmentLimits(currentEngine)
+  // Fetch segment limits based on default engine
+  const { data: limits } = useSegmentLimits(defaultEngine)
 
   // Use effective limit from API or fallback to default
   const maxSegmentLength = limits?.effectiveLimit || DEFAULT_MAX_LENGTH
+
+  // Reset text after dialog closes (after animation completes)
+  useEffect(() => {
+    if (!open) {
+      // Wait for closing animation to complete (300ms)
+      const timer = setTimeout(() => {
+        setText('')
+      }, 300)
+      return () => clearTimeout(timer)
+    }
+  }, [open])
 
   const handleConfirm = async () => {
     if (!text.trim()) return
@@ -74,14 +87,17 @@ export default function QuickCreateSegmentDialog({
       onClose()
     } catch (err) {
       logger.error('[QuickCreateSegmentDialog] Failed to create segment:', err)
-      alert(t('quickCreateSegment.failed'))
+      await showError(
+        t('quickCreateSegment.title'),
+        t('quickCreateSegment.failed')
+      )
     } finally {
       setLoading(false)
     }
   }
 
   const handleClose = () => {
-    setText('')
+    // State will be reset after successful creation (see handleConfirm Line 75)
     onClose()
   }
 
@@ -96,14 +112,26 @@ export default function QuickCreateSegmentDialog({
   const isOverLimit = text.length > maxSegmentLength
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitle>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth="sm"
+      fullWidth
+      data-testid="quick-create-segment-dialog"
+      PaperProps={{
+        sx: {
+          bgcolor: 'background.paper',
+          backgroundImage: 'none',
+        },
+      }}
+    >
+      <DialogTitle sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Box display="flex" alignItems="center" gap={1}>
           <Add />
           {t('quickCreateSegment.title')}
         </Box>
       </DialogTitle>
-      <DialogContent>
+      <DialogContent dividers sx={{ bgcolor: 'background.default' }}>
         <Box sx={{ mt: 1 }}>
           <Typography variant="body2" color="text.secondary" gutterBottom>
             {t('quickCreateSegment.description')}
@@ -128,11 +156,12 @@ export default function QuickCreateSegmentDialog({
             }
             inputProps={{
               maxLength: maxSegmentLength + 50, // Allow typing over limit to show error
+              'data-testid': 'quick-create-segment-text-input',
             }}
           />
         </Box>
       </DialogContent>
-      <DialogActions>
+      <DialogActions sx={{ borderTop: 1, borderColor: 'divider', p: 2 }}>
         <Button onClick={handleClose} disabled={loading}>
           {t('common.cancel')}
         </Button>
@@ -140,10 +169,14 @@ export default function QuickCreateSegmentDialog({
           onClick={handleConfirm}
           variant="contained"
           disabled={!isTextValid || loading}
+          data-testid="quick-create-segment-submit"
         >
           {loading ? t('quickCreateSegment.creating') : t('quickCreateSegment.create')}
         </Button>
       </DialogActions>
+
+      {/* Error Dialog */}
+      <ErrorDialog />
     </Dialog>
   )
 }

@@ -1,0 +1,28 @@
+# ============================================================================
+# Silero-VAD Audio Analysis Engine Dependencies
+# ============================================================================
+# Last Updated: 2025-12-04
+# Python: 3.12 (specified in engine.yaml)
+# ============================================================================
+
+# Silero-VAD pip package (includes model, exposes __version__)
+# https://github.com/snakers4/silero-vad
+silero-vad>=6.2.0
+
+# PyTorch ML Stack (required by silero-vad)
+torch>=2.9.0,<3.0.0
+torchaudio>=2.9.0,<3.0.0
+
+# Scientific Computing (Python 3.12 - can use latest)
+scipy>=1.14.0
+numpy>=2.0.0
+
+# Web Framework (aligned with backend core)
+fastapi>=0.123.0
+uvicorn>=0.38.0
+pydantic>=2.10.0,<3.0.0
+
+# Utilities
+loguru>=0.7.0,<1.0.0
+PyYAML>=6.0.1
+packaging>=23.0

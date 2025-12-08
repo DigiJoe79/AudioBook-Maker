@@ -1,6 +1,6 @@
 # Engine Development Guide
 
-**How to add custom TTS engines to Audiobook Maker**
+**How to add custom engines to Audiobook Maker**
 
 ## Table of Contents
 
@@ -18,19 +18,30 @@
 
 ## Overview
 
-Audiobook Maker v0.2.0+ features a **plug-and-play engine system** that allows developers to add custom TTS engines without modifying the backend code. Each engine:
+Audiobook Maker v1.0.0+ features a **multi-engine architecture** with 4 engine types that allows developers to add custom engines without modifying the backend code. Each engine:
 
-- ✅ Runs as a **separate FastAPI server** in its own process
-- ✅ Has its own **isolated virtual environment** (no dependency conflicts)
-- ✅ Is **auto-discovered** by the backend on startup
-- ✅ Gets **automatic HTTP API** endpoints from `BaseEngineServer`
-- ✅ Stays **"warm"** between requests (models loaded in memory)
-- ✅ Can **crash independently** without affecting the backend
+- Runs as a **separate FastAPI server** in its own process
+- Has its own **isolated virtual environment** (no dependency conflicts)
+- Is **auto-discovered** by the backend on startup
+- Gets **automatic HTTP API** endpoints from base server classes
+- Stays **"warm"** between requests (models loaded in memory)
+- Can **crash independently** without affecting the backend
+- Supports **enable/disable** with automatic **auto-stop** after inactivity
+
+### Engine Types
+
+| Type | Purpose | Base Class | Endpoint |
+|------|---------|------------|----------|
+| **TTS** | Text-to-Speech synthesis | `BaseTTSServer` | `/generate` |
+| **STT** | Speech-to-Text transcription | `BaseQualityServer` | `/analyze` |
+| **Text Processing** | Text segmentation (spaCy) | `BaseTextServer` | `/segment` |
+| **Audio Analysis** | Audio quality analysis (VAD) | `BaseQualityServer` | `/analyze` |
 
 ### What You Need to Provide
 
-Only **3 methods** and **1 config file**:
+Only **3-4 methods** and **1 config file**:
 
+**For TTS Engines:**
 ```python
 def load_model(self, model_name: str) -> None:
     """Load your TTS model into memory"""
@@ -40,9 +51,27 @@ def generate_audio(self, text, language, speaker_wav, parameters) -> bytes:
 
 def unload_model(self) -> None:
     """Free resources"""
+
+def get_available_models(self) -> List[ModelInfo]:
+    """Return list of available models"""
 ```
 
-Everything else (HTTP server, error handling, logging, health checks) is provided by `BaseEngineServer`.
+**For STT/Audio Engines:**
+```python
+def load_model(self, model_name: str) -> None:
+    """Load your analysis model into memory"""
+
+def analyze_audio(self, audio_path, reference_text, parameters) -> AnalysisResult:
+    """Analyze audio and return quality metrics"""
+
+def unload_model(self) -> None:
+    """Free resources"""
+
+def get_available_models(self) -> List[ModelInfo]:
+    """Return list of available models"""
+```
+
+Everything else (HTTP server, error handling, logging, health checks) is provided by the base server classes.
 
 ---
 
@@ -51,81 +80,113 @@ Everything else (HTTP server, error handling, logging, health checks) is provide
 ### How It Works
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Backend (Main FastAPI, Port 8765)                      │
-│  - Engine Discovery (scans backend/engines/)            │
-│  - Engine Manager (starts/stops engine servers)         │
-│  - TTS Worker (communicates with engines via HTTP)      │
-└────────────┬────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  Backend (Main FastAPI, Port 8765)                              │
+│  - Engine Discovery (scans backend/engines/{type}/)             │
+│  - 4 Engine Managers (TTS, STT, Text, Audio)                    │
+│  - Workers (TTS Worker, Quality Worker)                         │
+│  - Activity Tracking & Auto-Stop (5 min)                        │
+└────────────┬────────────────────────────────────────────────────┘
              │
              │ HTTP Requests (localhost)
              │
-    ┌────────┴────────┬─────────────┬─────────────┐
-    │                 │             │             │
-    ▼                 ▼             ▼             ▼
-┌────────────┐  ┌─────────────┐ ┌──────────┐ ┌──────────┐
-│ XTTS       │  │ Chatterbox  │ │ Piper    │ │ OpenAI   │
-│ Port 8766  │  │ Port 8767   │ │ Port 8768│ │ Port 8769│
-│ (VENV 1)   │  │ (VENV 2)    │ │ (VENV 3) │ │ (VENV 4) │
-└────────────┘  └─────────────┘ └──────────┘ └──────────┘
+    ┌────────┴────────┬─────────────┬─────────────┬─────────────┐
+    │                 │             │             │             │
+    ▼                 ▼             ▼             ▼             ▼
+┌────────────┐  ┌─────────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+│ TTS        │  │ TTS         │ │ STT      │ │ Text     │ │ Audio    │
+│ XTTS       │  │ Chatterbox  │ │ Whisper  │ │ spaCy    │ │ Silero   │
+│ Port 8766  │  │ Port 8767   │ │ Port 8770│ │ Port 8772│ │ Port 8774│
+│ (VENV 1)   │  │ (VENV 2)    │ │ (VENV 3) │ │ (VENV 4) │ │ (VENV 5) │
+└────────────┘  └─────────────┘ └──────────┘ └──────────┘ └──────────┘
 ```
 
 **Key Benefits:**
 
-1. **Dependency Isolation** - XTTS needs PyTorch 2.1, Chatterbox needs PyTorch 2.4? No problem!
+1. **Dependency Isolation** - XTTS needs PyTorch 2.5, Whisper needs 2.9? No problem!
 2. **Version Conflicts** - Different Python versions, CUDA versions, etc.
 3. **Crash Isolation** - Engine crash? Backend keeps running, just restart the engine
 4. **Hot Swapping** - Switch between engines without backend restart
 5. **Development** - Develop and test engines independently
+6. **Auto-Stop** - Non-default engines stop after 5 minutes of inactivity
 
 ### Engine Lifecycle
 
 ```
 1. Backend Startup
    ↓
-2. Engine Discovery (scan backend/engines/)
+2. Engine Discovery (scan backend/engines/{type}/)
    ↓
 3. Parse engine.yaml
    ↓
-4. Start engine subprocess (venv/python server.py --port XXXX)
+4. Check enabled status (settings DB)
    ↓
-5. Health check (wait for /health to return 200)
+5. Start engine subprocess (venv/python server.py --port XXXX)
    ↓
-6. Register engine in EngineManager
+6. Health check (wait for /health to return 200)
    ↓
-7. User selects engine in UI
+7. Register engine in EngineManager
    ↓
-8. Backend sends /load request (load model)
+8. User selects engine in UI
    ↓
-9. Backend sends /generate requests (TTS generation)
+9. Backend sends /load request (load model)
    ↓
-10. Backend sends /shutdown on exit (graceful shutdown)
+10. Backend sends /generate or /analyze requests
+    ↓
+11. Activity tracking (record last use timestamp)
+    ↓
+12. Auto-stop after 5 min inactivity (non-default engines)
+    ↓
+13. Backend sends /shutdown on exit (graceful shutdown)
 ```
+
+### Engine Status Lifecycle
+
+```
+disabled → stopped → starting → running → stopping → stopped
+    ↑                                                   │
+    └───────────────────────────────────────────────────┘
+```
+
+- **disabled**: Engine is disabled in settings, won't start
+- **stopped**: Engine is enabled but not running
+- **starting**: Engine process is launching
+- **running**: Engine is healthy and accepting requests
+- **stopping**: Engine is shutting down gracefully
 
 ---
 
 ## Quick Start
 
-### Step 1: Copy Template
+### Step 1: Choose Engine Type
+
+Decide which type of engine you're creating:
+- **TTS**: Text-to-Speech synthesis → `backend/engines/tts/`
+- **STT**: Speech-to-Text analysis → `backend/engines/stt/`
+- **Text**: Text processing → `backend/engines/text_processing/`
+- **Audio**: Audio analysis → `backend/engines/audio_analysis/`
+
+### Step 2: Copy Template
 
 ```bash
-cd backend/engines
+cd backend/engines/{type}
 cp -r _template my_engine
 cd my_engine
 ```
 
-### Step 2: Customize `engine.yaml`
+### Step 3: Customize `engine.yaml`
 
 ```yaml
 name: "my_engine"
-display_name: "My Custom TTS"
+display_name: "My Custom Engine"
 version: "1.0.0"
+type: "tts"  # or "stt", "text_processing", "audio_analysis"
 python_version: "3.10"
 venv_path: "./venv"
 
 capabilities:
   supports_model_hotswap: true
-  supports_speaker_cloning: true
+  supports_speaker_cloning: true  # TTS only
   supports_streaming: false
 
 constraints:
@@ -140,30 +201,32 @@ supported_languages:
   - fr
 ```
 
-### Step 3: Edit `requirements.txt`
+### Step 4: Edit `requirements.txt`
 
 ```txt
 # Base requirements (always needed)
--e ../../  # Installs backend core (BaseEngineServer, utilities)
+-e ../../..  # Installs backend core (BaseEngineServer, utilities)
 
 # Your engine dependencies
 torch>=2.0.0
 torchaudio>=2.0.0
 numpy>=1.24.0
-# ... add your TTS library here
+# ... add your engine library here
 ```
 
-### Step 4: Implement `server.py`
+### Step 5: Implement `server.py`
 
+**For TTS Engine:**
 ```python
 from pathlib import Path
 from typing import Dict, Any, Union, List
 import sys
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from base_server import BaseEngineServer
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from engines.base_tts_server import BaseTTSServer
+from engines.base_server import ModelInfo
 
-class MyEngineServer(BaseEngineServer):
+class MyTTSServer(BaseTTSServer):
     """My Custom TTS Engine"""
 
     def __init__(self):
@@ -204,6 +267,19 @@ class MyEngineServer(BaseEngineServer):
         self.model = None
         self.logger.info("Unloaded model")
 
+    def get_available_models(self) -> List[ModelInfo]:
+        """Return list of available models"""
+        models_dir = Path(__file__).parent / "models"
+        models = []
+        if models_dir.exists():
+            for model_dir in models_dir.iterdir():
+                if model_dir.is_dir():
+                    models.append(ModelInfo(
+                        name=model_dir.name,
+                        display_name=model_dir.name.replace("_", " ").title()
+                    ))
+        return models
+
 
 if __name__ == "__main__":
     import argparse
@@ -213,11 +289,83 @@ if __name__ == "__main__":
     parser.add_argument("--host", type=str, default="127.0.0.1")
     args = parser.parse_args()
 
-    server = MyEngineServer()
+    server = MyTTSServer()
     server.run(port=args.port, host=args.host)
 ```
 
-### Step 5: Create Virtual Environment
+**For STT/Audio Engine:**
+```python
+from pathlib import Path
+from typing import Dict, Any, List
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from engines.base_quality_server import BaseQualityServer, AnalysisResult
+from engines.base_server import ModelInfo
+
+class MySTTServer(BaseQualityServer):
+    """My Custom STT Engine"""
+
+    def __init__(self):
+        super().__init__(
+            engine_name="my_stt",
+            display_name="My Custom STT"
+        )
+        self.model = None
+
+    def load_model(self, model_name: str) -> None:
+        """Load your STT model"""
+        # TODO: Load your model
+        self.logger.info(f"Loaded model: {model_name}")
+
+    def analyze_audio(
+        self,
+        audio_path: str,
+        reference_text: str,
+        parameters: Dict[str, Any]
+    ) -> AnalysisResult:
+        """Analyze audio quality"""
+        # TODO: Analyze audio with your model
+        # transcription = self.model.transcribe(audio_path)
+
+        return AnalysisResult(
+            quality_score=85.0,
+            quality_status="perfect",  # "perfect", "warning", "defect"
+            details={
+                "fields": [
+                    {"label": "Transcription", "value": "..."},
+                    {"label": "Confidence", "value": "85%"}
+                ],
+                "infoBlocks": []
+            }
+        )
+
+    def unload_model(self) -> None:
+        """Free resources"""
+        self.model = None
+        self.logger.info("Unloaded model")
+
+    def get_available_models(self) -> List[ModelInfo]:
+        """Return list of available models"""
+        return [
+            ModelInfo(name="base", display_name="Base Model"),
+            ModelInfo(name="large", display_name="Large Model")
+        ]
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--host", type=str, default="127.0.0.1")
+    args = parser.parse_args()
+
+    server = MySTTServer()
+    server.run(port=args.port, host=args.host)
+```
+
+### Step 6: Create Virtual Environment
 
 **Windows:**
 ```bash
@@ -233,7 +381,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Step 6: Test Standalone (Optional)
+### Step 7: Test Standalone (Optional)
 
 ```bash
 # Start engine server
@@ -242,149 +390,102 @@ venv\Scripts\python server.py --port 8766
 # In another terminal:
 curl http://localhost:8766/health
 # Should return: {"status":"ready","ttsModelLoaded":false}
+
+curl http://localhost:8766/models
+# Should return: [{"name":"default","displayName":"Default"}]
 ```
 
-### Step 7: Restart Backend
+### Step 8: Restart Backend
 
 ```bash
 cd ../../..
 venv\Scripts\python main.py
 ```
 
-**Your engine should now appear in the UI!** 🎉
+**Your engine should now appear in the UI!**
 
 ---
 
 ## Implementation Guide
 
-### The 3 Required Methods
+### Base Server Classes
 
-#### 1. `load_model(model_name: str)`
+The engine system uses a hierarchy of base classes:
 
-**Purpose:** Load a TTS model into memory.
-
-**When Called:**
-- When backend starts (if this is the preferred engine)
-- When user switches to this engine
-- When user switches between models
-
-**What to Do:**
-```python
-def load_model(self, model_name: str) -> None:
-    # 1. Construct model path
-    model_path = Path(__file__).parent / "models" / model_name
-
-    # 2. Check if model exists
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model not found: {model_path}")
-
-    # 3. Unload previous model (if any)
-    if self.model is not None:
-        self.unload_model()
-
-    # 4. Load new model
-    self.model = YourTTSClass.load(model_path)
-
-    # 5. Set current model name
-    self.current_model = model_name
-
-    self.logger.info(f"Loaded model: {model_name}")
+```
+BaseEngineServer (Generic)
+├── BaseTTSServer (TTS-specific, adds /generate)
+├── BaseQualityServer (STT + Audio, adds /analyze)
+└── BaseTextServer (Text Processing, adds /segment)
 ```
 
-**Error Handling:**
-- Raise `FileNotFoundError` if model doesn't exist
-- Raise `RuntimeError` if loading fails
-- All exceptions are caught by `BaseEngineServer` and returned as HTTP 500
+### Required Methods by Engine Type
 
-#### 2. `generate_audio(text, language, speaker_wav, parameters)`
+#### TTS Engines (inherit `BaseTTSServer`)
 
-**Purpose:** Synthesize text to audio.
+| Method | Purpose |
+|--------|---------|
+| `load_model(model_name)` | Load TTS model into memory |
+| `generate_audio(text, language, speaker_wav, parameters)` | Synthesize text to WAV bytes |
+| `unload_model()` | Free GPU/RAM resources |
+| `get_available_models()` | Return list of `ModelInfo` objects |
 
-**Parameters:**
-- `text` (str): Text to synthesize
-- `language` (str): Language code (e.g., "en", "de", "fr")
-- `speaker_wav` (str or List[str]): Path(s) to speaker sample(s)
-  - For voice cloning: speaker sample file path(s)
-  - For non-cloning engines: empty string or None
-- `parameters` (dict): Engine-specific parameters (from UI)
+#### STT/Audio Engines (inherit `BaseQualityServer`)
 
-**Return:** WAV audio as bytes
+| Method | Purpose |
+|--------|---------|
+| `load_model(model_name)` | Load analysis model into memory |
+| `analyze_audio(audio_path, reference_text, parameters)` | Return `AnalysisResult` |
+| `unload_model()` | Free GPU/RAM resources |
+| `get_available_models()` | Return list of `ModelInfo` objects |
 
-**What to Do:**
+#### Text Processing Engines (inherit `BaseTextServer`)
+
+| Method | Purpose |
+|--------|---------|
+| `load_model(model_name)` | Load NLP model into memory |
+| `segment_text(text, language, parameters)` | Return list of text segments |
+| `unload_model()` | Free resources |
+| `get_available_models()` | Return list of `ModelInfo` objects |
+
+### ModelInfo Structure
+
 ```python
-def generate_audio(
-    self,
-    text: str,
-    language: str,
-    speaker_wav: Union[str, List[str]],
-    parameters: Dict[str, Any]
-) -> bytes:
-    # 1. Check if model is loaded
-    if self.model is None:
-        raise RuntimeError("Model not loaded")
+from dataclasses import dataclass
 
-    # 2. Validate inputs
-    if not text or len(text.strip()) == 0:
-        raise ValueError("Text is empty")
-
-    # 3. Generate audio (your TTS logic)
-    audio_array = self.model.synthesize(
-        text=text,
-        language=language,
-        speaker_wav=speaker_wav,
-        **parameters
-    )
-
-    # 4. Convert to WAV bytes
-    import io
-    import torchaudio
-
-    buffer = io.BytesIO()
-    torchaudio.save(
-        buffer,
-        audio_array,
-        sample_rate=self.config.constraints.sample_rate,
-        format="wav"
-    )
-
-    return buffer.getvalue()
+@dataclass
+class ModelInfo:
+    name: str           # Internal name (used in API calls)
+    display_name: str   # UI display name
+    description: str = ""
+    size_mb: int = 0
+    languages: List[str] = None
 ```
 
-**Audio Format Requirements:**
-- Must return **WAV format** bytes
-- Sample rate should match `engine.yaml` (`constraints.sample_rate`)
-- Mono or stereo (mono preferred for speech)
+### AnalysisResult Structure (STT/Audio)
 
-**Error Handling:**
-- Raise `ValueError` for invalid inputs
-- Raise `RuntimeError` for generation errors
-- All exceptions are caught by `BaseEngineServer`
-
-#### 3. `unload_model()`
-
-**Purpose:** Free resources (GPU memory, RAM, etc.).
-
-**When Called:**
-- When switching to another engine
-- When switching between models (before loading new one)
-- When backend shuts down
-
-**What to Do:**
 ```python
-def unload_model(self) -> None:
-    if self.model is not None:
-        # Free GPU memory
-        if hasattr(self.model, 'to'):
-            self.model.to('cpu')
+@dataclass
+class AnalysisResult:
+    quality_score: float      # 0-100
+    quality_status: str       # "perfect", "warning", "defect"
+    details: Dict[str, Any]   # Engine-specific details
+```
 
-        del self.model
-        self.model = None
-
-        # Optional: Clear CUDA cache
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        self.logger.info("Unloaded model")
+**Details Format:**
+```python
+{
+    "fields": [
+        {"label": "Transcription", "value": "Hello world"},
+        {"label": "Confidence", "value": "92%"}
+    ],
+    "infoBlocks": [
+        {
+            "title": "Issues Found",
+            "items": ["Missing word: 'the'", "Low confidence at 0:05"]
+        }
+    ]
+}
 ```
 
 ---
@@ -398,6 +499,7 @@ def unload_model(self) -> None:
 name: "my_engine"              # Internal name (lowercase, no spaces)
 display_name: "My TTS Engine"  # UI display name
 version: "1.0.0"               # Your engine version
+type: "tts"                    # Engine type: tts, stt, text_processing, audio_analysis
 
 # Python Requirements
 python_version: "3.10"         # Required Python version
@@ -408,7 +510,7 @@ venv_path: "./venv"            # Path to VENV (relative to engine.yaml)
 # Capabilities (what your engine can do)
 capabilities:
   supports_model_hotswap: true    # Can switch models without restart
-  supports_speaker_cloning: true  # Supports voice cloning
+  supports_speaker_cloning: true  # Supports voice cloning (TTS only)
   supports_streaming: false       # Supports streaming (future)
 
 # Constraints (technical limits)
@@ -463,12 +565,16 @@ Test your engine independently before integrating:
 
 ```bash
 # Start engine server
-cd backend/engines/my_engine
+cd backend/engines/{type}/my_engine
 venv\Scripts\python server.py --port 8766
 
 # Test health check
 curl http://localhost:8766/health
 # Response: {"status":"ready","ttsModelLoaded":false}
+
+# Test available models
+curl http://localhost:8766/models
+# Response: [{"name":"default","displayName":"Default"}]
 
 # Test load model
 curl -X POST http://localhost:8766/load \
@@ -476,7 +582,7 @@ curl -X POST http://localhost:8766/load \
   -d '{"ttsModelName":"default"}'
 # Response: {"status":"loaded","ttsModelName":"default"}
 
-# Test generate audio
+# Test generate audio (TTS)
 curl -X POST http://localhost:8766/generate \
   -H "Content-Type: application/json" \
   -d '{
@@ -487,10 +593,14 @@ curl -X POST http://localhost:8766/generate \
   }' \
   --output test.wav
 
-# Play audio
-# Windows: start test.wav
-# Linux: aplay test.wav
-# Mac: afplay test.wav
+# Test analyze audio (STT/Audio)
+curl -X POST http://localhost:8766/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "audioPath": "/path/to/audio.wav",
+    "referenceText": "Hello world",
+    "parameters": {}
+  }'
 ```
 
 ### 2. Integration Testing
@@ -503,97 +613,202 @@ venv\Scripts\python main.py
 ```
 
 **Check logs for:**
-- Engine discovery: `Discovered engine: my_engine`
+- Engine discovery: `Discovered engine: my_engine (type: tts)`
 - Engine startup: `Starting engine server: my_engine on port 8766`
 - Health check: `Engine my_engine is healthy`
 
 **In UI:**
 1. Open Audiobook Maker
-2. Check if your engine appears in the TTS Engine dropdown
-3. Select your engine
-4. Create a test segment
-5. Click "Generate Audio"
+2. Go to Settings → TTS (or relevant tab)
+3. Check if your engine appears in the dropdown
+4. Select your engine
+5. Test generation/analysis
 
 ---
 
 ## Examples
 
-### Example 1: Simple Non-Cloning Engine
-
-For engines that don't support voice cloning (e.g., multi-speaker models):
-
-```python
-def generate_audio(self, text, language, speaker_wav, parameters):
-    # Ignore speaker_wav (not used)
-
-    # Get speaker ID from parameters (if multi-speaker)
-    speaker_id = parameters.get("speaker_id", 0)
-
-    audio = self.model.synthesize(
-        text=text,
-        language=language,
-        speaker_id=speaker_id
-    )
-
-    return self._to_wav_bytes(audio)
-```
-
-### Example 2: Cloud API Engine (OpenAI, ElevenLabs)
+### Example 1: Cloud API Engine (OpenAI TTS)
 
 For engines that call external APIs:
 
 ```python
 import httpx
+import os
 
-def generate_audio(self, text, language, speaker_wav, parameters):
-    # Get API key from environment
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not set")
+class OpenAITTSServer(BaseTTSServer):
+    def __init__(self):
+        super().__init__(engine_name="openai_tts", display_name="OpenAI TTS")
 
-    # Call OpenAI TTS API
-    response = httpx.post(
-        "https://api.openai.com/v1/audio/speech",
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={
-            "model": "tts-1",
-            "input": text,
-            "voice": parameters.get("voice", "alloy")
-        }
-    )
+    def load_model(self, model_name: str) -> None:
+        self.current_model = model_name
+        self.logger.info(f"Using OpenAI model: {model_name}")
 
-    if response.status_code != 200:
-        raise RuntimeError(f"API error: {response.text}")
+    def generate_audio(self, text, language, speaker_wav, parameters):
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY not set")
 
-    # OpenAI returns MP3, convert to WAV
-    mp3_bytes = response.content
-    return self._convert_mp3_to_wav(mp3_bytes)
+        response = httpx.post(
+            "https://api.openai.com/v1/audio/speech",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": self.current_model or "tts-1",
+                "input": text,
+                "voice": parameters.get("voice", "alloy")
+            }
+        )
+
+        if response.status_code != 200:
+            raise RuntimeError(f"API error: {response.text}")
+
+        # OpenAI returns MP3, convert to WAV
+        return self._convert_mp3_to_wav(response.content)
+
+    def unload_model(self) -> None:
+        self.current_model = None
+
+    def get_available_models(self):
+        return [
+            ModelInfo(name="tts-1", display_name="TTS-1 (Fast)"),
+            ModelInfo(name="tts-1-hd", display_name="TTS-1 HD (Quality)")
+        ]
 ```
 
-### Example 3: Multi-Model Engine
+### Example 2: Multi-Speaker Engine (Piper)
 
-For engines that support multiple models:
+For engines with built-in speaker voices:
 
 ```python
-def load_model(self, model_name: str):
-    model_path = Path(__file__).parent / "models" / model_name
+class PiperTTSServer(BaseTTSServer):
+    def __init__(self):
+        super().__init__(engine_name="piper", display_name="Piper TTS")
+        self.voices = {}
 
-    # Unload previous model
+    def load_model(self, model_name: str) -> None:
+        model_path = Path(__file__).parent / "models" / model_name
+        self.model = PiperVoice.load(model_path)
+        self.current_model = model_name
+
+    def generate_audio(self, text, language, speaker_wav, parameters):
+        # Ignore speaker_wav (Piper uses built-in voices)
+        speaker_id = parameters.get("speaker_id", 0)
+
+        audio = self.model.synthesize(
+            text=text,
+            speaker_id=speaker_id,
+            length_scale=parameters.get("speed", 1.0)
+        )
+
+        return self._to_wav_bytes(audio)
+
+    def get_available_models(self):
+        models_dir = Path(__file__).parent / "models"
+        return [
+            ModelInfo(name=d.name, display_name=d.name.replace("-", " ").title())
+            for d in models_dir.iterdir() if d.is_dir()
+        ]
+```
+
+### Example 3: Audio Quality Analyzer
+
+```python
+class AudioQualityServer(BaseQualityServer):
+    def __init__(self):
+        super().__init__(engine_name="audio_quality", display_name="Audio Quality")
+
+    def load_model(self, model_name: str) -> None:
+        self.vad_model = load_silero_vad()
+        self.logger.info("Loaded VAD model")
+
+    def analyze_audio(self, audio_path, reference_text, parameters):
+        # Analyze audio characteristics
+        audio, sr = torchaudio.load(audio_path)
+
+        # Get speech timestamps
+        speech_timestamps = self.vad_model(audio, sr)
+
+        # Calculate metrics
+        total_duration = audio.shape[1] / sr
+        speech_duration = sum(t['end'] - t['start'] for t in speech_timestamps)
+        speech_ratio = speech_duration / total_duration
+
+        # Detect issues
+        issues = []
+        if speech_ratio < 0.5:
+            issues.append("Low speech ratio - too much silence")
+
+        # Calculate quality score
+        quality_score = min(100, speech_ratio * 100 + 20)
+        quality_status = "perfect" if quality_score >= 85 else "warning" if quality_score >= 70 else "defect"
+
+        return AnalysisResult(
+            quality_score=quality_score,
+            quality_status=quality_status,
+            details={
+                "fields": [
+                    {"label": "Speech Ratio", "value": f"{speech_ratio*100:.1f}%"},
+                    {"label": "Duration", "value": f"{total_duration:.1f}s"}
+                ],
+                "infoBlocks": [
+                    {"title": "Issues", "items": issues}
+                ] if issues else []
+            }
+        )
+```
+
+---
+
+## Best Practices
+
+### Memory Management
+
+```python
+def unload_model(self) -> None:
     if self.model is not None:
-        self.unload_model()
+        # Free GPU memory
+        if hasattr(self.model, 'to'):
+            self.model.to('cpu')
 
-    # Load new model
-    if model_name == "fast":
-        self.model = FastTTS.load(model_path)
-    elif model_name == "quality":
-        self.model = QualityTTS.load(model_path)
-    elif model_name == "multilingual":
-        self.model = MultilingualTTS.load(model_path)
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
+        del self.model
+        self.model = None
 
-    self.current_model = model_name
-    self.logger.info(f"Loaded {model_name} model")
+        # Clear CUDA cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        self.logger.info("Unloaded model")
+```
+
+### Error Handling
+
+```python
+def generate_audio(self, text, language, speaker_wav, parameters):
+    if self.model is None:
+        raise RuntimeError("Model not loaded")
+
+    if not text or len(text.strip()) == 0:
+        raise ValueError("Text is empty")
+
+    if language not in self.supported_languages:
+        raise ValueError(f"Unsupported language: {language}")
+
+    try:
+        audio = self.model.synthesize(text)
+        return self._to_wav_bytes(audio)
+    except Exception as e:
+        self.logger.error(f"Generation failed: {e}")
+        raise RuntimeError(f"Audio generation failed: {e}")
+```
+
+### Logging
+
+```python
+# Use the built-in logger
+self.logger.info(f"Loading model: {model_name}")
+self.logger.debug(f"Parameters: {parameters}")
+self.logger.warning(f"Slow generation: {elapsed}s")
+self.logger.error(f"Generation failed: {e}")
 ```
 
 ---
@@ -604,10 +819,11 @@ def load_model(self, model_name: str):
 
 **Check:**
 1. `engine.yaml` exists and is valid YAML
-2. `server.py` is executable
-3. VENV is created (`venv/` directory exists)
-4. VENV has dependencies installed
-5. Backend logs show "Discovered engine: my_engine"
+2. `type` field matches directory (`tts`, `stt`, `text_processing`, `audio_analysis`)
+3. `server.py` is executable
+4. VENV is created (`venv/` directory exists)
+5. VENV has dependencies installed
+6. Backend logs show `Discovered engine: my_engine`
 
 **Debug:**
 ```bash
@@ -617,6 +833,16 @@ python -c "import yaml; print(yaml.safe_load(open('engine.yaml')))"
 # Test server startup manually
 venv\Scripts\python server.py --port 8766
 ```
+
+### Engine Disabled
+
+**Check:**
+1. Engine is enabled in Settings
+2. Check logs for `Engine my_engine is disabled`
+
+**Fix:**
+- Go to Settings → [Engine Type] → Enable your engine
+- Or use API: `POST /api/engines/{type}/{name}/enable`
 
 ### Engine Starts But Health Check Fails
 
@@ -629,7 +855,7 @@ venv\Scripts\python server.py --port 8766
 **Debug:**
 ```bash
 # Check if port is available
-netstat -an | grep 8766
+netstat -an | findstr 8766
 
 # Test health endpoint
 curl http://localhost:8766/health
@@ -652,98 +878,41 @@ self.logger.debug(f"Language: {language}, Speaker: {speaker_wav}")
 
 ### Memory Issues
 
-**Check:**
-1. GPU memory usage (`nvidia-smi`)
-2. RAM usage (`Task Manager`)
-3. Model size vs. available memory
-
 **Solutions:**
 - Use smaller models
-- Implement model offloading (CPU ↔ GPU)
+- Implement model offloading (CPU <-> GPU)
 - Process text in smaller chunks
 - Clear cache in `unload_model()`
-
-### Dependency Conflicts
-
-**Check:**
-1. Each engine has its own VENV
-2. `requirements.txt` doesn't include backend deps
-3. Python version matches `engine.yaml`
-
-**Solution:**
-```bash
-# Recreate VENV
-rm -rf venv
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-```
+- Enable auto-stop for non-essential engines
 
 ---
 
-## Advanced Topics
+## Available Engines
 
-### Custom Parameters
+### TTS Engines
 
-Add custom UI controls for your engine:
+| Engine | Languages | Key Features |
+|--------|-----------|--------------|
+| **XTTS v2** | 17 | Speaker cloning, model hotswap, coqui-tts 0.27 |
+| **Chatterbox** | 23 | Speaker cloning, Python 3.11, PyTorch 2.6 |
 
-```yaml
-# engine.yaml
-parameters:
-  - name: "temperature"
-    type: "slider"
-    min: 0.1
-    max: 2.0
-    default: 1.0
-    description: "Sampling temperature (higher = more creative)"
+### STT Engines
 
-  - name: "top_p"
-    type: "slider"
-    min: 0.0
-    max: 1.0
-    default: 0.95
-    description: "Nucleus sampling threshold"
-```
+| Engine | Languages | Key Features |
+|--------|-----------|--------------|
+| **Whisper** | 12 | 5 model sizes (tiny-large), Python 3.12 |
 
-Access in `generate_audio()`:
-```python
-temperature = parameters.get("temperature", 1.0)
-top_p = parameters.get("top_p", 0.95)
-```
+### Text Processing Engines
 
-### Hot Model Swapping
+| Engine | Languages | Key Features |
+|--------|-----------|--------------|
+| **spaCy** | 11 | MD models only, CPU-only |
 
-If your engine supports loading multiple models simultaneously:
+### Audio Analysis Engines
 
-```yaml
-capabilities:
-  supports_model_hotswap: true
-```
-
-```python
-def load_model(self, model_name: str):
-    # Don't unload previous model
-    if model_name not in self.models:
-        self.models[model_name] = YourTTS.load(model_name)
-
-    self.current_model = model_name
-```
-
-### Streaming Support (Future)
-
-Placeholder for future streaming support:
-
-```yaml
-capabilities:
-  supports_streaming: true
-```
-
-```python
-async def generate_audio_stream(self, text, language, speaker_wav, parameters):
-    """Generate audio in chunks (async generator)"""
-    for chunk in self.model.stream_synthesize(text):
-        yield chunk
-```
+| Engine | Key Features |
+|--------|--------------|
+| **Silero-VAD** | Speech/silence detection, clipping, volume analysis |
 
 ---
 
@@ -751,13 +920,13 @@ async def generate_audio_stream(self, text, language, speaker_wav, parameters):
 
 The XTTS engine is a complete working example:
 
-**Location:** `backend/engines/xtts/`
+**Location:** `backend/engines/tts/xtts/`
 
 **Features:**
 - Voice cloning from audio samples
 - 17+ languages
 - GPU acceleration (CUDA)
-- Model hotswapping (v2.0.2 ↔ v2.0.3)
+- Model hotswapping (v2.0.2 <-> v2.0.3)
 
 **Study files:**
 - `server.py` - Complete implementation
@@ -778,19 +947,19 @@ Want to contribute your engine to the official repository?
 
 2. **Create PR:**
    - Fork repository
-   - Add engine to `backend/engines/`
+   - Add engine to `backend/engines/{type}/`
    - Update `README.md`
    - Submit pull request
 
 3. **Checklist:**
-   - [ ] Implements all 3 methods
+   - [ ] Inherits correct base class
+   - [ ] Implements all required methods
    - [ ] Has `engine.yaml` with all fields
    - [ ] Has `requirements.txt`
    - [ ] Has `README.md`
-   - [ ] Includes example audio samples
    - [ ] Works on Windows + Linux
    - [ ] Passes standalone tests
 
 ---
 
-**Happy Engine Building! 🚀**
+**Happy Engine Building!**

@@ -10,34 +10,36 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  FormHelperText,
   Alert,
   CircularProgress,
   Box,
   Typography,
-  Chip,
   FormControlLabel,
   Checkbox,
 } from '@mui/material';
 import { Audiotrack } from '@mui/icons-material';
-import { useTTSEngines, useTTSModels } from '../../hooks/useTTSQuery';
+import { useAllEnginesStatus } from '@hooks/useEnginesQuery';
 import { useQuery } from '@tanstack/react-query';
-import { fetchSpeakers } from '../../services/settingsApi';
-import { useAppStore } from '../../store/appStore';
+import { fetchSpeakers } from '@services/settingsApi';
+import { queryKeys } from '@services/queryKeys';
+import { useAppStore } from '@store/appStore';
+import { useDefaultSpeaker } from '@hooks/useSpeakersQuery';
 import { useTranslation, Trans } from 'react-i18next';
-import type { Chapter } from '../../types';
-import { logger } from '../../utils/logger';
+import { useError } from '@hooks/useError';
+import type { Chapter } from '@types';
+import { logger } from '@utils/logger';
 
 interface GenerateAudioDialogProps {
   open: boolean;
   chapter: Chapter | null;
   onClose: () => void;
   onGenerate: (config: {
-    speaker: string;
-    language: string;
-    ttsEngine: string;
-    ttsModelName: string;
+    speaker?: string;
+    language?: string;
+    ttsEngine?: string;
+    ttsModelName?: string;
     forceRegenerate: boolean;
+    overrideSegmentSettings?: boolean;
   }) => Promise<void>;
 }
 
@@ -49,94 +51,157 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
 }) => {
   // ALL HOOKS FIRST (React Hook Rules!)
   const { t } = useTranslation();
-  const { data: engines, isLoading: enginesLoading } = useTTSEngines();
+  const { showError, ErrorDialog } = useError();
+  const { data: enginesStatus, isLoading: enginesLoading } = useAllEnginesStatus();
   const { data: speakers, isLoading: speakersLoading } = useQuery({
-    queryKey: ['speakers'],
+    queryKey: queryKeys.speakers.lists(),
     queryFn: fetchSpeakers,
     staleTime: 30 * 60 * 1000, // 30 minutes
   });
 
-  // TTS state from appStore (uses computed getters)
-  const currentEngine = useAppStore((state) => state.getCurrentTtsEngine());
-  const currentModelName = useAppStore((state) => state.getCurrentTtsModelName());
-  const currentSpeaker = useAppStore((state) => state.getCurrentTtsSpeaker());
-  const currentLanguage = useAppStore((state) => state.getCurrentLanguage());
-  const setSessionOverride = useAppStore((state) => state.setSessionOverride);
+  // TTS state from appStore (DB defaults)
+  const defaultEngine = useAppStore((state) => state.getDefaultTtsEngine());
+  const getDefaultTtsModel = useAppStore((state) => state.getDefaultTtsModel);
+  const defaultLanguage = useAppStore((state) => state.getDefaultLanguage());
   const settings = useAppStore((state) => state.settings);
 
-  // Fetch models for current engine
-  const { data: models, isLoading: modelsLoading } = useTTSModels(currentEngine);
+  // Default speaker from speakers table (single source of truth)
+  const { data: defaultSpeakerData } = useDefaultSpeaker();
+  const defaultSpeaker = defaultSpeakerData?.name || '';
+  const defaultModelName = getDefaultTtsModel(defaultEngine);
 
-  // Local state (initialized from appStore computed values)
-  const [selectedSpeaker, setSelectedSpeaker] = useState(currentSpeaker);
-  const [selectedLanguage, setSelectedLanguage] = useState(currentLanguage);
+  // Local state (initialized from appStore DB defaults)
+  const [overrideSettings, setOverrideSettings] = useState(false);
+  const [selectedEngine, setSelectedEngine] = useState(defaultEngine);
+  const [selectedModel, setSelectedModel] = useState(defaultModelName);
+  const [selectedSpeaker, setSelectedSpeaker] = useState(defaultSpeaker);
+  const [selectedLanguage, setSelectedLanguage] = useState(defaultLanguage);
   const [forceRegenerate, setForceRegenerate] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // Computed values
-  const engineInfo = engines?.find((e) => e.name === currentEngine);
-  const isLoading = enginesLoading || speakersLoading || modelsLoading;
+  // Extract TTS engines and models from unified status (only enabled engines)
+  const engines = (enginesStatus?.tts ?? []).filter(e => e.isEnabled);
+  const activeEngine = overrideSettings ? selectedEngine : defaultEngine;
+  const engineInfo = engines.find((e) => e.name === activeEngine);
+  const models = engineInfo?.availableModels ?? [];
+  const isLoading = enginesLoading || speakersLoading;
 
   // Filter speakers - only show active speakers (those with samples)
   const availableSpeakers = speakers?.filter(speaker => speaker.isActive) || [];
 
-  // Calculate max text length for selected engine + language
-  const maxLength =
-    engineInfo?.constraints.maxTextLengthByLang?.[selectedLanguage] ??
-    engineInfo?.constraints.maxTextLength ??
-    250;
+  // Calculate available languages: supportedLanguages + defaultLanguage from DB (if not already included)
+  const availableLanguages = React.useMemo(() => {
+    if (!engineInfo) return [];
 
-  const minLength = engineInfo?.constraints.minTextLength ?? 10;
+    const supported = engineInfo.supportedLanguages || [];
+    const engineConfig = settings?.tts.engines[activeEngine];
+    const dbDefaultLanguage = engineConfig?.defaultLanguage;
 
-  // Initialize state from appStore computed values when dialog opens
+    // Add DB default language if it's not already in supported languages
+    if (dbDefaultLanguage && !supported.includes(dbDefaultLanguage)) {
+      return [dbDefaultLanguage, ...supported];
+    }
+
+    return supported;
+  }, [engineInfo, settings, activeEngine]);
+
+  // Note: constraints removed from EngineStatusInfo - using defaults
+  const maxLength = 250;
+  const minLength = 10;
+
+  // Initialize state from appStore DB defaults when dialog opens
   useEffect(() => {
     if (open) {
-      // Use current computed values as defaults
-      setSelectedSpeaker(currentSpeaker);
-      setSelectedLanguage(currentLanguage);
+      // Use DB defaults as initial values
+      setOverrideSettings(false);
+      setSelectedEngine(defaultEngine);
+      setSelectedModel(defaultModelName);
+      setSelectedSpeaker(defaultSpeaker);
+      setSelectedLanguage(defaultLanguage);
       setForceRegenerate(false);
       setIsGenerating(false);
     }
-  }, [open, currentSpeaker, currentLanguage]);
+  }, [open, defaultEngine, defaultModelName, defaultSpeaker, defaultLanguage]);
 
-  // Update selected language when engine changes - use engine's default language from settings
+  // Update selected language and model when selected engine changes
   useEffect(() => {
-    if (engineInfo && engineInfo.supportedLanguages.length > 0) {
+    if (overrideSettings && engineInfo && availableLanguages.length > 0) {
       // Get default language from engine settings
-      const engineConfig = settings?.tts.engines[currentEngine];
-      const defaultLanguage = engineConfig?.defaultLanguage;
+      const engineConfig = settings?.tts.engines[selectedEngine];
+      const dbDefaultLanguage = engineConfig?.defaultLanguage;
 
-      // Use default if valid, otherwise use first supported language
-      if (defaultLanguage && engineInfo.supportedLanguages.includes(defaultLanguage)) {
-        setSelectedLanguage(defaultLanguage);
+      // Use DB default if available, otherwise use first available language
+      if (dbDefaultLanguage && availableLanguages.includes(dbDefaultLanguage)) {
+        setSelectedLanguage(dbDefaultLanguage);
 
         logger.group(
           '🌍 Language Auto-Select',
-          'Using engine default language from settings',
+          'Using engine default language from DB settings',
           {
-            'Engine': currentEngine,
-            'Selected Language': defaultLanguage,
-            'Source': 'settings.tts.engines.defaultLanguage'
+            'Engine': selectedEngine,
+            'Selected Language': dbDefaultLanguage,
+            'Source': 'settings.tts.engines.defaultLanguage',
+            'Available Languages': availableLanguages
           },
           '#4CAF50'
         );
-      } else if (engineInfo.supportedLanguages.length > 0) {
-        // Fallback to first supported language
-        setSelectedLanguage(engineInfo.supportedLanguages[0]);
+      } else if (availableLanguages.length > 0) {
+        // Fallback to first available language
+        setSelectedLanguage(availableLanguages[0]);
 
         logger.group(
           '🌍 Language Auto-Select',
-          'Using first supported language (no default found)',
+          'Using first available language',
           {
-            'Engine': currentEngine,
-            'Selected Language': engineInfo.supportedLanguages[0],
-            'Source': 'First in supportedLanguages'
+            'Engine': selectedEngine,
+            'Selected Language': availableLanguages[0],
+            'Source': 'First in availableLanguages',
+            'Available Languages': availableLanguages
           },
           '#FF9800'
         );
       }
+
+      // Select model: use per-engine default if available, otherwise use first model
+      if (models.length > 0) {
+        // Try per-engine default model first
+        const engineConfig = settings?.tts.engines[selectedEngine];
+        const perEngineDefaultModel = engineConfig?.defaultModelName;
+        const perEngineModelAvailable = perEngineDefaultModel && models.includes(perEngineDefaultModel);
+
+        if (perEngineModelAvailable) {
+          setSelectedModel(perEngineDefaultModel);
+
+          logger.group(
+            '🔧 Model Auto-Select',
+            'Using per-engine default model from settings',
+            {
+              'Engine': selectedEngine,
+              'Selected Model': perEngineDefaultModel,
+              'Source': 'settings.tts.engines.defaultModelName',
+              'Available Models': models
+            },
+            '#4CAF50'
+          );
+        } else {
+          setSelectedModel(models[0]);
+
+          logger.group(
+            '🔧 Model Auto-Select',
+            'Using first available model',
+            {
+              'Engine': selectedEngine,
+              'Selected Model': models[0],
+              'Source': 'First in models list',
+              'Available Models': models,
+              'Per-Engine Default': perEngineDefaultModel || 'none'
+            },
+            '#FF9800'
+          );
+        }
+      }
     }
-  }, [currentEngine, engineInfo, settings]);
+  }, [selectedEngine, engineInfo, settings, models, overrideSettings, availableLanguages]);
 
   // Handlers
   const handleGenerate = async () => {
@@ -150,33 +215,36 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
         {
           'Chapter ID': chapter.id,
           'Chapter Title': chapter.title,
-          'Engine': currentEngine,
-          'Model': currentModelName,
-          'Language': selectedLanguage,
-          'Speaker': selectedSpeaker,
+          'Override Settings': overrideSettings,
+          'Engine': overrideSettings ? selectedEngine : '(from segments)',
+          'Model': overrideSettings ? selectedModel : '(from segments)',
+          'Language': overrideSettings ? selectedLanguage : '(from segments)',
+          'Speaker': overrideSettings ? selectedSpeaker : '(from segments)',
           'Force Regenerate': forceRegenerate,
           'Segments Count': audioSegments.length,
           'Pending Segments': pendingSegments,
-          'Completed Segments': completedSegments
+          'Completed Segments': completedSegments,
+          'Frozen Segments': frozenSegments,
+          'Will Generate': segmentsToGenerate
         },
         '#4CAF50'
       );
 
-      // Update session overrides with selected values
-      setSessionOverride('ttsSpeaker', selectedSpeaker);
-      setSessionOverride('language', selectedLanguage);
-
       await onGenerate({
-        speaker: selectedSpeaker,
-        language: selectedLanguage,
-        ttsEngine: currentEngine,
-        ttsModelName: currentModelName,
+        speaker: overrideSettings ? selectedSpeaker : undefined,
+        language: overrideSettings ? selectedLanguage : undefined,
+        ttsEngine: overrideSettings ? selectedEngine : undefined,
+        ttsModelName: overrideSettings ? selectedModel : undefined,
         forceRegenerate: forceRegenerate,
+        overrideSegmentSettings: overrideSettings,
       });
       onClose();
     } catch (err) {
       logger.error('[GenerateAudioDialog] Failed to start generation:', err);
-      alert(t('audioGeneration.messages.failed'));
+      await showError(
+        t('audioGeneration.title'),
+        t('audioGeneration.messages.failed')
+      );
     } finally {
       setIsGenerating(false);
     }
@@ -197,18 +265,36 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
   const totalSegments = audioSegments.length;
   const pendingSegments = audioSegments.filter((s) => s.status === 'pending').length;
   const completedSegments = audioSegments.filter((s) => s.status === 'completed').length;
+  const frozenSegments = audioSegments.filter((s) => s.isFrozen).length;
+
+  // Calculate segments that will be generated (excluding frozen)
+  const segmentsToGenerate = forceRegenerate
+    ? audioSegments.filter((s) => !s.isFrozen).length
+    : audioSegments.filter((s) => s.status === 'pending' && !s.isFrozen).length;
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitle>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth="sm"
+      fullWidth
+      data-testid="generate-audio-dialog"
+      PaperProps={{
+        sx: {
+          bgcolor: 'background.paper',
+          backgroundImage: 'none',
+        },
+      }}
+    >
+      <DialogTitle sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Stack direction="row" alignItems="center" spacing={1}>
           <Audiotrack color="primary" />
           <Typography variant="h6">{t('audioGeneration.title')}</Typography>
         </Stack>
       </DialogTitle>
 
-      <DialogContent>
-        <Stack spacing={3} sx={{ mt: 1 }}>
+      <DialogContent dividers sx={{ bgcolor: 'background.default' }}>
+        <Stack spacing={3}>
           {/* Loading State */}
           {isLoading && (
             <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
@@ -228,87 +314,126 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
             </Alert>
           )}
 
-          {/* Current Engine & Model Info */}
+          {/* Content when engines/speakers are loaded */}
           {!isLoading && engineInfo && availableSpeakers.length > 0 && (
             <>
-              <Alert severity="info">
-                <Typography variant="body2">
-                  <strong>{t('audioGeneration.usingEngine')}</strong> {engineInfo.displayName}
-                </Typography>
-                <Typography variant="body2" sx={{ mt: 0.5 }}>
-                  <strong>{t('audioGeneration.usingModel')}</strong>{' '}
-                  {models?.find((m) => m.modelName === currentModelName)?.displayName || currentModelName}
-                </Typography>
-                <Typography variant="caption" component="div">
-                  {t('audioGeneration.textLimits', { min: minLength, max: maxLength, language: selectedLanguage.toUpperCase() })}
-                </Typography>
-                <Typography variant="caption" component="div" sx={{ mt: 0.5, fontStyle: 'italic' }}>
-                  {t('audioGeneration.changeEngineHint')}
-                </Typography>
-              </Alert>
+              {/* Override Settings Checkbox */}
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={overrideSettings}
+                    onChange={(e) => setOverrideSettings(e.target.checked)}
+                    disabled={isGenerating}
+                  />
+                }
+                label={
+                  <Box>
+                    <Typography variant="body2">
+                      {t('audioGeneration.overrideSettings')}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {overrideSettings
+                        ? t('audioGeneration.overrideSettingsEnabled')
+                        : t('audioGeneration.overrideSettingsDisabled')}
+                    </Typography>
+                  </Box>
+                }
+              />
 
-              {/* Language Selection */}
-              <FormControl fullWidth>
-                <InputLabel>{t('audioGeneration.language')}</InputLabel>
-                <Select
-                  value={engineInfo?.supportedLanguages.includes(selectedLanguage) ? selectedLanguage : ''}
-                  label={t('audioGeneration.language')}
-                  onChange={(e) => setSelectedLanguage(e.target.value)}
-                  disabled={isGenerating}
-                >
-                  {engineInfo?.supportedLanguages.map((lang) => (
-                    <MenuItem key={lang} value={lang}>
-                      {lang.toUpperCase()}
-                    </MenuItem>
-                  ))}
-                </Select>
-                <FormHelperText>
-                  {t('audioGeneration.languagesSupported', { count: engineInfo?.supportedLanguages.length || 0 })}
-                </FormHelperText>
-              </FormControl>
+              {/* Frozen Segments Warning (only show if override=true and frozen segments exist) */}
+              {overrideSettings && frozenSegments > 0 && (
+                <Alert severity="info">
+                  <Typography variant="caption">
+                    {t(`audioGeneration.frozenSegmentsInfo`, { count: frozenSegments })}
+                  </Typography>
+                </Alert>
+              )}
 
-              {/* Speaker Selection */}
-              <FormControl fullWidth>
-                <InputLabel>{t('audioGeneration.speaker')}</InputLabel>
-                <Select
-                  value={selectedSpeaker}
-                  label={t('audioGeneration.speaker')}
-                  onChange={(e) => setSelectedSpeaker(e.target.value)}
-                  disabled={isGenerating}
-                >
-                  {availableSpeakers.map((speaker) => (
-                    <MenuItem key={speaker.id} value={speaker.name}>
-                      <Stack direction="row" alignItems="center" spacing={1} sx={{ width: '100%' }}>
-                        <Typography>{speaker.name}</Typography>
-                        {speaker.samples.length > 0 && (
-                          <Chip
-                            label={t('audioGeneration.samplesCount', { count: speaker.samples.length })}
-                            size="small"
-                            variant="outlined"
-                          />
-                        )}
-                        {speaker.gender && (
-                          <Chip
-                            label={speaker.gender}
-                            size="small"
-                            color="primary"
-                            variant="outlined"
-                          />
-                        )}
-                      </Stack>
-                    </MenuItem>
-                  ))}
-                </Select>
-                <FormHelperText>
-                  {t('audioGeneration.speakersAvailable', { count: availableSpeakers.length })}
-                </FormHelperText>
-              </FormControl>
+              {/* TTS Parameters Selection (only show when override=true) */}
+              {overrideSettings && (
+                <Stack spacing={2}>
+                  {/* Engine & Model Row */}
+                  <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                    {/* Engine Selection */}
+                    <FormControl fullWidth>
+                      <InputLabel>Engine</InputLabel>
+                      <Select
+                        value={engines.some((e) => e.name === selectedEngine) ? selectedEngine : ''}
+                        label="Engine"
+                        onChange={(e) => setSelectedEngine(e.target.value)}
+                        disabled={isGenerating}
+                      >
+                        {engines.map((engine) => (
+                          <MenuItem key={engine.name} value={engine.name}>
+                            {engine.displayName}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+
+                    {/* Model Selection */}
+                    <FormControl fullWidth>
+                      <InputLabel>Model</InputLabel>
+                      <Select
+                        value={models.includes(selectedModel) ? selectedModel : ''}
+                        label="Model"
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        disabled={isGenerating || models.length === 0}
+                      >
+                        {models.map((model) => (
+                          <MenuItem key={model} value={model}>
+                            {model}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Box>
+
+                  {/* Speaker & Language Row */}
+                  <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+                    {/* Speaker Selection */}
+                    <FormControl fullWidth>
+                      <InputLabel>{t('audioGeneration.speaker')}</InputLabel>
+                      <Select
+                        value={availableSpeakers.some((s) => s.name === selectedSpeaker) ? selectedSpeaker : ''}
+                        label={t('audioGeneration.speaker')}
+                        onChange={(e) => setSelectedSpeaker(e.target.value)}
+                        disabled={isGenerating}
+                      >
+                        {availableSpeakers.map((speaker) => (
+                          <MenuItem key={speaker.id} value={speaker.name}>
+                            {speaker.name}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+
+                    {/* Language Selection */}
+                    <FormControl fullWidth>
+                      <InputLabel>{t('audioGeneration.language')}</InputLabel>
+                      <Select
+                        value={availableLanguages.includes(selectedLanguage) ? selectedLanguage : ''}
+                        label={t('audioGeneration.language')}
+                        onChange={(e) => setSelectedLanguage(e.target.value)}
+                        disabled={isGenerating}
+                      >
+                        {availableLanguages.map((lang) => (
+                          <MenuItem key={lang} value={lang}>
+                            {t(`languages.${lang}`, lang.toUpperCase())}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Box>
+                </Stack>
+              )}
 
               {/* Regenerate Checkbox (only show if there are completed segments) */}
               {completedSegments > 0 && (
                 <FormControlLabel
                   control={
                     <Checkbox
+                      data-testid="generate-audio-regenerate"
                       checked={forceRegenerate}
                       onChange={(e) => setForceRegenerate(e.target.checked)}
                       disabled={isGenerating}
@@ -322,32 +447,30 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
                 />
               )}
 
-              {/* Warning when force_regenerate is enabled */}
-              {forceRegenerate && (
-                <Alert severity="warning" sx={{ mt: 1 }}>
-                  <strong>{t('common.warning')}:</strong> {t('audioGeneration.forceRegenerateWarning')}
-                </Alert>
-              )}
-
               {/* Generation Summary */}
-              <Alert severity="warning">
+              <Alert severity={forceRegenerate ? "warning" : "success"}>
                 <Typography variant="body2" component="div">
                   <Trans
                     i18nKey="audioGeneration.willGenerate"
                     values={{
-                      count: forceRegenerate ? totalSegments : pendingSegments,
+                      count: segmentsToGenerate,
                       total: totalSegments,
                       engine: engineInfo?.displayName || ''
                     }}
                     components={{ strong: <strong /> }}
                   />
                 </Typography>
-                {forceRegenerate && completedSegments > 0 && (
+                {forceRegenerate && (completedSegments - frozenSegments) > 0 && (
                   <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>
-                    {t('audioGeneration.regenerateWarning')}
+                    {t('audioGeneration.regenerateWithFrozen', {
+                      completed: completedSegments - frozenSegments,
+                      completedPlural: (completedSegments - frozenSegments) === 1 ? 'Segment' : 'Segmente',
+                      frozen: frozenSegments,
+                      frozenPlural: frozenSegments === 1 ? 'Segment' : 'Segmente'
+                    })}
                   </Typography>
                 )}
-                {!forceRegenerate && totalSegments > 0 && pendingSegments === 0 && (
+                {!forceRegenerate && totalSegments > 0 && pendingSegments === 0 && frozenSegments === 0 && (
                   <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>
                     {t('audioGeneration.allCompleted')}
                   </Typography>
@@ -358,19 +481,34 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
         </Stack>
       </DialogContent>
 
-      <DialogActions>
-        <Button onClick={handleClose} disabled={isGenerating || isLoading}>
+      <DialogActions sx={{ borderTop: 1, borderColor: 'divider', p: 2 }}>
+        <Button
+          onClick={handleClose}
+          disabled={isGenerating || isLoading}
+          data-testid="generate-audio-cancel"
+        >
           {t('common.cancel')}
         </Button>
         <Button
           onClick={handleGenerate}
           variant="contained"
-          disabled={isGenerating || isLoading || !engineInfo || !selectedSpeaker || availableSpeakers.length === 0}
+          data-testid="generate-audio-submit"
+          disabled={
+            isGenerating ||
+            isLoading ||
+            !engineInfo ||
+            (overrideSettings && (!selectedEngine || !selectedModel || !selectedSpeaker)) || // Require all params if override=true
+            availableSpeakers.length === 0 ||
+            segmentsToGenerate === 0
+          }
           startIcon={isGenerating ? <CircularProgress size={16} /> : <Audiotrack />}
         >
           {isGenerating ? t('audioGeneration.starting') : t('audioGeneration.generate')}
         </Button>
       </DialogActions>
+
+      {/* Error Dialog */}
+      <ErrorDialog />
     </Dialog>
   );
 };

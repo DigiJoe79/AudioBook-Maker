@@ -87,22 +87,8 @@ backend/cleanup.bat
 # ============================================
 # Models are large (100MB+), should not be committed
 # Download separately or use model management
-backend/models/*/
-!backend/models/.gitkeep
-!backend/models/README.md
-
-# Exception: Keep model directory structure documentation
-backend/models/*/.gitkeep
-
-# ============================================
-# Speaker Samples 
-# ============================================
-# Uncomment if you want to ignore speaker files
-backend/media/speaker_samples/*.wav
-backend/media/speaker_samples/*/*.wav
-
-# Keep speaker directory structure
-!backend/speakers/.gitkeep
+backend/engines/tts/*/models/*/
+!backend/engines/tts/*/models/.gitkeep
 
 # ============================================
 # IDE / Editor
@@ -180,13 +166,6 @@ out/
 electron-builder.yml
 
 # ============================================
-# Testing
-# ============================================
-# Test files (if you want to keep test scripts, remove these lines)
-backend/test_*.py
-backend/*_test.py
-
-# ============================================
 # Temporary Files
 # ============================================
 *.tmp
@@ -241,3 +220,19 @@ backend/engines/chatterbox/src
 backend/engines/chatterbox/src/*
 audiobook-maker-coding-standards
 audiobook-maker-coding-standards/*
+backend/services/whisper/main.obj
+backend/media.rar
+.gitignore
+backend/database/audiobook_maker.rar
+frontend/playwright-report/*/
+frontend/test-results/*/
+.playwright-mcp/*
+docs/CODEBASE_AUDIT_REPORT_FINAL.md
+docs/plans/*
+docs/done/*
+backend/database/audiobook_maker.db-shm
+backend/database/audiobook_maker.db-wal
+.analysis
+.analysis/*
+.quality
+.quality/*

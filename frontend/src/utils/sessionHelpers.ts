@@ -5,8 +5,8 @@
  * across backend disconnections and reconnections.
  */
 
-import type { SessionState } from '../types/backend'
-import { logger } from './logger'
+import type { SessionState } from '@types'
+import { logger } from '@utils/logger'
 
 /**
  * Get the current session state

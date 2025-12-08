@@ -2,8 +2,24 @@
  * API Service for Audiobook Maker Backend
  */
 
-import type { TTSEngine, Project, Chapter, Segment } from '../types'
-import { useAppStore } from '../store/appStore'
+import type {
+  Project,
+  Chapter,
+  Segment,
+  PronunciationRule,
+  PronunciationRuleCreate,
+  PronunciationRuleUpdate,
+  PronunciationTestRequest,
+  PronunciationTestResponse,
+  PronunciationConflict,
+  PronunciationBulkOperation,
+  MappingRules,
+  ImportPreviewResponse,
+  ImportExecuteResponse,
+  ApiPronunciationRule,
+  ApiSpeaker,
+} from '@types'
+import { useAppStore } from '@store/appStore'
 
 /**
  * Get the current API base URL from the Zustand store
@@ -36,8 +52,6 @@ export interface ApiChapter {
   projectId: string;
   title: string;
   orderIndex: number;
-  defaultTtsEngine: string;
-  defaultTtsModelName: string;
   createdAt: string;
   updatedAt: string;
   segments: ApiSegment[];
@@ -58,6 +72,7 @@ export interface ApiSegment {
   segmentType: 'standard' | 'divider';
   pauseDuration: number;
   status: 'pending' | 'processing' | 'completed' | 'failed';
+  isFrozen: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -139,45 +154,126 @@ export const projectApi = {
     }),
 
   /**
-   * Import project from Markdown file
+   * Preview Markdown import before creating project
    *
-   * Markdown structure:
-   * - # Heading 1 → Project title
-   * - ## Heading 2 → Ignored (Acts, etc.)
-   * - ### Heading 3 → Chapter (numbering removed)
-   * - *** → Divider segment
-   * - Text → Automatically segmented with spaCy
+   * Returns a structured preview of how the markdown file will be parsed
+   * into projects, chapters, and segments. Allows users to review and
+   * adjust before committing to the import.
    *
    * @param file Markdown file (.md or .markdown, max 10 MB)
-   * @param ttsSettings TTS settings for all segments
-   * @returns Created project with chapters and segments
+   * @param mappingRules Custom parsing rules (optional)
+   * @param language Language code for text segmentation (default: "en")
+   * @returns Preview with parsed structure, warnings, and statistics
    */
-  importFromMarkdown: async (
+  previewMarkdownImport: async (
     file: File,
-    ttsSettings: {
-      ttsEngine: string;
-      ttsModelName: string;
-      language: string;
-      ttsSpeakerName?: string;
-    }
-  ): Promise<{
-    success: boolean;
-    project: Project;
-    totalSegments: number;
-    totalDividers: number;
-    message: string;
-  }> => {
+    mappingRules?: MappingRules,
+    language: string = 'en'
+  ): Promise<ImportPreviewResponse> => {
     const formData = new FormData();
     formData.append('file', file);
+
+    // Add mapping rules as JSON string (if provided)
+    if (mappingRules) {
+      // Backend expects snake_case field names in FormData
+      const snakeCaseRules = {
+        project_heading: mappingRules.projectHeading,
+        chapter_heading: mappingRules.chapterHeading,
+        divider_pattern: mappingRules.dividerPattern,
+      };
+      formData.append('mapping_rules', JSON.stringify(snakeCaseRules));
+    }
+
+    // Add language
+    formData.append('language', language);
+
+    const response = await fetch(`${getApiBaseUrl()}/projects/import/preview`, {
+      method: 'POST',
+      body: formData, // multipart/form-data (no Content-Type header!)
+    });
+
+    if (!response.ok) {
+      // Check if this is a connection error
+      if (response.status === 0 || response.status >= 500) {
+        window.dispatchEvent(new CustomEvent('backend-connection-error'));
+      }
+
+      const error = await response.json().catch(() => ({ detail: response.statusText }));
+      throw new Error(error.detail || `Import preview failed: ${response.status}`);
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Execute Markdown import (create or merge project)
+   *
+   * Creates a new project or merges chapters into existing project based on mode.
+   * Applies chapter selection, renaming, and TTS settings to all segments.
+   *
+   * @param file Markdown file (.md or .markdown, max 10 MB)
+   * @param mappingRules Custom parsing rules
+   * @param language Language code for text segmentation (default: "en")
+   * @param mode Import mode ('new' or 'merge')
+   * @param mergeTargetId Target project ID (only for merge mode)
+   * @param selectedChapters Array of chapter IDs to import
+   * @param renamedChapters Mapping of chapter ID to new title
+   * @param ttsSettings TTS settings for all segments
+   * @returns Created/updated project with statistics
+   */
+  executeMarkdownImport: async (
+    file: File,
+    mappingRules: MappingRules,
+    language: string,
+    mode: 'new' | 'merge',
+    mergeTargetId: string | null,
+    selectedChapters: string[],
+    renamedChapters: Record<string, string>,
+    ttsSettings: {
+      ttsEngine: string
+      ttsModelName: string
+      language: string
+      ttsSpeakerName?: string
+    }
+  ): Promise<ImportExecuteResponse> => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    // Add mapping rules as JSON string
+    // Backend expects snake_case field names in FormData
+    const snakeCaseRules = {
+      project_heading: mappingRules.projectHeading,
+      chapter_heading: mappingRules.chapterHeading,
+      divider_pattern: mappingRules.dividerPattern,
+    };
+    formData.append('mapping_rules', JSON.stringify(snakeCaseRules));
+
+    // Add language
+    formData.append('language', language);
+
+    // Add mode
+    formData.append('mode', mode);
+
+    // Add merge target ID (only if merge mode)
+    if (mode === 'merge' && mergeTargetId) {
+      formData.append('merge_target_id', mergeTargetId);
+    }
+
+    // Add selected chapters as JSON array
+    formData.append('selected_chapters', JSON.stringify(selectedChapters));
+
+    // Add renamed chapters as JSON object
+    formData.append('renamed_chapters', JSON.stringify(renamedChapters));
+
+    // Add TTS settings (use snake_case for FormData)
     formData.append('tts_engine', ttsSettings.ttsEngine);
-    // Use snake_case for FormData fields (FastAPI Form parameters don't use Pydantic conversion)
     formData.append('tts_model_name', ttsSettings.ttsModelName);
-    formData.append('language', ttsSettings.language);
+    formData.append('tts_language', ttsSettings.language);
     if (ttsSettings.ttsSpeakerName) {
       formData.append('tts_speaker_name', ttsSettings.ttsSpeakerName);
     }
 
-    const response = await fetch(`${getApiBaseUrl()}/projects/import-markdown`, {
+    const response = await fetch(`${getApiBaseUrl()}/projects/import`, {
       method: 'POST',
       body: formData, // multipart/form-data (no Content-Type header!)
     });
@@ -204,8 +300,6 @@ export const chapterApi = {
     projectId: string
     title: string
     orderIndex: number
-    defaultTtsEngine: string
-    defaultTtsModelName: string
   }) =>
     apiCall<ApiChapter>('/chapters', {
       method: 'POST',
@@ -237,26 +331,25 @@ export const chapterApi = {
       body: JSON.stringify({ newProjectId, newOrderIndex }),
     }),
 
-  // Segment text into natural segments
+  // Segment text into natural segments (always uses sentence-based segmentation)
   segmentText: (
     chapterId: string,
     data: {
       text: string;
-      method?: 'sentences' | 'paragraphs' | 'smart' | 'length';
-      language?: string;
+      // Note: Always uses sentence-based segmentation
+      language?: string;  // SpaCy language for segmentation
       ttsEngine?: string;
       ttsModelName?: string;
+      ttsLanguage?: string;  // TTS language (optional, defaults to segmentation language)
       ttsSpeakerName?: string;
       minLength?: number;
       maxLength?: number;
-      autoCreate?: boolean;
     }
   ) =>
     apiCall<{
       success: boolean;
       message: string;
-      segments: Segment[]; // Full segment objects when autoCreate=true
-      preview?: Array<{ text: string; orderIndex: number }>; // Preview when autoCreate=false
+      segments: Segment[];
       segmentCount: number;
       ttsEngine: string;
       constraints: Record<string, number>;
@@ -328,6 +421,13 @@ export const segmentApi = {
       method: 'PUT',
       body: JSON.stringify({ newChapterId, newOrderIndex }),
     }),
+
+  // Freeze/unfreeze segment (protect from regeneration)
+  freeze: (segmentId: string, freeze: boolean) =>
+    apiCall<ApiSegment>(`/segments/${segmentId}/freeze`, {
+      method: 'PATCH',
+      body: JSON.stringify({ freeze }),
+    }),
 };
 
 // TTS API
@@ -335,51 +435,23 @@ export const ttsApi = {
   // Get available speakers from database (NOT from TTS engine)
   // Uses /api/speakers/ endpoint which is engine-independent
   getSpeakers: () =>
-    apiCall<Array<{
-      id: string;
-      name: string;
-      description?: string;
-      gender?: string;
-      languages: string[];
-      tags: string[];
-      isDefault: boolean;
-      isActive: boolean;
-      sampleCount: number;
-      createdAt: string;
-      updatedAt: string;
-      samples: Array<{
-        id: string;
-        filePath: string;
-        fileName: string;
-        fileSize: number;
-        duration?: number;
-        sampleRate?: number;
-        transcript?: string;
-        createdAt: string;
-      }>;
-    }>>('/speakers/'),
+    apiCall<Array<ApiSpeaker>>('/speakers/'),
 
-  // Get available TTS engines
-  getEngines: () =>
+  // REMOVED: getEngines() - Use engineApi.getAllStatus() instead
+  // The unified /api/engines/status endpoint provides all engine information
+  // across all types (TTS, STT, Text, Audio).
+  //
+  // REMOVED: getEngineModels(engineType) - Use engineApi.getAllStatus() instead
+  // Model information is included in the engine status response via availableModels field.
+
+  // Enable or disable an engine
+  setEngineEnabled: (engineType: string, engineName: string, enabled: boolean) =>
     apiCall<{
       success: boolean;
-      engines: TTSEngine[];
-    }>('/tts/engines'),
-
-  // Get available models for a specific engine
-  getEngineModels: (engineType: string) =>
-    apiCall<{
-      success: boolean;
-      ttsEngine: string;
-      models: Array<{
-        ttsModelName: string;
-        displayName: string;
-        path: string;
-        version: string;
-        sizeMb?: number;
-      }>;
-      count: number;
-    }>(`/tts/engines/${engineType}/models`),
+      message: string;
+    }>(`/engines/${engineType}/${engineName}/${enabled ? 'enable' : 'disable'}`, {
+      method: 'POST',
+    }),
 
   // Regenerate audio for segment (uses stored segment parameters + settings)
   generateSegmentById: (segmentId: string) =>
@@ -394,11 +466,13 @@ export const ttsApi = {
   // Generate audio for entire chapter
   generateChapter: (data: {
     chapterId: string;
-    ttsSpeakerName: string;  
-    language: string;  
-    ttsEngine: string;  
-    ttsModelName: string;  
-    forceRegenerate?: boolean; 
+    forceRegenerate?: boolean;
+    overrideSegmentSettings?: boolean;
+    // TTS parameters (only used when overrideSegmentSettings=true)
+    ttsSpeakerName?: string;
+    language?: string;
+    ttsEngine?: string;
+    ttsModelName?: string;
     options?: TTSOptions;
   }) =>
     apiCall<{
@@ -408,27 +482,6 @@ export const ttsApi = {
     }>('/tts/generate-chapter', {
       method: 'POST',
       body: JSON.stringify(data),
-    }),
-
-  // Get chapter generation progress
-  getChapterProgress: (chapterId: string) =>
-    apiCall<{
-      chapterId: string;
-      status: string;
-      progress: number;
-      currentSegment: number;
-      totalSegments: number;
-      message: string;
-      error?: string;
-    }>(`/tts/generate-chapter/${chapterId}/progress`),
-
-  // Cancel chapter generation (legacy - use cancelJob for job-based cancellation)
-  cancelChapterGeneration: (chapterId: string) =>
-    apiCall<{
-      status: string;
-      chapterId: string;
-    }>(`/tts/generate-chapter/${chapterId}`, {
-      method: 'DELETE',
     }),
 
   /**
@@ -442,7 +495,7 @@ export const ttsApi = {
       success: boolean;
       jobId: string;
       status: string;
-    }>(`/tts/cancel-job/${jobId}`, {
+    }>(`/jobs/tts/${jobId}/cancel`, {
       method: 'POST',
     }),
 
@@ -469,7 +522,7 @@ export const ttsApi = {
     if (filters?.offset !== undefined) params.append('offset', filters.offset.toString())
 
     const queryString = params.toString()
-    const endpoint = queryString ? `/tts/jobs?${queryString}` : '/tts/jobs'
+    const endpoint = queryString ? `/jobs/tts?${queryString}` : '/jobs/tts'
 
     return apiCall<import('../types').TTSJobsListResponse>(endpoint)
   },
@@ -483,7 +536,7 @@ export const ttsApi = {
    * @returns Promise with active jobs list
    */
   listActiveJobs: () =>
-    apiCall<import('../types').TTSJobsListResponse>('/tts/jobs/active'),
+    apiCall<import('../types').TTSJobsListResponse>('/jobs/tts/active'),
 
   /**
    * Get single TTS job by ID
@@ -492,7 +545,7 @@ export const ttsApi = {
    * @returns Promise with complete job details
    */
   getJob: (jobId: string) =>
-    apiCall<import('../types').TTSJob>(`/tts/jobs/${jobId}`),
+    apiCall<import('../types').TTSJob>(`/jobs/tts/${jobId}`),
 
   /**
    * Delete a specific job by ID
@@ -502,7 +555,7 @@ export const ttsApi = {
    */
   deleteJob: (jobId: string) =>
     apiCall<{ success: boolean; deleted: boolean; jobId: string }>(
-      `/tts/jobs/${jobId}`,
+      `/jobs/tts/${jobId}`,
       { method: 'DELETE' }
     ),
 
@@ -512,7 +565,7 @@ export const ttsApi = {
    * @returns Promise with count of deleted jobs
    */
   clearJobHistory: () =>
-    apiCall<{ success: boolean; deleted: number }>('/tts/jobs/cleanup', {
+    apiCall<{ success: boolean; deleted: number }>('/jobs/tts/cleanup', {
       method: 'DELETE',
     }),
 
@@ -525,24 +578,8 @@ export const ttsApi = {
    * @returns Promise with the newly created job
    */
   resumeJob: (jobId: string) =>
-    apiCall<import('../types').TTSJob>(`/tts/jobs/${jobId}/resume`, {
+    apiCall<import('../types').TTSJob>(`/jobs/tts/${jobId}/resume`, {
       method: 'POST',
-    }),
-
-  /**
-   * Set preferred engine/model for warm-keeping
-   *
-   * This preference is stored in RAM only (session-based).
-   * After all jobs complete, the worker will activate this engine.
-   *
-   * @param ttsEngine - Engine identifier
-   * @param ttsModelName - Model name 
-   * @returns Promise with success message
-   */
-  setPreferredEngine: (ttsEngine: string, ttsModelName: string) =>
-    apiCall<{ message: string }>('/tts/set-preferred-engine', {
-      method: 'POST',
-      body: JSON.stringify({ ttsEngine, ttsModelName }),
     }),
 };
 
@@ -562,7 +599,7 @@ export const textProcessingApi = {
       language: string;
       segmentCount: number;
       segments: Array<{ text: string; orderIndex: number }>;
-    }>('/segment-text', {
+    }>('/text/segment', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
@@ -652,4 +689,382 @@ export const exportApi = {
       method: 'POST',
       body: JSON.stringify({ chapterId, pauseMs }),
     }),
+};
+
+// ============================================================================
+// Pronunciation API
+// ============================================================================
+
+export const pronunciationApi = {
+  // Create a new rule
+  createRule: async (rule: PronunciationRuleCreate): Promise<ApiPronunciationRule> => {
+    const response = await apiCall<ApiPronunciationRule>('/pronunciation/rules', {
+      method: 'POST',
+      body: JSON.stringify(rule),
+    });
+    return response;
+  },
+
+  // Get rules filtered by criteria
+  getRules: async (params?: {
+    engine?: string;
+    language?: string;
+    projectId?: string;
+    scope?: string;
+  }): Promise<{ rules: ApiPronunciationRule[]; total: number }> => {
+    const queryParams = new URLSearchParams();
+    if (params?.engine) queryParams.append('engine', params.engine);
+    if (params?.language) queryParams.append('language', params.language);
+    if (params?.projectId) queryParams.append('project_id', params.projectId);
+    if (params?.scope) queryParams.append('scope', params.scope);
+
+    const queryString = queryParams.toString();
+    const endpoint = queryString ? `/pronunciation/rules?${queryString}` : '/pronunciation/rules';
+
+    return apiCall<{ rules: ApiPronunciationRule[]; total: number }>(endpoint);
+  },
+
+  // Get rules for specific context (ordered by priority)
+  getRulesForContext: async (
+    engineName: string,
+    language: string,
+    projectId?: string
+  ): Promise<{ rules: ApiPronunciationRule[]; total: number }> => {
+    const queryParams = new URLSearchParams();
+    queryParams.append('engine', engineName);
+    queryParams.append('language', language);
+    if (projectId) queryParams.append('projectId', projectId);
+
+    return apiCall<{ rules: ApiPronunciationRule[]; total: number }>(
+      `/pronunciation/rules?${queryParams.toString()}`
+    );
+  },
+
+  // Update a rule
+  updateRule: async (
+    ruleId: string,
+    update: PronunciationRuleUpdate
+  ): Promise<ApiPronunciationRule> => {
+    return apiCall<ApiPronunciationRule>(`/pronunciation/rules/${ruleId}`, {
+      method: 'PUT',
+      body: JSON.stringify(update),
+    });
+  },
+
+  // Delete a rule
+  deleteRule: async (ruleId: string): Promise<{ message: string }> => {
+    return apiCall<{ message: string }>(`/pronunciation/rules/${ruleId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  // Test rules on sample text
+  testRules: async (request: PronunciationTestRequest): Promise<PronunciationTestResponse> => {
+    return apiCall<PronunciationTestResponse>('/pronunciation/rules/test', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  },
+
+  // Detect conflicting rules
+  getConflicts: async (
+    engineName: string,
+    language: string
+  ): Promise<{ conflicts: PronunciationConflict[]; total: number }> => {
+    const queryParams = new URLSearchParams();
+    queryParams.append('engine', engineName);
+    queryParams.append('language', language);
+
+    return apiCall<{ conflicts: PronunciationConflict[]; total: number }>(
+      `/pronunciation/rules/conflicts?${queryParams.toString()}`
+    );
+  },
+
+  // Bulk operations
+  bulkOperation: async (
+    operation: PronunciationBulkOperation
+  ): Promise<{ message: string; modified: number }> => {
+    return apiCall<{ message: string; modified: number }>('/pronunciation/rules/bulk', {
+      method: 'POST',
+      body: JSON.stringify(operation),
+    });
+  },
+
+  // Toggle rule active state
+  toggleRule: async (ruleId: string, isActive: boolean): Promise<ApiPronunciationRule> => {
+    return pronunciationApi.updateRule(ruleId, { isActive });
+  },
+
+  // Copy rule to different scope
+  copyRule: async (
+    ruleId: string,
+    targetScope: 'project_engine' | 'engine',
+    targetProjectId?: string
+  ): Promise<ApiPronunciationRule> => {
+    const rule = await apiCall<ApiPronunciationRule>(`/pronunciation/rules/${ruleId}`);
+    const newRule: PronunciationRuleCreate = {
+      pattern: rule.pattern,
+      replacement: rule.replacement,
+      isRegex: rule.isRegex,
+      scope: targetScope,
+      projectId: targetProjectId,
+      engineName: rule.engineName,
+      language: rule.language,
+      isActive: rule.isActive,
+    };
+    return pronunciationApi.createRule(newRule);
+  },
+
+  // Export rules to JSON
+  exportRules: async (params?: {
+    ruleIds?: string[];
+    engine?: string;
+    language?: string;
+  }): Promise<ApiPronunciationRule[]> => {
+    const queryParams = new URLSearchParams();
+    if (params?.ruleIds) {
+      params.ruleIds.forEach((id) => queryParams.append('rule_ids', id));
+    }
+    if (params?.engine) queryParams.append('engine', params.engine);
+    if (params?.language) queryParams.append('language', params.language);
+
+    const queryString = queryParams.toString();
+    const endpoint = queryString
+      ? `/pronunciation/rules/export?${queryString}`
+      : '/pronunciation/rules/export';
+
+    return apiCall<ApiPronunciationRule[]>(endpoint);
+  },
+
+  // Import rules from JSON
+  importRules: async (
+    rules: PronunciationRule[],
+    mode: 'merge' | 'replace' = 'merge'
+  ): Promise<{ imported: number; skipped: number }> => {
+    return apiCall<{ imported: number; skipped: number }>(
+      '/pronunciation/rules/import',
+      {
+        method: 'POST',
+        body: JSON.stringify({ rules, mode }),
+      }
+    );
+  },
+};
+
+// ==================== Quality API ====================
+
+export const qualityApi = {
+  /**
+   * Analyze a single segment with quality engines.
+   */
+  analyzeSegment: async (
+    segmentId: string,
+    sttEngine?: string,
+    sttModelName?: string,
+    audioEngine?: string
+  ) => {
+    const params = new URLSearchParams()
+    if (sttEngine) params.append('sttEngine', sttEngine)
+    if (sttModelName) params.append('sttModelName', sttModelName)
+    if (audioEngine) params.append('audioEngine', audioEngine)
+
+    const queryString = params.toString()
+    const url = `/quality/analyze/segment/${segmentId}${queryString ? `?${queryString}` : ''}`
+    return apiCall<{
+      jobId: string
+      message: string
+      status: string
+    }>(url, { method: 'POST' })
+  },
+
+  /**
+   * Analyze all segments in a chapter.
+   */
+  analyzeChapter: async (
+    chapterId: string,
+    sttEngine?: string,
+    sttModelName?: string,
+    audioEngine?: string
+  ) => {
+    const params = new URLSearchParams()
+    if (sttEngine) params.append('sttEngine', sttEngine)
+    if (sttModelName) params.append('sttModelName', sttModelName)
+    if (audioEngine) params.append('audioEngine', audioEngine)
+
+    const queryString = params.toString()
+    const url = `/quality/analyze/chapter/${chapterId}${queryString ? `?${queryString}` : ''}`
+    return apiCall<{
+      jobId: string
+      message: string
+      status: string
+    }>(url, { method: 'POST' })
+  },
+
+  /**
+   * Get quality jobs with optional filters.
+   */
+  getJobs: async (filters?: {
+    status?: string
+    chapterId?: string
+    limit?: number
+    offset?: number
+  }) => {
+    const params = new URLSearchParams()
+    if (filters?.status) params.append('status', filters.status)
+    if (filters?.chapterId) params.append('chapterId', filters.chapterId)
+    if (filters?.limit) params.append('limit', String(filters.limit))
+    if (filters?.offset) params.append('offset', String(filters.offset))
+
+    const queryString = params.toString()
+    const url = `/jobs/quality${queryString ? `?${queryString}` : ''}`
+    return apiCall<{
+      jobs: import('@types').QualityJob[]
+      total: number
+    }>(url)
+  },
+
+  /**
+   * Get active quality jobs.
+   */
+  getActiveJobs: async () => {
+    return apiCall<{
+      jobs: import('@types').QualityJob[]
+      total: number
+    }>('/jobs/quality/active')
+  },
+
+  /**
+   * Get a specific quality job.
+   */
+  getJob: async (jobId: string) => {
+    return apiCall<import('@types').QualityJob>(`/jobs/quality/${jobId}`)
+  },
+
+  /**
+   * Cancel a quality job.
+   */
+  cancelJob: async (jobId: string) => {
+    return apiCall<{
+      success: boolean
+      message: string
+    }>(`/jobs/quality/${jobId}/cancel`, {
+      method: 'POST',
+    })
+  },
+
+  /**
+   * Delete a quality job.
+   */
+  deleteJob: async (jobId: string) => {
+    return apiCall<{
+      success: boolean
+      message: string
+    }>(`/jobs/quality/${jobId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  /**
+   * Resume a cancelled quality job.
+   */
+  resumeJob: async (jobId: string) => {
+    return apiCall<import('@types').QualityJob>(`/jobs/quality/${jobId}/resume`, {
+      method: 'POST',
+    })
+  },
+
+  /**
+   * Cleanup completed/failed quality jobs (clear history).
+   */
+  clearJobHistory: async () => {
+    return apiCall<{
+      success: boolean
+      deleted: number
+    }>('/jobs/quality/cleanup', {
+      method: 'DELETE',
+    })
+  },
+}
+
+// Engine Management API
+export const engineApi = {
+  // Get status of all engines grouped by type
+  getAllStatus: async () => {
+    return apiCall<import('@/types/engines').AllEnginesStatus>('/engines/status');
+  },
+
+  // Enable an engine
+  enableEngine: async (engineType: string, engineName: string) => {
+    return apiCall<{
+      success: boolean;
+      message: string;
+    }>(`/engines/${engineType}/${engineName}/enable`, {
+      method: 'POST',
+    });
+  },
+
+  // Disable an engine
+  disableEngine: async (engineType: string, engineName: string) => {
+    return apiCall<{
+      success: boolean;
+      message: string;
+    }>(`/engines/${engineType}/${engineName}/disable`, {
+      method: 'POST',
+    });
+  },
+
+  // Start an engine
+  startEngine: async (engineType: string, engineName: string, modelName?: string) => {
+    return apiCall<{
+      success: boolean;
+      message: string;
+      port?: number;
+    }>(`/engines/${engineType}/${engineName}/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: modelName ? JSON.stringify({ modelName }) : undefined,
+    });
+  },
+
+  // Stop an engine
+  stopEngine: async (engineType: string, engineName: string) => {
+    return apiCall<{
+      success: boolean;
+      message: string;
+    }>(`/engines/${engineType}/${engineName}/stop`, {
+      method: 'POST',
+    });
+  },
+
+  // Set default engine for a type
+  setDefaultEngine: async (engineType: string, engineName: string) => {
+    return apiCall<{
+      success: boolean;
+      message: string;
+    }>(`/engines/${engineType}/default/${engineName}`, {
+      method: 'POST',
+    });
+  },
+
+  // Clear default engine for a type (set to none)
+  clearDefaultEngine: async (engineType: string) => {
+    return apiCall<{
+      success: boolean;
+      message: string;
+    }>(`/engines/${engineType}/default`, {
+      method: 'DELETE',
+    });
+  },
+
+  // Set keep-running flag for an engine
+  setKeepRunning: async (engineType: string, engineName: string, keepRunning: boolean) => {
+    return apiCall<{
+      success: boolean;
+      message: string;
+    }>(`/engines/${engineType}/${engineName}/keep-running`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keepRunning }),
+    });
+  },
 };

@@ -4,9 +4,9 @@
  * API calls for settings and speaker management.
  */
 
-import { useAppStore } from '../store/appStore';
-import type { GlobalSettings } from '../store/appStore';
-import type { Speaker, EngineParameterSchema } from '../types';
+import { useAppStore } from '@store/appStore';
+import type { GlobalSettings } from '@store/appStore';
+import type { Speaker, EngineParameterSchema } from '@types';
 
 function getApiBaseUrl(): string {
   const url = useAppStore.getState().connection.url;
@@ -23,7 +23,7 @@ export async function fetchSettings(): Promise<GlobalSettings> {
 
 export async function updateSettings(
   category: string,
-  value: any
+  value: GlobalSettings[keyof GlobalSettings]
 ): Promise<void> {
   const response = await fetch(`${getApiBaseUrl()}/api/settings/${category}`, {
     method: 'PUT',
@@ -53,11 +53,14 @@ export async function fetchSegmentLimits(engine: string): Promise<{
 }
 
 export async function fetchEngineSchema(
-  engine: string
+  engine: string,
+  engineType?: string
 ): Promise<Record<string, EngineParameterSchema>> {
-  const response = await fetch(
-    `${getApiBaseUrl()}/api/settings/engine-schema/${engine}`
-  );
+  // Use new generic endpoint if engineType provided, fallback to legacy TTS endpoint
+  const url = engineType
+    ? `${getApiBaseUrl()}/api/settings/engine-schema/${engineType}/${engine}`
+    : `${getApiBaseUrl()}/api/settings/engine-schema/${engine}`
+  const response = await fetch(url);
   if (!response.ok) throw new Error('Failed to fetch engine schema');
   const data = await response.json();
   return data.parameters; // Extract 'parameters' field from EngineSchemaResponse

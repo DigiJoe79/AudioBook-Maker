@@ -11,9 +11,9 @@ import {
   type UseQueryResult,
   type UseMutationResult,
 } from '@tanstack/react-query'
-import { projectApi, type ApiProject } from '../services/api'
-import { type Project } from '../types'
-import { queryKeys } from '../services/queryKeys'
+import { projectApi, type ApiProject } from '@services/api'
+import { type Project, type ApiChapterWithSegments, type ApiSegment } from '@types'
+import { queryKeys } from '@services/queryKeys'
 
 // Backend now returns camelCase via Pydantic Response Models
 const transformProject = (apiProject: ApiProject): Project => {
@@ -21,11 +21,11 @@ const transformProject = (apiProject: ApiProject): Project => {
     ...apiProject,
     createdAt: new Date(apiProject.createdAt),
     updatedAt: new Date(apiProject.updatedAt),
-    chapters: (apiProject.chapters || []).map((chapter: any) => ({
+    chapters: (apiProject.chapters || []).map((chapter: ApiChapterWithSegments) => ({
       ...chapter,
       createdAt: new Date(chapter.createdAt),
       updatedAt: new Date(chapter.updatedAt),
-      segments: (chapter.segments || []).map((segment: any) => ({
+      segments: (chapter.segments || []).map((segment: ApiSegment) => ({
         ...segment,
         audioPath: segment.audioPath || undefined,
         createdAt: new Date(segment.createdAt),

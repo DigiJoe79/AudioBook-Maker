@@ -1,0 +1,39 @@
+name: "template_stt"
+display_name: "Template STT"
+type: stt
+# Note: version is read dynamically from pip package via get_package_version()
+
+# Python version requirement (used by setup scripts)
+python_version: "3.12"  # Adjust as needed for your engine
+
+# Path to virtual environment (relative to this file)
+venv_path: "./venv"
+
+# Models configuration
+models:
+  - name: "base"
+    display_name: "Base Model"
+    size_mb: 150
+    speed: "fast"
+  - name: "large"
+    display_name: "Large Model"
+    size_mb: 1500
+    speed: "slow"
+    accuracy: "high"
+
+# Default model to load
+default_model: "base"
+
+# Supported languages
+supported_languages:
+  - en
+  - de
+  - fr
+  - es
+  - it
+
+# Capabilities
+capabilities:
+  supports_model_hotswap: true  # Can switch models without restart
+  supports_word_timestamps: true  # Returns word-level timing
+  supports_confidence: true  # Returns confidence scores

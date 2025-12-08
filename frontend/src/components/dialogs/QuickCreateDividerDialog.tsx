@@ -16,8 +16,9 @@ import {
 } from '@mui/material'
 import { PauseCircle } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
-import { useAppStore } from '../../store/appStore'
-import { logger } from '../../utils/logger'
+import { useError } from '@hooks/useError'
+import { useAppStore } from '@store/appStore'
+import { logger } from '@utils/logger'
 
 interface QuickCreateDividerDialogProps {
   open: boolean
@@ -46,6 +47,7 @@ export default function QuickCreateDividerDialog({
   onConfirm,
 }: QuickCreateDividerDialogProps) {
   const { t } = useTranslation()
+  const { showError, ErrorDialog } = useError()
 
   // Get default divider duration from settings
   const settings = useAppStore((state) => state.settings)
@@ -84,22 +86,28 @@ export default function QuickCreateDividerDialog({
       onClose()
     } catch (err) {
       logger.error('[QuickCreateDividerDialog] Failed to', mode, 'divider:', err)
-      alert(t(`quickCreateDivider.failed${mode === 'create' ? 'Create' : 'Edit'}`))
+      await showError(
+        t(`quickCreateDivider.${mode}Title`),
+        t(`quickCreateDivider.failed${mode === 'create' ? 'Create' : 'Edit'}`)
+      )
     } finally {
       setLoading(false)
     }
   }
 
   const handleClose = () => {
-    if (mode === 'create') {
-      // Reset to settings default (not hardcoded)
-      setPauseDuration(settings?.audio.defaultDividerDuration ?? 2000)
-    }
     onClose()
+
+    // Reset after closing animation completes (300ms) to prevent visual jump on next open
+    setTimeout(() => {
+      if (mode === 'create') {
+        setPauseDuration(settings?.audio.defaultDividerDuration ?? 2000)
+      }
+    }, 300)
   }
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="xs" fullWidth>
+    <Dialog open={open} onClose={handleClose} maxWidth="xs" fullWidth data-testid="quick-create-divider-dialog">
       <DialogTitle>
         <Box display="flex" alignItems="center" gap={1}>
           <PauseCircle />
@@ -128,6 +136,7 @@ export default function QuickCreateDividerDialog({
               marks={MARKS}
               valueLabelDisplay="auto"
               valueLabelFormat={(val) => `${(val / 1000).toFixed(1)}s`}
+              data-testid="quick-create-divider-slider"
             />
           </Box>
         </Box>
@@ -141,12 +150,16 @@ export default function QuickCreateDividerDialog({
           variant="contained"
           color="primary"
           disabled={loading}
+          data-testid="quick-create-divider-submit"
         >
           {loading
             ? (mode === 'create' ? t('quickCreateDivider.creating') : t('quickCreateDivider.saving'))
             : (mode === 'create' ? t('quickCreateDivider.addPause') : t('common.save'))}
         </Button>
       </DialogActions>
+
+      {/* Error Dialog */}
+      <ErrorDialog />
     </Dialog>
   )
 }

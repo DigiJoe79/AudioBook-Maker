@@ -5,7 +5,7 @@
  * Use these instead of unsafe type casts (as any, as unknown as Type).
  */
 
-import type { Segment, Speaker, Chapter } from '../types';
+import type { Segment, Speaker, Chapter } from '@types';
 
 /**
  * Check if error is an Error instance
@@ -87,8 +87,6 @@ export function isChapter(value: unknown): value is Chapter {
     typeof chapter.projectId === 'string' &&
     typeof chapter.title === 'string' &&
     typeof chapter.orderIndex === 'number' &&
-    typeof chapter.defaultTtsEngine === 'string' &&
-    typeof chapter.defaultTtsModelName === 'string' &&
     Array.isArray(chapter.segments)
   );
 }

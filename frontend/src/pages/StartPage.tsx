@@ -8,7 +8,7 @@
  */
 
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import {
   Box,
   Typography,
@@ -26,24 +26,28 @@ import {
   Error as ErrorIcon,
   Settings as SettingsIcon,
 } from '@mui/icons-material'
-import { useBackendHealth } from '../hooks/useBackendHealth'
+import { useBackendHealth } from '@hooks/useBackendHealth'
 import {
   loadProfiles,
   initializeDefaultProfile,
   markProfileAsConnected,
-} from '../services/backendProfiles'
-import type { BackendProfile } from '../types/backend'
-import { useAppStore } from '../store/appStore'
-import { ProfileManagerDialog } from '../components/dialogs/ProfileManagerDialog'
-import { getDefaultSpeaker, fetchSettings, updateSettings } from '../services/settingsApi'
+} from '@services/backendProfiles'
+import type { BackendProfile } from '@types'
+import { useAppStore } from '@store/appStore'
+import { ProfileManagerDialog } from '@components/dialogs/ProfileManagerDialog'
+import { fetchSettings, updateSettings } from '@services/settingsApi'
 import { useTranslation } from 'react-i18next'
-import { logger } from '../utils/logger'
+import type { TFunction } from 'i18next'
+import { logger } from '@utils/logger'
+import { useError } from '@hooks/useError'
 
 export default function StartPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const setBackendConnection = useAppStore((state) => state.setBackendConnection)
   const loadSettings = useAppStore((state) => state.loadSettings)
+  const updateEngineAvailability = useAppStore((state) => state.updateEngineAvailability)
+  const { showError, ErrorDialog } = useError()
 
   // Profile management state
   const [profiles, setProfiles] = useState<BackendProfile[]>([])
@@ -79,7 +83,18 @@ export default function StartPage() {
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId)
 
   // Backend health check (with polling)
-  const { isOnline, version, ttsEngines, busy, activeJobs, isLoading, error } = useBackendHealth(
+  const {
+    isOnline,
+    version,
+    ttsEngines,
+    busy,
+    activeJobs,
+    hasTtsEngine,
+    hasTextEngine,
+    hasSttEngine,
+    isLoading,
+    error
+  } = useBackendHealth(
     selectedProfile?.url || null,
     {
       polling: true,
@@ -134,13 +149,23 @@ export default function StartPage() {
     // Use version if available, otherwise default to "unknown"
     setBackendConnection(selectedProfile, version || 'unknown')
 
+    // Update engine availability for feature-gating
+    // Note: hasAudioEngine comes from engine.status SSE events, not health check
+    updateEngineAvailability({
+      hasTtsEngine,
+      hasTextEngine,
+      hasSttEngine,
+      hasAudioEngine: false,  // Will be updated via engine.status SSE
+    })
+
     logger.group(
       '✅ Backend Connected',
       'Connection established in store',
       {
         'Profile': selectedProfile.name,
         'Version': version || 'unknown',
-        'Store Updated': true
+        'Store Updated': true,
+        'TTS Engines': ttsEngines.length
       },
       '#4CAF50' // Green for success
     )
@@ -154,89 +179,81 @@ export default function StartPage() {
         '⚙️ Settings Loaded',
         'Global settings fetched from backend',
         {
-          'Default Engine': settings.tts.defaultTtsEngine || 'Not set',
-          'Default Model': settings.tts.defaultTtsModelName || 'Not set',
-          'Default Speaker': settings.tts.defaultTtsSpeaker || 'Not set',
+          'Default Engine': settings.tts.defaultTtsEngine ?? 'Not set',
           'Source': 'Backend /api/settings'
         },
         '#607D8B' // Gray for settings
       )
 
-      // If no default speaker is set in settings, get it from backend and save to settings
-      if (!settings.tts.defaultTtsSpeaker) {
-        logger.group(
-          '🎤 Speaker Discovery',
-          'No default speaker in settings, fetching from backend',
-          {
-            'Current Speaker': 'None',
-            'Action': 'Query backend for default speaker',
-            'Will Persist': true
-          },
-          '#9C27B0' // Purple for speaker operations
-        )
+      // Validate default engine exists (engines only change on backend restart)
+      if (ttsEngines.length > 0 && settings.tts.defaultTtsEngine) {
+        const engineExists = ttsEngines.includes(settings.tts.defaultTtsEngine)
 
-        try {
-          const defaultSpeaker = await getDefaultSpeaker()
-          if (defaultSpeaker) {
-            logger.group(
-              '🎤 Default Speaker Found',
-              'Speaker retrieved from backend',
-              {
-                'Speaker Name': defaultSpeaker.name,
-                'Speaker ID': defaultSpeaker.id,
-                'Action': 'Saving to settings'
-              },
-              '#9C27B0' // Purple for speaker
-            )
+        if (!engineExists) {
+          const firstEngine = ttsEngines[0]
 
-            // Update settings in backend to persist the default speaker
+          logger.group(
+            '⚠️ Invalid Default Engine',
+            'Default engine not available, auto-fixing',
+            {
+              'Invalid Engine': settings.tts.defaultTtsEngine,
+              'Available Engines': ttsEngines.join(', '),
+              'Auto-Selected': firstEngine,
+              'Action': 'Updating settings + redirecting to Settings'
+            },
+            '#FF9800' // Orange for warning
+          )
+
+          try {
+            // Update settings with first available engine
+            // Use freshly fetched settings to avoid writing stale cached data
             const updatedTtsSettings = {
-              ...settings.tts,
-              defaultTtsSpeaker: defaultSpeaker.name
+              ...settings.tts,  // Use the freshly fetched settings
+              defaultTtsEngine: firstEngine,
+              // Reset model name (will be set to first available model by Settings UI)
+              defaultTtsModelName: ''
             }
             await updateSettings('tts', updatedTtsSettings)
-            // Update local store
             loadSettings({ ...settings, tts: updatedTtsSettings })
 
             logger.group(
-              '✅ Speaker Saved',
-              'Default speaker persisted to backend',
+              '✅ Engine Auto-Fixed',
+              'Default engine updated in database',
               {
-                'Speaker': defaultSpeaker.name,
-                'Updated in Backend': true,
-                'Updated in Store': true
+                'New Engine': firstEngine,
+                'Action': 'Will redirect to Settings tab after navigation'
               },
               '#4CAF50' // Green for success
             )
-          } else {
+
+            // Navigate to main app first, then to settings
+            navigate('/')
+            // Use setTimeout to ensure navigation completes before showing error dialog
+            setTimeout(() => {
+              showError(
+                t('startPage.invalidEngineAlert.title'),
+                `${t('startPage.invalidEngineAlert.engineUnavailable', { oldEngine: settings.tts.defaultTtsEngine })}\n\n` +
+                `${t('startPage.invalidEngineAlert.autoSwitched', { newEngine: firstEngine })}\n\n` +
+                `${t('startPage.invalidEngineAlert.checkSettings')}`
+              )
+              // Navigate to settings view (assuming navigation store method exists)
+              // This will be handled by the settings validation in the next screen
+            }, 500)
+            return // Exit early, don't navigate normally
+          } catch (error) {
             logger.group(
-              '⚠️ No Default Speaker',
-              'Backend has no default speaker configured',
+              '❌ Engine Auto-Fix Failed',
+              'Failed to update settings with valid engine',
               {
-                'Speakers Table': 'No rows with is_default=TRUE',
-                'Action': 'Continuing without default speaker',
-                'User Impact': 'Must select speaker manually'
+                'Error': error instanceof Error ? error.message : String(error),
+                'Action': 'Continuing with invalid engine',
+                'User Impact': 'May see errors in UI'
               },
-              '#FF9800' // Orange for warning
+              '#F44336' // Red for error
             )
           }
-        } catch (error) {
-          logger.group(
-            '❌ Speaker Fetch Failed',
-            'Failed to fetch/save default speaker',
-            {
-              'Error': error instanceof Error ? error.message : String(error),
-              'Action': 'Continuing without default speaker'
-            },
-            '#F44336' // Red for error
-          )
         }
       }
-
-      // IMPORTANT: No longer setting session overrides here!
-      // The appStore uses computed getters (getCurrentTtsEngine(), etc.) that automatically
-      // read from settings.tts.defaultTtsEngine, settings.tts.defaultTtsSpeaker, etc.
-      // Session overrides are only set when user explicitly changes values during session.
     } catch (error) {
       logger.group(
         '❌ Settings Load Failed',
@@ -266,16 +283,18 @@ export default function StartPage() {
   }
 
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        minHeight: '100vh',
-        bgcolor: 'background.default',
-        p: 3,
-      }}
-    >
+    <>
+      <ErrorDialog />
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          minHeight: '100vh',
+          bgcolor: 'background.default',
+          p: 3,
+        }}
+      >
       <Paper
         elevation={3}
         sx={{
@@ -488,13 +507,14 @@ export default function StartPage() {
         }}
       />
     </Box>
+    </>
   )
 }
 
 /**
  * Format a date as relative time (e.g., "2 minutes ago")
  */
-function formatRelativeTime(date: Date, t: any): string {
+function formatRelativeTime(date: Date, t: TFunction): string {
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
   const diffSeconds = Math.floor(diffMs / 1000)

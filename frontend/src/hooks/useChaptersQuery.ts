@@ -11,10 +11,10 @@ import {
   type UseQueryResult,
   type UseMutationResult,
 } from '@tanstack/react-query'
-import { chapterApi, type ApiChapter } from '../services/api'
-import { type Chapter, type Segment } from '../types'
-import { queryKeys } from '../services/queryKeys'
-import { useSSEConnection } from '../contexts/SSEContext'
+import { chapterApi, type ApiChapter } from '@services/api'
+import { type Chapter, type Segment, type ApiSegment, type ApiProject, type Project } from '@types'
+import { queryKeys } from '@services/queryKeys'
+import { useSSEConnection } from '@contexts/SSEContext'
 
 // Transform API chapter to app chapter
 const transformChapter = (apiChapter: ApiChapter): Chapter => {
@@ -22,7 +22,7 @@ const transformChapter = (apiChapter: ApiChapter): Chapter => {
     ...apiChapter,
     createdAt: new Date(apiChapter.createdAt),
     updatedAt: new Date(apiChapter.updatedAt),
-    segments: (apiChapter.segments || []).map((segment: any) => ({
+    segments: (apiChapter.segments || []).map((segment: ApiSegment) => ({
       ...segment,
       audioPath: segment.audioPath || undefined,
       createdAt: new Date(segment.createdAt),
@@ -91,7 +91,7 @@ export function useChapter(
 export function useCreateChapter(): UseMutationResult<
   Chapter,
   Error,
-  { projectId: string; title: string; orderIndex: number; defaultTtsEngine: string; defaultTtsModelName: string }
+  { projectId: string; title: string; orderIndex: number }
 > {
   const queryClient = useQueryClient()
 
@@ -100,8 +100,6 @@ export function useCreateChapter(): UseMutationResult<
       projectId: string
       title: string
       orderIndex: number
-      defaultTtsEngine: string
-      defaultTtsModelName: string
     }) => {
       const created = await chapterApi.create(data)
       return transformChapter(created)
@@ -161,7 +159,7 @@ export function useUpdateChapter(): UseMutationResult<
         queryKeys.chapters.detail(id)
       )
 
-      // NOTE: No optimistic update here since we use backend response in onSuccess
+      // No optimistic update here since we use backend response in onSuccess
       // This prevents controlled input fields from being overwritten while user types
 
       return { previousChapter }
@@ -186,11 +184,11 @@ export function useUpdateChapter(): UseMutationResult<
       // This ensures nested chapter data stays in sync without full refetch
       queryClient.setQueryData(
         queryKeys.projects.detail(updatedChapter.projectId),
-        (oldProject: any) => {
+        (oldProject: Project | undefined) => {
           if (!oldProject) return oldProject
           return {
             ...oldProject,
-            chapters: oldProject.chapters.map((ch: any) =>
+            chapters: oldProject.chapters.map((ch: Chapter) =>
               ch.id === variables.id ? updatedChapter : ch
             ),
           }
@@ -199,13 +197,13 @@ export function useUpdateChapter(): UseMutationResult<
 
       queryClient.setQueryData(
         queryKeys.projects.lists(),
-        (oldProjects: any) => {
+        (oldProjects: Project[] | undefined) => {
           if (!oldProjects) return oldProjects
-          return oldProjects.map((project: any) => {
+          return oldProjects.map((project: Project) => {
             if (project.id !== updatedChapter.projectId) return project
             return {
               ...project,
-              chapters: project.chapters.map((ch: any) =>
+              chapters: project.chapters.map((ch: Chapter) =>
                 ch.id === variables.id ? updatedChapter : ch
               ),
             }
@@ -259,7 +257,7 @@ export function useDeleteChapter(): UseMutationResult<
 }
 
 /**
- * Segment text into natural segments
+ * Segment text into natural segments (always uses sentence-based segmentation)
  *
  * @example
  * ```tsx
@@ -269,9 +267,9 @@ export function useDeleteChapter(): UseMutationResult<
  *   chapterId: 'chapter-123',
  *   text: 'Long text to segment...',
  *   options: {
- *     method: 'sentences',
  *     language: 'de',
- *     auto_create: true
+ *     ttsEngine: 'xtts',
+ *     ttsModelName: 'v2.0.2'
  *   }
  * })
  * ```
@@ -280,8 +278,7 @@ export function useSegmentText(): UseMutationResult<
   {
     success: boolean
     message: string
-    segments: Segment[] // Full segment objects when autoCreate=true
-    preview?: Array<{ text: string; orderIndex: number }> // Preview when autoCreate=false
+    segments: Segment[]
     segmentCount: number
     ttsEngine: string
     constraints: Record<string, number>
@@ -291,14 +288,13 @@ export function useSegmentText(): UseMutationResult<
     chapterId: string
     text: string
     options?: {
-      method?: 'sentences' | 'paragraphs' | 'smart' | 'length'
-      language?: string
+      language?: string  // Text language for segmentation
       ttsEngine?: string
       ttsModelName?: string
+      ttsLanguage?: string  // TTS language (optional)
       ttsSpeakerName?: string
       minLength?: number
       maxLength?: number
-      autoCreate?: boolean
     }
   }
 > {
@@ -313,14 +309,12 @@ export function useSegmentText(): UseMutationResult<
       chapterId: string
       text: string
       options?: {
-        method?: 'sentences' | 'paragraphs' | 'smart' | 'length'
         language?: string
         engine?: string
         modelName?: string
         speakerName?: string
         minLength?: number
         maxLength?: number
-        autoCreate?: boolean
       }
     }) => {
       return await chapterApi.segmentText(chapterId, {
@@ -329,16 +323,17 @@ export function useSegmentText(): UseMutationResult<
       })
     },
     onSuccess: (response, variables) => {
-      // If autoCreate was true, write segments directly to cache (no refetch needed)
-      if (variables.options?.autoCreate && response.segments) {
-        // Update chapter cache with new segments
+      // Write segments directly to cache (no refetch needed)
+      if (response.segments) {
+        // Update chapter cache by appending new segments to existing ones
         queryClient.setQueryData(
           queryKeys.chapters.detail(variables.chapterId),
-          (oldChapter: any) => {
+          (oldChapter: Chapter | undefined) => {
             if (!oldChapter) return oldChapter
             return {
               ...oldChapter,
-              segments: response.segments,
+              // Append new segments to end of existing segments
+              segments: [...(oldChapter.segments || []), ...response.segments],
             }
           }
         )
@@ -346,11 +341,11 @@ export function useSegmentText(): UseMutationResult<
         // Update projects list cache with new segments
         queryClient.setQueryData(
           queryKeys.projects.lists(),
-          (oldProjects: any) => {
+          (oldProjects: Project[] | undefined) => {
             if (!oldProjects) return oldProjects
-            return oldProjects.map((project: any) => ({
+            return oldProjects.map((project: Project) => ({
               ...project,
-              chapters: project.chapters.map((chapter: any) => {
+              chapters: project.chapters.map((chapter: Chapter) => {
                 if (chapter.id !== variables.chapterId) return chapter
                 return {
                   ...chapter,

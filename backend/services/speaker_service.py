@@ -7,7 +7,7 @@ Speakers are stored in the database with their samples in the filesystem.
 import json
 import uuid
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from loguru import logger
@@ -200,7 +200,7 @@ class SpeakerService:
             Created speaker
         """
         speaker_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         cursor = self.db.cursor()
 
@@ -232,16 +232,11 @@ class SpeakerService:
         speaker_dir.mkdir(parents=True, exist_ok=True)
 
         if is_first_speaker:
-            # Also update settings.tts.defaultSpeaker when creating the first speaker
+            # Also update settings.tts.defaultTtsSpeaker when creating the first speaker
             from services.settings_service import SettingsService
             settings_service = SettingsService(self.db)
-            tts_settings = settings_service.get_setting('tts')
-            if tts_settings:
-                tts_settings['defaultSpeaker'] = data['name']
-                settings_service.update_setting('tts', tts_settings)
-                logger.info(f"Created FIRST speaker (set as default): {data['name']} ({speaker_id}), updated settings.tts.defaultSpeaker")
-            else:
-                logger.info(f"Created FIRST speaker (set as default): {data['name']} ({speaker_id})")
+            settings_service.update_nested_setting('tts.defaultTtsSpeaker', data['name'])
+            logger.info(f"Created FIRST speaker (set as default): {data['name']} ({speaker_id}), updated settings.tts.defaultTtsSpeaker")
         else:
             logger.info(f"Created speaker: {data['name']} ({speaker_id})")
 
@@ -278,7 +273,7 @@ class SpeakerService:
 
         # Add updated_at
         fields.append("updated_at = ?")
-        values.append(datetime.utcnow().isoformat())
+        values.append(datetime.now(timezone.utc).isoformat())
 
         # Add speaker_id for WHERE clause
         values.append(speaker_id)
@@ -381,7 +376,7 @@ class SpeakerService:
             duration,
             sample_rate,
             transcript,
-            datetime.utcnow().isoformat()
+            datetime.now(timezone.utc).isoformat()
         ))
 
         self.db.commit()
@@ -395,7 +390,7 @@ class SpeakerService:
                 UPDATE speakers
                 SET is_active = TRUE, updated_at = ?
                 WHERE id = ?
-            """, (datetime.utcnow().isoformat(), speaker_id))
+            """, (datetime.now(timezone.utc).isoformat(), speaker_id))
             self.db.commit()
             logger.info(f"Speaker {speaker_id} activated (first sample added)")
 
@@ -409,7 +404,7 @@ class SpeakerService:
             "duration": duration,
             "sampleRate": sample_rate,  # camelCase for frontend
             "transcript": transcript,
-            "createdAt": datetime.utcnow().isoformat()  # camelCase for frontend
+            "createdAt": datetime.now(timezone.utc).isoformat()  # camelCase for frontend
         }
 
     def delete_sample(self, speaker_id: str, sample_id: str) -> Dict[str, str]:
@@ -454,7 +449,7 @@ class SpeakerService:
                 UPDATE speakers
                 SET is_active = FALSE, updated_at = ?
                 WHERE id = ?
-            """, (datetime.utcnow().isoformat(), speaker_id))
+            """, (datetime.now(timezone.utc).isoformat(), speaker_id))
             self.db.commit()
             logger.info(f"Speaker {speaker_id} deactivated (no samples remaining)")
 
@@ -477,7 +472,7 @@ class SpeakerService:
             Updated speaker
         """
         cursor = self.db.cursor()
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         # Unset all other defaults
         cursor.execute("UPDATE speakers SET is_default = FALSE")

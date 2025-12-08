@@ -12,8 +12,10 @@
  */
 
 import { createContext, useContext, ReactNode, useMemo, useCallback } from 'react'
-import { useSSE } from '../hooks/useServerSentEvents'
-import { logger } from '@/utils/logger'
+import { useSSE } from '@hooks/useServerSentEvents'
+import { logger } from '@utils/logger'
+import { eventLogStore } from '@services/eventLog'
+import { mapSSEEventToLogEvent } from '@utils/sseEventMapper'
 
 /**
  * SSE Connection Status and Metadata
@@ -76,31 +78,30 @@ export function SSEProvider({ children, enabled = true }: SSEProviderProps) {
   const subscribers = useMemo<Set<(event: MessageEvent) => void>>(() => new Set(), [])
 
   // Memoize channels array to prevent re-renders
-  const channels = useMemo(() => ['jobs', 'health', 'speakers', 'settings'], [])
+  const channels = useMemo(() => [
+    'jobs',          // TTS/STT job updates
+    'health',        // System health updates (30s interval)
+    'engines',       // Engine status updates (15s interval, countdown timers)
+    'speakers',      // Speaker management
+    'settings',      // Global settings
+    'export',        // Export job updates
+    'import',        // Import job updates
+    'projects',      // Project CRUD operations
+    'pronunciation', // Pronunciation rule updates
+    'quality',       // Quality analysis job updates
+  ], [])
 
   // Stabilize onEvent callback to prevent reconnections
   // CRITICAL: Without useCallback, this function is recreated on every render,
   // causing useSSE's connect() to be recreated, triggering reconnection loops
   const onEvent = useCallback((event: MessageEvent) => {
-    // Parse and log SSE events
+    // Event Log Integration
+    // Add event to Activity Log
     try {
-      const data = JSON.parse(event.data)
-      const eventType = data.event || event.type || 'unknown'
-
-      // Use logger.group() - automatically gated by import.meta.env.DEV
-      logger.group(
-        '📡 SSE Event',
-        eventType,
-        {
-          'Event Type': eventType,
-          'Data': data,
-          'Channel': data._channel || 'unknown',
-          'Timestamp': data._timestamp || 'N/A'
-        },
-        '#2196F3'  // Blue badge color
-      )
+      const logEvent = mapSSEEventToLogEvent(event)
+      eventLogStore.getState().addEvent(logEvent)
     } catch (error) {
-      logger.error('[SSE] Failed to parse event data:', error)
+      logger.error('[SSE] Failed to log event to Activity Log:', error)
     }
 
     // Broadcast event to all subscribers

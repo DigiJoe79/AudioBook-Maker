@@ -1,5 +1,8 @@
 // Core data types for the audiobook maker
 
+// Export generic quality types
+export * from './quality'
+
 export interface Project {
   id: string
   title: string
@@ -15,8 +18,6 @@ export interface Chapter {
   projectId: string
   title: string
   orderIndex: number
-  defaultTtsEngine: string
-  defaultTtsModelName: string
   segments: Segment[]
   createdAt: Date
   updatedAt: Date
@@ -39,6 +40,7 @@ export interface Segment {
   createdAt: Date
   updatedAt: Date
   status: 'pending' | 'queued' | 'processing' | 'completed' | 'failed'
+  isFrozen: boolean // Frozen segments are protected from regeneration and STT analysis
 }
 
 // Settings types
@@ -51,8 +53,8 @@ export interface Speaker {
   tags: string[];
   isActive: boolean;
   isDefault: boolean;
-  createdAt: string;
-  updatedAt: string;
+  createdAt: Date;
+  updatedAt: Date;
   samples: SpeakerSample[];
 }
 
@@ -64,12 +66,12 @@ export interface SpeakerSample {
   duration?: number;
   sampleRate?: number;
   transcript?: string;
-  createdAt: string;
+  createdAt: Date;
 }
 
 export interface EngineParameterSchema {
   type: 'float' | 'int' | 'string' | 'boolean' | 'select';
-  default: any;
+  default: string | number | boolean;
   min?: number;
   max?: number;
   step?: number;
@@ -99,8 +101,11 @@ export interface TTSEngine {
   /** Human-readable display name */
   displayName: string
 
-  /** List of supported ISO language codes */
+  /** List of supported ISO language codes (filtered by settings) */
   supportedLanguages: string[]
+
+  /** All supported ISO language codes (unfiltered, for Settings UI) */
+  allSupportedLanguages?: string[]
 
   /** Engine-specific generation constraints */
   constraints: {
@@ -131,6 +136,18 @@ export interface TTSEngine {
 
   /** Whether the model is currently loaded in memory */
   modelLoaded: boolean
+
+  /** Whether engine is enabled in settings */
+  isEnabled: boolean
+
+  /** Whether engine server is currently running */
+  isRunning: boolean
+
+  /** HTTP port if engine is running */
+  port?: number
+
+  /** Device being used (cpu/cuda) */
+  device: 'cpu' | 'cuda'
 }
 
 /**
@@ -214,17 +231,17 @@ export interface TTSJob {
   retryCount: number
 
   // Timestamps
-  /** Job creation timestamp (ISO 8601) */
-  createdAt: string
+  /** Job creation timestamp */
+  createdAt: Date
 
-  /** Job start timestamp (ISO 8601) */
-  startedAt?: string | null
+  /** Job start timestamp */
+  startedAt: Date | null
 
-  /** Job completion timestamp (ISO 8601) */
-  completedAt?: string | null
+  /** Job completion timestamp */
+  completedAt: Date | null
 
-  /** Last update timestamp (ISO 8601) */
-  updatedAt: string
+  /** Last update timestamp */
+  updatedAt: Date
 }
 
 /**
@@ -251,3 +268,203 @@ export interface CommandItem {
   icon: string
   description: string
 }
+
+// ============================================================================
+// Pronunciation Rules Types
+// ============================================================================
+
+export interface PronunciationRule {
+  id: string
+  pattern: string
+  replacement: string
+  isRegex: boolean
+  scope: 'project_engine' | 'engine'
+  projectId?: string
+  engineName: string
+  language: string
+  isActive: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+export interface PronunciationRuleCreate {
+  pattern: string
+  replacement: string
+  isRegex?: boolean
+  scope: 'project_engine' | 'engine'
+  projectId?: string
+  engineName: string
+  language: string
+  isActive?: boolean
+}
+
+export interface PronunciationRuleUpdate {
+  pattern?: string
+  replacement?: string
+  isRegex?: boolean
+  scope?: 'project_engine' | 'engine'
+  projectId?: string
+  engineName?: string
+  language?: string
+  isActive?: boolean
+}
+
+export interface PronunciationTestRequest {
+  text: string
+  rules: Array<{
+    pattern: string
+    replacement: string
+    isRegex?: boolean
+  }>
+  maxLength?: number
+}
+
+export interface PronunciationTestResponse {
+  originalText: string
+  transformedText: string
+  rulesApplied: string[]
+  wouldExceedLimit: boolean
+  chunksRequired: number
+}
+
+export interface PronunciationConflict {
+  rule1: {
+    id: string
+    pattern: string
+    scope: string
+  }
+  rule2: {
+    id: string
+    pattern: string
+    scope: string
+  }
+  reason: string
+}
+
+export interface PronunciationBulkOperation {
+  ruleIds: string[]
+  action: 'move' | 'toggle' | 'delete'
+  targetScope?: 'project_engine' | 'engine' | 'global'
+  isActive?: boolean
+}
+
+// Import QualityStatus and QualityEngineResult from quality.ts (re-exported above)
+import type { QualityStatus, QualityEngineResult } from './quality'
+
+// Extended Segment type with quality indicators
+export interface SegmentWithQuality extends Segment {
+  qualityAnalyzed?: boolean
+  qualityScore?: number
+  qualityStatus?: QualityStatus
+  engineResults?: QualityEngineResult[]
+}
+
+// ============================================================================
+// Audio Playback Types (Chapter Waveform Player)
+// ============================================================================
+
+/**
+ * Segment boundary for chapter waveform visualization
+ * Represents time ranges for each segment in concatenated audio
+ */
+export interface SegmentBoundary {
+  segmentId: string
+  segmentType: 'standard' | 'divider'
+  startTime: number // seconds
+  endTime: number // seconds
+  duration: number
+  audioPath?: string
+}
+
+/**
+ * Enhanced segment boundary for MSE player
+ * Extends SegmentBoundary with loading and pause state
+ */
+export interface EnhancedSegmentBoundary extends SegmentBoundary {
+  isPause: boolean          // Is this a pause segment?
+  isAutomatic?: boolean     // Auto-pause (pauseBetweenSegments)?
+  isLoaded: boolean         // Is audio in MSE buffer?
+  isPending: boolean        // Waiting for previous segments?
+}
+
+/**
+ * MSE stream state for MediaSource player
+ */
+export interface MediaSourceStreamState {
+  isReady: boolean
+  loadedUntilIndex: number
+  pendingSegments: Set<number>
+  totalDuration: number
+  error: Error | string | null
+  isLoading: boolean
+}
+
+/**
+ * Waveform peaks for a segment
+ */
+export interface SegmentPeaks {
+  segmentId: string
+  peaks: Float32Array
+  duration: number
+  sampleRate: number
+}
+
+/**
+ * Playback window for dynamic segment loading
+ * Contains segment range currently loaded in player
+ */
+export interface PlaybackWindow {
+  startSegmentIndex: number
+  endSegmentIndex: number
+  segments: Segment[]
+  totalDuration: number
+}
+
+// Re-export backend types for convenience
+export type { BackendProfile, ApiBackendProfile, SessionState, BackendHealthResponse } from './backend'
+
+// Re-export navigation types for convenience
+export type { ViewType, NavigationState, NavigationShortcut } from './navigation'
+export { NAVIGATION_SHORTCUTS } from './navigation'
+
+// Re-export import types for convenience
+export type {
+  MappingRules,
+  ImportWarning,
+  ChapterPreview,
+  ImportStats,
+  ImportPreviewResponse,
+  ImportExecuteResponse,
+  ImportConfig,
+} from './import'
+export { DEFAULT_MAPPING_RULES } from './import'
+
+// Re-export engine types for convenience
+export type {
+  EngineType,
+  EngineStatus,
+  EngineStatusInfo,
+  AllEnginesStatus,
+  EngineAvailability,
+} from './engines'
+
+// Re-export API response types for convenience
+export type {
+  ApiSegment,
+  ApiChapter,
+  ApiChapterWithSegments,
+  ApiProject,
+  ApiProjectWithChapters,
+  ApiListResponse,
+  ApiMessageResponse,
+  ApiTTSJob,
+  ApiTTSJobsListResponse,
+  ApiQualityJob,
+  ApiQualityJobsListResponse,
+  ApiSpeaker,
+  ApiSpeakerSample,
+  ApiPronunciationRule,
+} from './api'
+
+// Re-export transform functions for convenience
+export { transformBackendProfile } from './api'

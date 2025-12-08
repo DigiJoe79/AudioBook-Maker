@@ -1,26 +1,43 @@
 """
 Events API Router - Server-Sent Events (SSE) endpoint
 
-Provides real-time event streaming for TTS jobs, segments, chapters, and system health.
+Provides real-time event streaming for TTS jobs, segments, chapters, engines, and system health.
 
 SSE Architecture:
 - Long-lived HTTP connection using EventSourceResponse
-- Client subscribes to specific channels (jobs, chapter:{id}, export, health)
+- Client subscribes to specific channels (jobs, projects, export, health, engines, etc.)
 - Server pushes events as they occur (no polling required)
 - Automatic keepalive to prevent connection timeout
 - Graceful cleanup on client disconnect
 
+Available Channels:
+- jobs: TTS job updates, segment updates, chapter content changes
+- projects: Project and chapter CRUD events
+- export: Export job updates
+- import: Import job updates
+- health: System health updates (30s interval)
+- engines: Engine status updates (15s interval)
+- speakers: Speaker management events
+- settings: Settings updates
+- pronunciation: Pronunciation rule events
+- quality: Quality analysis job events
+
 Usage:
-    GET /api/events/subscribe?channels=jobs,chapter:ch-1,health
+    GET /api/events/subscribe?channels=jobs,health,engines
 
 Example Client (JavaScript):
     const eventSource = new EventSource(
-        'http://localhost:8765/api/events/subscribe?channels=jobs,health'
+        'http://localhost:8765/api/events/subscribe?channels=jobs,health,engines'
     );
 
     eventSource.addEventListener('job.progress', (event) => {
         const data = JSON.parse(event.data);
         console.log('Job progress:', data.progress);
+    });
+
+    eventSource.addEventListener('engine.status', (event) => {
+        const data = JSON.parse(event.data);
+        console.log('Engine status:', data.engines);
     });
 """
 
@@ -38,43 +55,43 @@ async def subscribe_to_events(
     request: Request,
     channels: Optional[str] = Query(
         None,
-        description="Comma-separated list of channels to subscribe to (e.g., 'jobs,chapter:ch-1,health')"
+        description="Comma-separated list of channels to subscribe to (e.g., 'jobs,health,engines')"
     )
 ):
     """
     Server-Sent Events endpoint for real-time updates.
 
     **Channels:**
-    - `jobs` - Global job updates (all TTS jobs)
-    - `chapter:{id}` - Chapter-specific updates (e.g., "chapter:ch-1")
+    - `jobs` - TTS job updates, segment updates, chapter content changes
+    - `projects` - Project and chapter CRUD events
     - `export` - Export job updates
-    - `health` - System health updates
+    - `import` - Import job updates
+    - `health` - System health updates (30s interval)
+    - `engines` - Engine status updates (15s interval, countdown timers)
+    - `speakers` - Speaker management events
+    - `settings` - Settings updates
+    - `pronunciation` - Pronunciation rule events
+    - `quality` - Quality analysis job events
 
-    **Default:** Subscribe to `jobs` and `health` channels if not specified.
+    **Default:** Subscribe to `jobs`, `health`, and `engines` channels if not specified.
 
-    **Event Types:**
-    - `connected` - Initial connection confirmation
-    - `job.created` - New TTS job created
-    - `job.started` - Job processing started
-    - `job.progress` - Job progress update
-    - `job.completed` - Job successfully completed
-    - `job.failed` - Job failed with error
-    - `job.cancelled` - Job cancelled by user
-    - `job.resumed` - Cancelled job resumed
-    - `segment.started` - Segment TTS generation started
-    - `segment.completed` - Segment TTS completed
-    - `segment.failed` - Segment TTS failed
-    - `segment.updated` - General segment update
-    - `chapter.updated` - Chapter metadata updated
-    - `export.started` - Audio export started
-    - `export.progress` - Export progress update
-    - `export.completed` - Export completed
-    - `export.failed` - Export failed
-    - `health.update` - System health status update
+    **Event Types (jobs channel):**
+    - `job.created/started/progress/completed/failed/cancelled`
+    - `segment.started/completed/failed/updated/frozen/unfrozen`
+    - `chapter.updated` - Chapter content changed (segment deletion/reorder)
+
+    **Event Types (projects channel):**
+    - `project.created/updated/deleted`
+    - `chapter.created/deleted/reordered/updated` - Chapter CRUD
+
+    **Event Types (engines channel):**
+    - `engine.status` - Periodic status (every 15s, includes countdown timers)
+    - `engine.starting/started/stopping/stopped`
+    - `engine.enabled/disabled/error`
 
     **Example:**
     ```
-    GET /api/events/subscribe?channels=jobs,chapter:ch-1,health
+    GET /api/events/subscribe?channels=jobs,health,engines
     ```
 
     **Response Format:**
@@ -107,7 +124,7 @@ async def subscribe_to_events(
         channel_list = [c.strip() for c in channels.split(",") if c.strip()]
     else:
         # Default channels if not specified
-        channel_list = ["jobs", "health"]
+        channel_list = ["jobs", "health", "engines"]
 
     # Return SSE response with event stream
     return EventSourceResponse(

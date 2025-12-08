@@ -41,7 +41,7 @@ class Logger {
   /**
    * Format log message with timestamp
    */
-  private formatMessage(level: LogLevel, ...args: any[]): any[] {
+  private formatMessage(level: LogLevel, ...args: unknown[]): unknown[] {
     const timestamp = this.getTimestamp()
     const levelUpper = level.toUpperCase().padEnd(5, ' ')
     return [`[${timestamp}] ${levelUpper}`, ...args]
@@ -62,7 +62,7 @@ class Logger {
    * Debug level logging (development only)
    * Use for detailed debugging information
    */
-  debug(...args: any[]): void {
+  debug(...args: unknown[]): void {
     if (this.shouldLog('debug')) {
       console.log(...this.formatMessage('debug', ...args))
     }
@@ -72,7 +72,7 @@ class Logger {
    * Info level logging (development only)
    * Use for general informational messages
    */
-  info(...args: any[]): void {
+  info(...args: unknown[]): void {
     if (this.shouldLog('info')) {
       console.log(...this.formatMessage('info', ...args))
     }
@@ -82,7 +82,7 @@ class Logger {
    * Warning level logging (all environments)
    * Use for potentially problematic situations
    */
-  warn(...args: any[]): void {
+  warn(...args: unknown[]): void {
     if (this.shouldLog('warn')) {
       console.warn(...this.formatMessage('warn', ...args))
     }
@@ -92,7 +92,7 @@ class Logger {
    * Error level logging (all environments)
    * Use for error conditions
    */
-  error(...args: any[]): void {
+  error(...args: unknown[]): void {
     if (this.shouldLog('error')) {
       console.error(...this.formatMessage('error', ...args))
     }
@@ -158,7 +158,7 @@ class Logger {
    * Sanitize sensitive data from objects before logging
    * Removes tokens, passwords, sensitive URLs
    */
-  sanitize(data: any): any {
+  sanitize(data: unknown): unknown {
     if (typeof data === 'string') {
       // Remove tokens from URLs
       return data.replace(/([?&]token=)[^&]+/gi, '$1***')
@@ -170,13 +170,13 @@ class Logger {
     }
 
     if (data && typeof data === 'object') {
-      const sanitized: any = {}
+      const sanitized: Record<string, unknown> = {}
       for (const key in data) {
         // Skip sensitive fields
         if (['token', 'password', 'secret', 'apiKey'].includes(key)) {
           sanitized[key] = '***'
         } else {
-          sanitized[key] = this.sanitize(data[key])
+          sanitized[key] = this.sanitize((data as Record<string, unknown>)[key])
         }
       }
       return sanitized

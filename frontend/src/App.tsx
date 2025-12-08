@@ -7,8 +7,8 @@
  */
 
 import { useEffect, useRef, useMemo, useState } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { ThemeProvider, createTheme, CssBaseline } from '@mui/material'
+import { BrowserRouter, Routes, Route } from 'react-router'
+import { ThemeProvider, CssBaseline, GlobalStyles } from '@mui/material'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow, type Theme } from '@tauri-apps/api/window'
 import { useTranslation } from 'react-i18next'
@@ -19,6 +19,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { useSettings } from './hooks/useSettings'
 import { useUISettingsStore } from './store/uiSettingsStore'
 import { logger } from './utils/logger'
+import { createExtendedTheme } from './theme'
 
 function App() {
   // Window reference for theme management
@@ -133,37 +134,23 @@ function App() {
     return resultingMode
   }, [uiSettings.theme, prefersDarkMode])
 
-  // Create theme based on mode
+  // Create extended theme based on mode
   const theme = useMemo(() => {
     logger.group(
       '🎨 Theme Creation',
-      'Building Material-UI theme',
+      'Building Extended Material-UI theme with View Pattern System',
       {
         'Mode': themeMode,
         'Primary Color': '#1976d2',
-        'Secondary Color': '#dc004e',
-        'Dark Background': themeMode === 'dark' ? '#121212' : 'default'
+        'View Pattern Integration': 'Enabled',
+        'Form Control Overrides': 'Applied',
+        'Dark BG': themeMode === 'dark' ? '#1a1a1a' : '#fafafa',
+        'Paper BG': themeMode === 'dark' ? '#242424' : '#ffffff'
       },
       '#9C27B0' // Purple for theme creation
     )
 
-    return createTheme({
-      palette: {
-        mode: themeMode,
-        primary: {
-          main: '#1976d2',
-        },
-        secondary: {
-          main: '#dc004e',
-        },
-        ...(themeMode === 'dark' && {
-          background: {
-            default: '#121212',
-            paper: '#1e1e1e',
-          },
-        }),
-      },
-    })
+    return createExtendedTheme(themeMode)
   }, [themeMode])
 
   // Sync i18n language with UI settings
@@ -236,6 +223,24 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
+      <GlobalStyles
+        styles={{
+          '*::-webkit-scrollbar': {
+            width: '12px',
+            height: '12px',
+          },
+          '*::-webkit-scrollbar-track': {
+            background: theme.palette.mode === 'dark' ? '#1e1e1e' : '#f1f1f1',
+          },
+          '*::-webkit-scrollbar-thumb': {
+            background: theme.palette.mode === 'dark' ? '#555' : '#888',
+            borderRadius: '6px',
+          },
+          '*::-webkit-scrollbar-thumb:hover': {
+            background: theme.palette.mode === 'dark' ? '#777' : '#555',
+          },
+        }}
+      />
       <BrowserRouter>
         <Routes>
           {/* Start Page - Backend Connection */}

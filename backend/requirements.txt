@@ -1,8 +1,8 @@
 # ============================================================================
-# Backend Core Dependencies (XTTS-free)
+# Backend Core Dependencies
 # ============================================================================
-# After Engine Server Architecture migration, TTS engines run in separate
-# VENVs. The core backend no longer needs XTTS/PyTorch dependencies.
+# Last Updated: 2025-12-05
+# Python: 3.10+
 #
 # Setup:
 #   Windows: setup.bat
@@ -10,37 +10,31 @@
 # ============================================================================
 
 # Web Framework
-fastapi==0.109.2
-uvicorn[standard]==0.27.1
-python-multipart==0.0.9
-sse-starlette==1.8.2
-
-# Text Processing
-spacy==3.8.7  # Latest stable version with Pydantic 2.x support
-# Note: Language models installed via setup script:
-#   python -m spacy download de_core_news_sm
-#   python -m spacy download en_core_web_sm
+# FastAPI 0.115+ for Pydantic 2.10+ compatibility
+# uvicorn 0.34+ for HTTP/2 and performance improvements
+fastapi>=0.123.0
+uvicorn[standard]>=0.38.0
+python-multipart>=0.0.12
+sse-starlette>=2.0.0,<4.0.0  # 2.x API compatible, 3.x says "no breaking changes"
 
 # Audio Processing (for export/merging)
-pydub==0.25.1
-ffmpeg-python==0.2.0
+# Note: pydub (2021) and ffmpeg-python (2019) are unmaintained but stable
+pydub>=0.25.1
+ffmpeg-python>=0.2.0
+
+# Data Validation
+pydantic>=2.10.0,<3.0.0
+
+# HTTP Clients
+httpx>=0.27.0,<1.0.0  # Engine server communication
+aiohttp>=3.10.0,<4.0.0  # Async HTTP client
 
 # Utilities
-loguru==0.7.2
-pydantic==2.10.6  # Latest stable, compatible with spaCy 3.8.7
-httpx==0.26.0  # HTTP client for engine server communication
-pyyaml==6.0.1  # YAML parsing for engine.yaml files
+loguru>=0.7.0,<1.0.0
+pyyaml>=6.0.1
 
-# Database
-# SQLite is built-in to Python
+# Testing - see requirements-dev.txt for test dependencies
 
-# ============================================================================
-# Removed Dependencies (now in engine-specific VENVs):
-# ============================================================================
-# - torch, torchaudio → engines/xtts/requirements.txt
-# - TTS → engines/xtts/requirements.txt
-# - transformers → engines/xtts/requirements.txt
-#
-# Removed (not used):
-# - faster-whisper, av, soundfile, noisereduce, pedalboard, python-dotenv
-# ============================================================================
+
+
+

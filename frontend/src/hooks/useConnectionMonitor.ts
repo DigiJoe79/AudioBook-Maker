@@ -23,9 +23,9 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useAppStore } from '../store/appStore'
-import { useSSEConnection } from '../contexts/SSEContext'
-import { logger } from '../utils/logger'
+import { useAppStore } from '@store/appStore'
+import { useSSEConnection } from '@contexts/SSEContext'
+import { logger } from '@utils/logger'
 
 interface ConnectionMonitorOptions {
   /** Callback when connection is lost */
@@ -95,9 +95,10 @@ export function useConnectionMonitor(
   const reconnectIntervalRef = useRef<number | null>(null)
   const healthCheckIntervalRef = useRef<number | null>(null)
   const hasNotifiedLostRef = useRef(false)
-  const startHealthCheckLoopRef = useRef<() => void>()
+  const startHealthCheckLoopRef = useRef<(() => void) | undefined>(undefined)
   const lastErrorEventTimeRef = useRef<number>(0)
   const isCheckingConnectionRef = useRef(false)
+  const lastConnectionModeRef = useRef<'sse' | 'polling' | null>(null)
 
   // Check SSE connection status
   const sseConnection = useSSEConnection()
@@ -114,7 +115,6 @@ export function useConnectionMonitor(
 
     // If browser is offline, skip health check
     if (!navigator.onLine) {
-      //logger.debug('[ConnectionMonitor] Browser is offline, skipping health check')
       return false
     }
 
@@ -204,7 +204,7 @@ export function useConnectionMonitor(
     }
 
     // First attempt failed, start interval for remaining attempts
-    reconnectIntervalRef.current = setInterval(async () => {
+    reconnectIntervalRef.current = window.setInterval(async () => {
       const isOnline = await checkBackendHealth()
 
       if (isOnline) {
@@ -280,29 +280,37 @@ export function useConnectionMonitor(
 
     // Don't start polling if SSE is connected (use SSE for health updates)
     if (isSseConnected) {
-      logger.group(
-        '🔌 Connection Mode',
-        'SSE connected, using real-time updates',
-        {
-          'Polling': 'disabled',
-          'Reason': 'SSE active'
-        },
-        '#4CAF50'
-      )
+      // Only log if mode actually changed to prevent duplicate logs during startup
+      if (lastConnectionModeRef.current !== 'sse') {
+        lastConnectionModeRef.current = 'sse'
+        logger.group(
+          '🔌 Connection Mode',
+          'SSE connected, using real-time updates',
+          {
+            'Polling': 'disabled',
+            'Reason': 'SSE active'
+          },
+          '#4CAF50'
+        )
+      }
       return
     }
 
     // SSE not connected, use polling fallback
-    logger.group(
-      '🔌 Connection Mode',
-      'SSE disconnected, starting polling fallback',
-      {
-        'Polling': 'enabled',
-        'Interval': `${healthCheckInterval}ms`
-      },
-      '#FF9800'
-    )
-    healthCheckIntervalRef.current = setInterval(async () => {
+    // Only log if mode actually changed to prevent duplicate logs
+    if (lastConnectionModeRef.current !== 'polling') {
+      lastConnectionModeRef.current = 'polling'
+      logger.group(
+        '🔌 Connection Mode',
+        'SSE disconnected, starting polling fallback',
+        {
+          'Polling': 'enabled',
+          'Interval': `${healthCheckInterval}ms`
+        },
+        '#FF9800'
+      )
+    }
+    healthCheckIntervalRef.current = window.setInterval(async () => {
       const isOnline = await checkBackendHealth()
 
       if (!isOnline && !hasNotifiedLostRef.current) {
@@ -333,8 +341,6 @@ export function useConnectionMonitor(
 
   /**
    * Handle connection error event with deduplication and rate limiting
-   *
-   * Note: No need to skip during generation - health endpoint is non-blocking
    */
   const handleConnectionError = useCallback(async () => {
     if (!currentBackendUrl) return
@@ -344,7 +350,6 @@ export function useConnectionMonitor(
 
     // Prevent concurrent connection checks
     if (isCheckingConnectionRef.current) {
-      //logger.debug('[ConnectionMonitor] Connection check already in progress, skipping')
       return
     }
 
@@ -352,7 +357,6 @@ export function useConnectionMonitor(
     const now = Date.now()
     const timeSinceLastError = now - lastErrorEventTimeRef.current
     if (timeSinceLastError < 2000) {
-      //logger.debug(`[ConnectionMonitor] Ignoring duplicate error event (${timeSinceLastError}ms since last)`)
       return
     }
 
@@ -372,8 +376,6 @@ export function useConnectionMonitor(
         hasNotifiedLostRef.current = true
         onConnectionLost?.()
         startReconnectLoop()
-      } else {
-        //logger.debug('[ConnectionMonitor] Backend still reachable, false alarm')
       }
     } finally {
       isCheckingConnectionRef.current = false
@@ -498,7 +500,6 @@ export function useConnectionMonitor(
    */
   useEffect(() => {
     if (currentBackendUrl) {
-      //logger.debug('[ConnectionMonitor] Initializing health check on mount')
       startHealthCheckLoopRef.current?.()
     }
 

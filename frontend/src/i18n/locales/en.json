@@ -1,18 +1,16 @@
 {
   "app": {
-    "title": "Audiobook Maker",
-    "projectsTitle": "Projects",
-    "chaptersTitle": "Chapters",
-    "segmentsTitle": "Segments"
+    "projectsTitle": "Projects"
+  },
+  "mainView": {
+    "title": "Main View",
+    "toggleSidebar": "Toggle Project Sidebar (Ctrl+B)"
   },
   "settings": {
     "title": "Settings",
     "tabs": {
       "general": "General",
-      "tts": "Text-to-Speech",
-      "audio": "Audio",
-      "text": "Text",
-      "speakers": "Speakers"
+      "engines": "Engines"
     },
     "general": {
       "theme": "Theme",
@@ -20,35 +18,14 @@
       "themeDark": "Dark",
       "themeSystem": "System",
       "uiLanguage": "Language",
-      "uiLanguageDe": "Deutsch",
-      "uiLanguageEn": "English"
+      "allowedLanguagesDesc": "Select which languages should be available in TTS and segmentation dropdowns",
+      "selectAll": "Select All",
+      "deselectAll": "Deselect All",
+      "interfaceSection": "Interface"
     },
     "tts": {
-      "globalSettings": "Global Settings",
-      "defaultEngine": "Default Engine",
-      "defaultModel": "Default Model",
-      "defaultSpeaker": "Default Speaker",
-      "perEngineSettings": "Per-Engine Settings",
       "defaultLanguage": "Default Language",
-      "engineParameters": "Engine Parameters",
-      "engineParametersComingSoon": "Engine-specific parameters will be shown here in the future",
-      "temperature": "Temperature",
-      "temperatureDesc": "Controls speech output creativity. Higher values = more creative, lower values = more conservative.",
-      "speed": "Speed",
-      "speedDesc": "Speech speed (1.0 = normal, 0.5 = slow, 2.0 = fast)",
-      "lengthPenalty": "Length Penalty",
-      "lengthPenaltyDesc": "Affects the length of generated audio output",
-      "repetitionPenalty": "Repetition Penalty",
-      "repetitionPenaltyDesc": "Prevents repetitions in speech output",
-      "topK": "Top K",
-      "topKDesc": "Number of most likely next tokens",
-      "topP": "Top P",
-      "topPDesc": "Nucleus Sampling - considers most likely tokens",
-      "maxSegmentLength": "Max. Segment Length",
-      "maxSegmentLengthDesc": "Maximum character length per segment (engine limit)",
-      "simulateDelay": "Simulate Delay",
-      "enableTextSplitting": "Enable Text Splitting",
-      "enableTextSplittingDesc": "Automatic splitting of long texts",
+      "activatedLanguages": "Activated Languages",
       "xtts": {
         "temperature": "Temperature",
         "temperatureDesc": "The softmax temperature of the autoregressive model (0.65 default)",
@@ -74,6 +51,18 @@
         "cfgWeightDesc": "CFG weight controlling generation guidance. 0 for language transfer (0.5 default)",
         "seed": "Random Seed",
         "seedDesc": "Random seed for reproducible results. 0 = random generation (0 default)"
+      },
+      "kani": {
+        "temperature": "Temperature",
+        "temperatureDesc": "Controls randomness in generation. Higher values = more varied (0.7 default)",
+        "topP": "Top P (Nucleus Sampling)",
+        "topPDesc": "Controls output diversity. Lower values = more focused output (0.9 default)",
+        "maxTokens": "Max Tokens",
+        "maxTokensDesc": "Maximum number of audio tokens to generate (2000 default)",
+        "repetitionPenalty": "Repetition Penalty",
+        "repetitionPenaltyDesc": "Prevents repetitions. Higher values = fewer repetitions (1.2 default)",
+        "speakerId": "Speaker Voice",
+        "speakerIdDesc": "Choose one of the built-in voices: Bert or Thorsten"
       }
     },
     "audio": {
@@ -83,183 +72,328 @@
       "qualityMedium": "Medium",
       "qualityHigh": "High",
       "pauseBetweenSegments": "Pause Between Audio-Segments (Export)",
-      "pauseBetweenSegmentsMs": "milliseconds",
       "defaultDividerDuration": "Default Duration for Pause Segments",
-      "defaultDividerDurationMs": "milliseconds (for new pauses/dividers)",
-      "volumeNormalization": "Volume Normalization",
-      "volumeNormalizationEnabled": "Enabled",
-      "targetLevel": "Target Level (LUFS)",
-      "truePeak": "True Peak (dBFS)"
+      "exportSettingsSection": "Export Settings",
+      "pausesSection": "Audio Pauses",
+      "speechRatioSection": "Speech Ratio",
+      "sileroVad": {
+        "speechRatioIdealMin": "Ideal Min Speech Ratio",
+        "speechRatioIdealMinDesc": "Minimum ideal speech ratio percentage",
+        "speechRatioIdealMax": "Ideal Max Speech Ratio",
+        "speechRatioIdealMaxDesc": "Maximum ideal speech ratio percentage",
+        "speechRatioWarningMin": "Warning Min Speech Ratio",
+        "speechRatioWarningMinDesc": "Minimum speech ratio before warning",
+        "speechRatioWarningMax": "Warning Max Speech Ratio",
+        "speechRatioWarningMaxDesc": "Maximum speech ratio before warning",
+        "maxSilenceWarning": "Max Silence Warning (ms)",
+        "maxSilenceWarningDesc": "Maximum silence duration before warning",
+        "maxSilenceCritical": "Max Silence Critical (ms)",
+        "maxSilenceCriticalDesc": "Maximum silence duration before critical error",
+        "maxClippingPeak": "Max Clipping Peak (dB)",
+        "maxClippingPeakDesc": "Maximum allowed clipping peak level",
+        "minAverageVolume": "Min Average Volume (dB)",
+        "minAverageVolumeDesc": "Minimum average volume level"
+      }
     },
     "text": {
-      "defaultSegmentationMethod": "Default Segmentation Method",
-      "segmentationSentences": "Sentences",
-      "segmentationParagraphs": "Paragraphs",
-      "segmentationSmart": "Smart (recommended)",
-      "segmentationLength": "Length",
       "preferredMaxSegmentLength": "Preferred Max. Segment Length",
       "preferredMaxSegmentLengthDesc": "Your preferred maximum length (characters). Combined with engine limits.",
-      "autoCreateSegments": "Auto-create Segments",
-      "autoDetectLanguage": "Auto-detect Language"
+      "segmentationSection": "Text Segmentation"
+    },
+    "stt": {
+      "models": {
+        "tiny": "Tiny (39 MB)",
+        "tinyDesc": "~10x realtime, lowest accuracy",
+        "base": "Base (74 MB)",
+        "baseDesc": "~7x realtime, basic accuracy",
+        "small": "Small (244 MB)",
+        "smallDesc": "~4x realtime, good accuracy",
+        "medium": "Medium (769 MB)",
+        "mediumDesc": "~2x realtime, better accuracy",
+        "large": "Large (1550 MB)",
+        "largeDesc": "~1x realtime, best accuracy"
+      }
+    },
+    "quality": {
+      "title": "Quality Analysis Settings",
+      "analyzeSection": "Automatic Analysis",
+      "regenerateSection": "Automatic Regeneration",
+      "autoAnalyzeSegment": "After segment generation",
+      "autoAnalyzeChapter": "After chapter generation",
+      "autoRegenerateDefects": "Regenerate defects",
+      "regenerateMode": {
+        "disabled": "Disabled",
+        "bundled": "Bundled",
+        "individual": "Individual"
+      },
+      "maxRegenerateAttempts": "Max. attempts"
     },
     "actions": {
-      "save": "Save",
-      "cancel": "Cancel",
       "reset": "Reset",
-      "resetToDefaults": "Reset to Defaults",
-      "close": "Close"
+      "resetToDefaults": "Reset to Defaults"
+    },
+    "errors": {
+      "keyNotFound": "Setting not found: {{key}}",
+      "engineNotFound": "Engine not found: {{engine}}",
+      "updateFailed": "Failed to update settings: {{error}}",
+      "getFailed": "Failed to get settings: {{error}}",
+      "resetFailed": "Failed to reset settings: {{error}}",
+      "segmentLimitsFailed": "Failed to get segment limits: {{error}}",
+      "invalidEngineType": "Invalid engine type: {{type}}",
+      "schemaFailed": "Failed to get settings schema: {{error}}"
     },
     "messages": {
-      "saved": "Settings saved",
-      "resetSuccess": "Settings reset",
       "resetConfirm": "Do you really want to reset all settings to default values?",
-      "error": "Error saving settings"
+      "error": "Error saving settings",
+      "saveFailed": "Failed to save settings",
+      "reset": "Settings reset to defaults successfully",
+      "resetFailed": "Failed to reset settings"
     }
   },
   "speakers": {
     "title": "Speaker Management",
     "list": "Speakers",
+    "count": "{{count}} speaker",
+    "noSpeakers": "No speakers",
     "add": "Add Speaker",
     "edit": "Edit Speaker",
     "delete": "Delete Speaker",
-    "details": "Details",
     "name": "Name",
     "description": "Description",
     "gender": "Gender",
     "genderMale": "Male",
     "genderFemale": "Female",
     "genderNeutral": "Neutral",
-    "languages": "Languages",
-    "tags": "Tags",
-    "samples": "Voice Samples",
-    "addSample": "Add Sample",
-    "uploadSample": "Upload Sample",
-    "transcript": "Transcript",
-    "defaultSpeaker": "Default Speaker",
+    "genderNotSpecified": "Not specified",
     "setAsDefault": "Set as Default Speaker",
     "deleteSample": "Delete Sample",
-    "noSamples": "No voice samples available",
     "audioSamples": "Audio Voice Samples",
     "existingSamples": "Existing Samples",
     "newSamples": "New Samples",
-    "inactive": "Inactive",
+    "errors": {
+      "notFound": "Speaker not found: {{speakerId}}",
+      "invalidGender": "Invalid gender. Must be 'male', 'female', or 'neutral'",
+      "invalidFileType": "Only WAV and MP3 files are allowed",
+      "sampleNotFound": "Sample not found: {{sampleId}}",
+      "sampleFileNotFound": "Sample audio file not found",
+      "listFailed": "Failed to load speakers: {{error}}",
+      "createFailed": "Failed to create speaker: {{error}}",
+      "getFailed": "Failed to get speaker: {{error}}",
+      "updateFailed": "Failed to update speaker: {{error}}",
+      "setDefaultFailed": "Failed to set default speaker: {{error}}",
+      "getDefaultFailed": "Failed to get default speaker: {{error}}",
+      "deleteFailed": "Failed to delete speaker: {{error}}",
+      "sampleAddFailed": "Failed to add speaker sample: {{error}}",
+      "sampleGetFailed": "Failed to get speaker sample: {{error}}",
+      "sampleDeleteFailed": "Failed to delete speaker sample: {{error}}"
+    },
+    "empty": {
+      "title": "Let's Create Your First Speaker",
+      "description": "Before you can create audiobooks, you need to add at least one speaker voice with audio samples. Voice samples are used to clone the speaker's voice for text-to-speech generation.",
+      "steps": {
+        "title": "Quick Start Guide:",
+        "step1": {
+          "title": "Create a Speaker Profile",
+          "description": "Give it a name and optionally choose a gender"
+        },
+        "step2": {
+          "title": "Upload Audio Samples",
+          "description": "At least 1 sample (15-30 seconds recommended) in WAV or MP3 format"
+        },
+        "step3": {
+          "title": "Generate Audiobooks",
+          "description": "Your speaker's voice is ready for TTS generation!"
+        }
+      },
+      "cta": "Create Your First Speaker",
+      "helpText": "💡 Tip: Best results come from clear speech without background noise. 15-30 second samples work great for voice cloning."
+    },
+    "search": {
+      "placeholder": "Search speakers by name, gender, or tags...",
+      "noResults": "No speakers match '{{query}}'"
+    },
+    "preview": {
+      "play": "Play Preview",
+      "pause": "Pause Preview",
+      "stop": "Stop Preview",
+      "sample": "Sample",
+      "noSamples": "No audio samples available"
+    },
+    "upload": {
+      "dragOrClick": "Drag & drop audio files here, or click to select",
+      "dropHere": "Drop files here to upload",
+      "selectFiles": "Select Files",
+      "supportedFormats": "Supported formats"
+    },
+    "form": {
+      "requiredInfo": "Required Information",
+      "optionalDetails": "Optional Details",
+      "namePlaceholder": "e.g., Morgan Freeman, Female Narrator",
+      "nameHelper": "Give your speaker a memorable, descriptive name",
+      "descriptionPlaceholder": "Deep voice, calm tone, ideal for documentaries",
+      "descriptionHelper": "Help yourself remember this speaker's characteristics",
+      "genderHelper": "Helps organize speakers. Doesn't affect voice quality.",
+      "samplesTooltip": "Upload 1-3 clear voice samples (15-30s each). We use these to clone the speaker's voice for TTS generation.",
+      "saving": "Saving..."
+    },
     "actions": {
-      "create": "Create",
       "save": "Save",
-      "cancel": "Cancel",
+      "cancel": "Cancel"
+    },
+    "card": {
+      "defaultTooltip": "Default Speaker",
+      "default": "Default",
+      "unknownGender": "Unknown",
+      "sample": "sample",
+      "samples": "samples",
+      "noDescription": "No description",
+      "preview": "Preview",
+      "edit": "Edit",
+      "quality": {
+        "noSamples": "No Samples",
+        "excellent": "Excellent",
+        "good": "Good",
+        "poor": "Poor",
+        "noSamplesTooltip": "No audio samples uploaded yet",
+        "optimalTooltip": "✓ Optimal for voice cloning",
+        "goodTooltip": "Good quality, consider adding more samples",
+        "poorTooltip": "Add more samples for better quality (30s+ recommended)"
+      }
+    },
+    "sample": {
+      "rename": "Rename",
+      "download": "Download",
       "delete": "Delete"
     },
+    "uploadProgress": {
+      "uploading": "Uploading {{current}} of {{total}} files",
+      "status": "{{succeeded}} succeeded • {{failed}} failed",
+      "errorSummary": "{{count}} file failed to upload. Check individual errors below.",
+      "errorSummary_other": "{{count}} files failed to upload. Check individual errors below.",
+      "retry": "Retry",
+      "cancel": "Cancel"
+    },
+    "uploadZone": {
+      "limits": "Max {{maxMB}}MB per file • Up to {{maxFiles}} files",
+      "fileTooLarge": "File \"{{name}}\" is too large (max {{maxMB}}MB)",
+      "unsupportedFormat": "File \"{{name}}\" has unsupported format (accepted: {{formats}})",
+      "tooManyFiles": "Too many files selected (max {{maxFiles}})"
+    },
     "messages": {
-      "created": "Speaker created",
-      "updated": "Speaker updated",
-      "deleted": "Speaker deleted",
-      "sampleUploaded": "Sample uploaded",
-      "sampleDeleted": "Sample deleted",
-      "deleteConfirm": "Do you really want to delete this speaker?",
-      "deleteSampleConfirm": "Do you really want to delete this sample?",
+      "created": "Speaker created successfully",
+      "updated": "Speaker updated successfully",
+      "deleted": "Speaker deleted successfully",
+      "createFailed": "Failed to create speaker",
+      "updateFailed": "Failed to update speaker",
+      "deleteFailed": "Failed to delete speaker",
+      "createdWithSamples": "Speaker created with {{count}} sample",
+      "createdWithSamples_other": "Speaker created with {{count}} samples",
+      "sampleDeleted": "Audio sample deleted successfully",
+      "sampleDeleteFailed": "Failed to delete audio sample",
+      "defaultSet": "Default speaker updated successfully",
+      "defaultSetFailed": "Failed to set default speaker",
+      "deleteConfirm": "Do you really want to delete speaker '{{name}}'?",
+      "deleteSampleConfirm": "Do you really want to delete this audio sample?",
       "minOneSample": "At least one audio sample is required. Speakers without samples will be automatically marked as inactive.",
       "error": "Error in speaker management"
     }
   },
   "common": {
+    "on": "On",
+    "off": "Off",
     "yes": "Yes",
     "no": "No",
     "ok": "OK",
     "cancel": "Cancel",
     "save": "Save",
     "delete": "Delete",
-    "edit": "Edit",
     "close": "Close",
     "loading": "Loading...",
-    "error": "Error",
-    "success": "Success",
-    "warning": "Warning",
     "create": "Create",
     "saving": "Saving...",
-    "title": "Title",
-    "description": "Description"
-  },
-  "audioPlayer": {
-    "selectChapter": "Select a chapter to play audio"
+    "description": "Description",
+    "optional": "Optional"
   },
   "projects": {
-    "title": "Projects",
     "new": "New Project",
     "createTitle": "Create New Project",
     "edit": "Edit Project",
     "delete": "Delete Project",
     "noProjects": "No projects yet. Click the + button to create one.",
     "projectTitle": "Project Title",
-    "projectDescription": "Project Description",
-    "create": {
-      "manual": "Manual",
-      "importMarkdown": "Markdown Import",
-      "ttsSettings": "TTS Settings (for new segments)"
-    },
-    "import": {
-      "selectFile": "Select Markdown File",
-      "helpText": "Import project structure from Markdown file (max 10 MB)",
-      "importing": "Importing...",
-      "failed": "Import failed",
-      "fileTooLarge": "File too large (max 10 MB)",
-      "invalidFileType": "Invalid file type (only .md or .markdown)",
-      "noFileSelected": "No file selected",
-      "format": {
-        "title": "Markdown Format:",
-        "projectTitle": "Project title",
-        "ignored": "Ignored (e.g. Acts)",
-        "chapter": "Chapter (numbering removed)",
-        "divider": "Scene break"
-      }
+    "errors": {
+      "notFound": "Project not found: {{projectId}}",
+      "listFailed": "Failed to load projects: {{error}}",
+      "getFailed": "Failed to get project: {{error}}",
+      "createFailed": "Failed to create project: {{error}}",
+      "updateFailed": "Failed to update project: {{error}}",
+      "deleteFailed": "Failed to delete project: {{error}}",
+      "reorderFailed": "Failed to reorder projects: {{error}}"
     },
     "messages": {
-      "created": "Project created",
-      "updated": "Project updated",
-      "deleted": "Project deleted",
-      "deleteConfirm": "Do you really want to delete this project?",
-      "error": "Error in project management"
+      "error": "Error in project management",
+      "created": "Project created successfully",
+      "updated": "Project updated successfully",
+      "deleted": "Project deleted successfully",
+      "createFailed": "Failed to create project",
+      "updateFailed": "Failed to update project"
     }
   },
   "chapters": {
-    "title": "Chapters",
     "new": "New Chapter",
     "create": "Create New Chapter",
     "edit": "Edit Chapter",
     "delete": "Delete Chapter",
     "chapterTitle": "Chapter Title",
     "orderIndex": "Order Index",
+    "errors": {
+      "notFound": "Chapter not found: {{chapterId}}",
+      "targetProjectNotFound": "Target project not found: {{projectId}}",
+      "unknownEngine": "Unknown engine type: {{engine}}",
+      "constraintsFailed": "Failed to get engine constraints: {{error}}",
+      "projectMismatch": "Chapter {{chapterId}} does not belong to project {{projectId}}",
+      "createFailed": "Failed to create chapter: {{error}}",
+      "getFailed": "Failed to get chapter: {{error}}",
+      "updateFailed": "Failed to update chapter: {{error}}",
+      "deleteFailed": "Failed to delete chapter: {{error}}",
+      "reorderFailed": "Failed to reorder chapters: {{error}}",
+      "moveFailed": "Failed to move chapter: {{error}}"
+    },
     "messages": {
-      "created": "Chapter created",
-      "updated": "Chapter updated",
-      "deleted": "Chapter deleted",
-      "deleteConfirm": "Do you really want to delete this chapter?",
-      "error": "Error in chapter management"
+      "error": "Error in chapter management",
+      "created": "Chapter created successfully",
+      "updated": "Chapter updated successfully",
+      "deleted": "Chapter deleted successfully",
+      "createFailed": "Failed to create chapter",
+      "updateFailed": "Failed to update chapter"
     }
   },
   "chapterList": {
     "noChapters": "No Chapters",
-    "createFirstChapter": "Create your first chapter using the button above",
-    "segmentsCount": "{{count}} segment",
-    "segmentsCount_plural": "{{count}} segments"
+    "createFirstChapter": "Create your first chapter using the button above"
   },
   "segments": {
-    "title": "Segments",
-    "create": "Create New Segment",
     "noSpeaker": "No speaker",
     "speakerInactive": "Speaker '{{speaker}}' is inactive (no samples)",
     "edit": "Edit Segment",
+    "errors": {
+      "notFound": "Segment not found: {{segmentId}}",
+      "targetChapterNotFound": "Target chapter not found: {{chapterId}}",
+      "chapterMismatch": "Segment {{segmentId}} does not belong to chapter {{chapterId}}",
+      "createFailed": "Failed to create segment: {{error}}",
+      "getFailed": "Failed to get segment: {{error}}",
+      "updateFailed": "Failed to update segment: {{error}}",
+      "deleteFailed": "Failed to delete segment: {{error}}",
+      "reorderFailed": "Failed to reorder segments: {{error}}",
+      "moveFailed": "Failed to move segment: {{error}}",
+      "freezeFailed": "Failed to freeze/unfreeze segment: {{error}}"
+    },
     "editText": "Edit Segment Text",
     "delete": "Delete Segment",
-    "text": "Text",
     "segmentText": "Segment Text",
-    "maxLength": "Maximum Length",
     "characters": "characters",
-    "charactersRemaining": "{{count}} characters remaining",
     "textTooLong": "Text is too long! Remove {{count}} characters.",
-    "textEmpty": "Text cannot be empty",
     "placeholder": "Enter segment text...",
-    "description": "Edit the text for this segment. Maximum length is {{maxLength}} characters.",
-    "engineLimitWarning": "This segment uses engine '{{segmentEngine}}' (limit: {{segmentLimit}} characters), but the currently selected engine is '{{currentEngine}}' (limit: {{currentLimit}} characters). Be aware of different limits when editing.",
     "noSegments": "No segments yet. Drag items from the toolbar above to create segments.",
     "noAudio": "No audio generated yet",
     "generating": "Generating...",
@@ -267,17 +401,41 @@
     "pauseCreated": "Pause created ({{seconds}}s)",
     "pauseUpdated": "Pause updated to {{seconds}}s",
     "pauseUpdateFailed": "Failed to update pause",
+    "frozen": "Protected (locked from regeneration)",
+    "editDialog": {
+      "createRuleHint": "Select text + Ctrl+R to create new rule",
+      "audioPreview": "Audio",
+      "audioPreviewHint": "Play current audio or regenerate",
+      "play": "Play",
+      "pause": "Pause",
+      "regenerate": "Regenerate",
+      "regenerating": "Generating...",
+      "activeRules": "Active Pronunciation Rules",
+      "noActiveRules": "No rules in current text",
+      "newRule": "New Rule",
+      "editRule": "Edit Rule",
+      "pattern": "Pattern",
+      "replacement": "Replace with",
+      "replacementPlaceholder": "Replacement text...",
+      "projectScope": "Valid only in project:",
+      "unknownProject": "Unknown Project",
+      "saving": "Saving...",
+      "saveRule": "Save Rule",
+      "deleting": "Deleting...",
+      "deleteRule": "Delete Rule",
+      "saveChanges": "Save Changes",
+      "previous": "Previous",
+      "next": "Next",
+      "regenerateError": "Regenerate",
+      "regenerateErrorMessage": "Audio preview failed"
+    },
     "status": {
-      "completed": "Completed",
       "processing": "Processing",
+      "completed": "Completed",
       "failed": "Failed",
       "pending": "Pending",
       "queued": "Queued",
       "noStatus": "No status"
-    },
-    "limitSource": {
-      "userPreference": "User Preference",
-      "engineMaximum": "Engine Limit"
     },
     "actions": {
       "play": "Play",
@@ -299,12 +457,16 @@
       "dragging": "Dragging..."
     },
     "messages": {
-      "created": "Segment created",
-      "updated": "Segment updated",
-      "deleted": "Segment deleted",
       "deleteConfirm": "Do you really want to delete this segment?",
       "error": "Error in segment management",
-      "saveChanges": "Save Changes"
+      "saveChanges": "Save Changes",
+      "updated": "Segment updated successfully",
+      "deleted": "Segment deleted successfully",
+      "updateFailed": "Failed to update segment",
+      "settingsUpdated": "Segment settings updated successfully",
+      "settingsUpdateFailed": "Failed to update segment settings",
+      "qualityJobCreated": "Quality analysis job created successfully",
+      "qualityJobFailed": "Failed to create quality analysis job"
     },
     "settings": {
       "title": "Edit Segment Settings",
@@ -313,7 +475,6 @@
       "model": "Model",
       "language": "Language",
       "speaker": "Speaker",
-      "noSpeaker": "No speaker",
       "validation": {
         "allFieldsRequired": "Engine, Model, and Language are required"
       },
@@ -325,54 +486,77 @@
   "audioGeneration": {
     "title": "Generate Audio",
     "generate": "Generate Audio",
-    "generating": "Generating...",
     "starting": "Starting...",
     "speaker": "Speaker Voice",
     "language": "Language",
-    "engine": "Engine",
-    "model": "Model",
-    "forceRegenerate": "Regenerate already completed segments",
-    "usingEngine": "Using Engine:",
-    "usingModel": "Using Model:",
-    "textLimits": "Text limits: {{min}}–{{max}} characters for {{language}}",
-    "changeEngineHint": "Change engine/model in the header dropdown to use different TTS settings.",
-    "languagesSupported": "{{count}} languages supported",
-    "speakersAvailable": "{{count}} speaker voices with samples available",
-    "samplesCount_one": "{{count}} sample",
-    "samplesCount_other": "{{count}} samples",
+    "overrideSettings": "Override parameters for all segments",
+    "overrideSettingsEnabled": "All segments will use the settings selected below",
+    "overrideSettingsDisabled": "Each segment keeps its individual settings",
+    "frozenSegmentsInfo_one": "{{count}} segment is frozen and will not be changed.",
+    "frozenSegmentsInfo_other": "{{count}} segments are frozen and will not be changed.",
     "regenerateCompleted": "Regenerate already completed segments ({{count}} completed)",
-    "forceRegenerateWarning": "Regeneration will replace all existing audio files.",
     "willGenerate": "Will generate audio for <strong>{{count}}</strong> of <strong>{{total}}</strong> segments using <strong>{{engine}}</strong>",
-    "regenerateWarning": "⚠️ Regeneration will replace all existing audio files.",
+    "regenerateWithFrozen": "Protected segmenten with status \"frozen\" will not be generated.",
     "allCompleted": "All segments already generated. Enable regeneration checkbox to replace existing audio.",
     "noSpeakers": {
       "title": "No speaker voices with samples found!",
       "description": "Please add speakers and upload voice samples in the Settings → Speakers tab."
     },
     "messages": {
-      "started": "Audio generation started",
-      "failed": "Failed to start audio generation",
-      "error": "Error in audio generation"
+      "failed": "Failed to start audio generation"
     }
   },
   "tts": {
     "engine": "Engine",
     "model": "Model",
     "language": "Language",
-    "speaker": "Speaker",
-    "speakerOptional": "Optional (leave empty for no speaker assignment)"
+    "errors": {
+      "segmentNotFound": "Segment not found: {{segmentId}}",
+      "jobNotFound": "TTS job not found: {{jobId}}",
+      "jobOperationFailed": "TTS job operation failed: {{error}}",
+      "segmentFrozen": "Cannot regenerate frozen segment. Unfreeze it first.",
+      "missingParameters": "Segment missing required TTS parameters",
+      "jobListFailed": "Failed to load TTS jobs: {{error}}",
+      "activeJobListFailed": "Failed to load active TTS jobs: {{error}}",
+      "jobGetFailed": "Failed to get TTS job: {{error}}",
+      "jobCleanupFailed": "Failed to cleanup TTS jobs: {{error}}",
+      "jobDeleteFailed": "Failed to delete TTS job: {{error}}",
+      "jobCancelFailed": "Failed to cancel TTS job: {{error}}",
+      "jobResumeFailed": "Failed to resume TTS job: {{error}}",
+      "generationFailed": "TTS generation failed: {{error}}",
+      "gpuOom": "GPU out of memory. Try shorter text or restart the engine."
+    }
   },
   "export": {
     "title": "Export Chapter",
-    "export": "Export",
     "startExport": "Start Export",
     "cancelExport": "Cancel Export",
     "download": "Download",
     "filename": "Filename",
     "filenameHint": "Filename without extension",
+    "filenamePlaceholder": "Chapter 1",
     "audioFormat": "Audio Format",
     "quality": "Quality",
-    "sampleRate": "Sample Rate",
+    "qualityLabels": {
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "mp3": {
+        "low": "Low (96 kbps, 22 kHz)",
+        "medium": "Medium (128 kbps, 44.1 kHz)",
+        "high": "High (192 kbps, 48 kHz)"
+      },
+      "m4a": {
+        "low": "Low (96 kbps, 24 kHz)",
+        "medium": "Medium (128 kbps, 44.1 kHz)",
+        "high": "High (192 kbps, 48 kHz)"
+      },
+      "wav": {
+        "low": "Low (22 kHz)",
+        "medium": "Medium (24 kHz)",
+        "high": "High (48 kHz)"
+      }
+    },
     "formats": {
       "mp3": "MP3 (Compressed, universal)",
       "m4a": "M4A/AAC (Compressed, better quality)",
@@ -380,57 +564,73 @@
     },
     "formatHint": "Choose the audio format for export",
     "qualityHint": "Quality determines file size and sound quality",
-    "xttsStandard": "(XTTS Standard)",
     "estimatedSize": "Estimated file size: ~{{size}} MB",
     "fileSize": "File size: {{size}} MB",
     "duration": "Duration: {{duration}} seconds",
     "progress": {
-      "processing": "Processing segments...",
-      "segmentsProcessed": "{{current}}/{{total}} segments processed"
+      "segmentsProcessed": "{{current}}/{{total}} segments processed",
+      "merging": "Merging segment {{current}}/{{total}}...",
+      "converting": "Converting to {{format}}..."
     },
     "status": {
+      "starting": "Starting export...",
       "completed": "Export completed successfully!",
       "failed": "Export failed: {{error}}",
       "fileSaved": "File saved successfully!",
-      "downloadFailed": "Download failed: {{error}}",
-      "downloadCancelled": "Download cancelled by user"
+      "downloadFailed": "Download failed: {{error}}"
     },
+    "startFailed": "Failed to start export",
     "warnings": {
       "allSegmentsRequired": "All segments must be generated before the chapter can be exported. ({{completed}}/{{total}} segments completed)"
+    },
+    "errors": {
+      "chapterNotFound": "Chapter not found: {{chapterId}}",
+      "projectNotFound": "Project not found: {{projectId}}",
+      "noSegments": "Chapter has no segments: {{chapterId}}",
+      "jobNotFound": "Export job not found: {{jobId}}",
+      "fileNotFound": "Export file not found for job: {{jobId}}",
+      "fileDeleted": "Export file no longer exists: {{path}}",
+      "audioFileNotFound": "Audio file not found: {{path}}",
+      "invalidPath": "Invalid file path: {{path}}",
+      "notAFile": "Path is not a file: {{path}}",
+      "noSegmentsFound": "No segments found in chapter: {{chapterId}}",
+      "incompleteSegments": "Cannot export: {{count}} segments are not completed",
+      "notReady": "Export not ready: status is {{status}}",
+      "startFailed": "Failed to start export: {{error}}",
+      "progressQueryFailed": "Failed to query export progress: {{error}}",
+      "cancelFailed": "Failed to cancel export: {{error}}",
+      "downloadFailed": "Failed to download export: {{error}}",
+      "deleteFailed": "Failed to delete export: {{error}}",
+      "mergeFailed": "Failed to merge audio files: {{error}}",
+      "durationFailed": "Failed to get audio duration: {{error}}"
     }
   },
   "textUpload": {
     "title": "Upload and Segment Text",
-    "upload": "Upload Text File",
-    "textContent": "Text Content",
     "placeholder": "Paste or type your text here...",
-    "dragDrop": "Drop text file here or click to select",
-    "fileSelected": "File selected: {{filename}}",
-    "processing": "Processing...",
     "creating": "Creating...",
-    "preview": "Preview",
     "createSegments": "Create Segments",
-    "segmentationMethod": "Segmentation Method",
-    "language": "Language",
-    "methods": {
-      "smart": "Smart (Auto-detect)",
-      "sentences": "By Sentences",
-      "paragraphs": "By Paragraphs",
-      "length": "By Length"
+    "fileUpload": {
+      "dragDrop": "Drop text file here or click to select",
+      "dropHere": "Drop here",
+      "supportedFormats": "Supported formats",
+      "browse": "Browse",
+      "selected": "Selected",
+      "or": "OR"
     },
-    "languages": {
-      "de": "German",
-      "en": "English",
-      "es": "Spanish",
-      "fr": "French"
+    "segmentation": {
+      "title": "Segmentation Settings",
+      "textLanguage": "Segmentation Language",
+      "noTextModels": "No text processing models available."
     },
-    "previewCount": "Preview: {{count}} segments",
-    "segmentNumber": "Segment {{number}}",
-    "andMore": "... and {{count}} more",
-    "autoCreate": "Auto-create segments",
+    "tts": {
+      "title": "TTS Settings"
+    },
+    "errors": {
+      "invalidType": "Invalid file. Only .txt files are allowed.",
+      "tooLarge": "File too large. Maximum size: 10 MB"
+    },
     "messages": {
-      "success": "Text uploaded and processed successfully",
-      "failed": "Failed to generate preview",
       "error": "Error creating segments",
       "noDefaultSpeaker": "No default speaker set. Please set a default speaker in Settings.",
       "speakerInactive": "Default speaker '{{speaker}}' is inactive (no audio samples). Please add audio samples or choose a different default speaker."
@@ -439,39 +639,35 @@
   "chapterView": {
     "noProjectSelected": "No Project Selected",
     "selectProjectHint": "Select a project from the sidebar to get started",
-    "overview": "Overview",
-    "selectChapterHint": "Select a chapter from the sidebar or create a new chapter to begin",
-    "segmentsGenerated": "{{completed}} / {{total}} segments generated",
     "uploadText": "Upload Text",
     "generating": "Generating...",
     "generateAllAudio": "Generate All Audio",
     "regenerateAllAudio": "Regenerate All Audio",
     "exportChapter": "Export Chapter",
+    "exportRequiresAudio": "All segments must be generated first",
     "noSegments": "No Segments",
     "uploadTextHint": "Upload a text file to segment it automatically.",
-    "noSegmentsYet": "This chapter has no segments yet. Upload a text file to segment it automatically.",
     "failedRegenerateSegment": "Failed to regenerate segment",
-    "cancelling": "Cancelling...",
-    "cancelGeneration": {
-      "button": "Cancel Generation",
-      "title": "Cancel Generation?",
-      "message": "Do you really want to cancel the running audio generation?",
-      "confirm": "Yes, cancel",
-      "cancel": "No, continue"
-    }
+    "analyzeChapter": "Analyze Quality",
+    "analyzingChapter": "Analyzing...",
+    "failedQualityAnalysis": "Failed to start quality analysis",
+    "textSegmented": "Text segmented successfully ({{count}} segments created)",
+    "textSegmentFailed": "Failed to segment text",
+    "generationJobCreated": "Chapter generation job created successfully"
   },
   "commandToolbar": {
     "title": "Quick Actions",
     "textSegment": "Segment",
     "textSegmentDesc": "Create a new text segment",
     "pause": "Pause",
-    "pauseDesc": "Insert a pause/scene break",
-    "hint": "💡 Drag items into the segment list to create new segments"
+    "pauseDesc": "Insert a pause/scene break"
   },
   "segmentMenu": {
     "editText": "Edit Text",
     "editSettings": "Edit Settings",
     "editPauseDuration": "Edit Pause Duration",
+    "analyzeQuality": "Analyze Quality",
+    "unfreeze": "Remove Protection",
     "deleteSegment": "Delete Segment"
   },
   "dividerSegment": {
@@ -490,21 +686,12 @@
     "redirecting": "Redirecting..."
   },
   "disconnect": {
-    "tooltip": "Disconnect from Backend",
     "confirmTitle": "Disconnect from Backend?",
     "confirmMessage": "You are currently connected to \"{{name}}\". Your session will be saved and can be restored when you reconnect.",
     "disconnect": "Disconnect",
     "unknownBackend": "Unknown Backend"
   },
   "appLayout": {
-    "engine": "Engine",
-    "model": "Model",
-    "loading": "Loading...",
-    "loaded": "Loaded",
-    "noEngines": "No engines",
-    "noModels": "No models",
-    "languagesCount": "{{count}} languages",
-    "settings": "Settings",
     "loadingProjects": "Loading projects...",
     "retry": "Retry",
     "deleteProjectConfirm": "Are you sure you want to delete \"{{title}}\"?\n\nThis will delete all chapters, segments, and audio files. This action cannot be undone.",
@@ -514,13 +701,9 @@
     "jobs": {
       "title": "Jobs",
       "noJobs": "No jobs available",
+      "noTitle": "No job title recieved from Backend",
       "noJobsDescription": "Start a generation to see jobs here",
-      "noActiveJobs": "No active jobs",
-      "noFinishedJobs": "No finished jobs",
-      "typeChapter": "Chapter Generation",
-      "typeSegment": "Segment Generation",
-      "progress": "Progress",
-      "completedSegments": "{{count}} segments generated"
+      "noFinishedJobs": "No finished jobs"
     }
   },
   "jobs": {
@@ -536,24 +719,20 @@
       "finished": "Finished Jobs"
     },
     "actions": {
-      "pause": "Pause",
-      "resume": "Resume",
-      "delete": "Delete",
       "clearHistory": "Clear History"
     },
     "messages": {
       "pauseSuccess": "Job paused successfully",
       "deleteSuccess": "Job deleted successfully",
       "resumeSuccess": "Job resumed successfully",
-      "clearHistorySuccess": "History cleared successfully"
+      "clearHistorySuccess": "History cleared successfully",
+      "jobCompleted": "Generation completed successfully",
+      "jobFailed": "Generation failed",
+      "jobCancelled": "Generation cancelled"
     },
     "confirmClearHistory": {
       "title": "Clear History?",
       "message": "All completed and failed jobs will be deleted."
-    },
-    "confirmDeleteJob": {
-      "title": "Delete Job?",
-      "message": "This job will be permanently deleted."
     },
     "errors": {
       "pauseFailed": "Failed to pause job",
@@ -561,14 +740,17 @@
       "deleteFailed": "Failed to delete job",
       "clearHistoryFailed": "Failed to clear history"
     },
-    "lastUpdated": "Last updated"
+    "lastUpdated": "Last updated",
+    "totalJobs": "{{count}} job",
+    "totalJobs_plural": "{{count}} jobs",
+    "failed": "failed",
+    "remaining": "remaining"
   },
   "quickCreateSegment": {
     "title": "Create Text Segment",
     "description": "Enter the text for this segment. You can edit it later.",
     "label": "Segment Text",
     "placeholder": "Enter segment text...",
-    "helperText": "{{count}} characters | Ctrl+Enter to create",
     "creating": "Creating...",
     "create": "Create Segment",
     "failed": "Failed to create segment"
@@ -604,41 +786,14 @@
     "deleteTitle": "Delete Profile",
     "deleteConfirm": "Are you sure you want to delete the profile \"{{name}}\"?",
     "nameRequired": "Name is required",
-    "nameDuplicate": "A profile with this name already exists"
-  },
-  "profiles": {
-    "title": "Backend Profiles",
-    "current": "Current Profile",
-    "add": "Add Profile",
-    "edit": "Edit Profile",
-    "delete": "Delete Profile",
-    "connect": "Connect",
-    "disconnect": "Disconnect",
-    "name": "Profile Name",
-    "url": "Backend URL",
-    "default": "Set as Default",
-    "messages": {
-      "created": "Profile created",
-      "updated": "Profile updated",
-      "deleted": "Profile deleted",
-      "connected": "Connected to backend",
-      "disconnected": "Disconnected from backend",
-      "connectionFailed": "Failed to connect to backend",
-      "deleteConfirm": "Do you really want to delete this profile?",
-      "error": "Error in profile management"
-    }
-  },
-  "noSpeakers": {
-    "title": "No Speaker Voices Available",
-    "description": "Before you can create audiobooks, you need to add at least one speaker voice with audio samples.",
-    "steps": {
-      "title": "Quick Start:",
-      "step1": "Click the button below to open Settings",
-      "step2": "Go to the 'Speakers' tab",
-      "step3": "Add a new speaker and upload voice samples"
-    },
-    "openSettings": "Open Speaker Settings",
-    "helpText": "Need help? Check the documentation for guidance on adding speakers."
+    "nameDuplicate": "A profile with this name already exists",
+    "created": "Profile created successfully",
+    "updated": "Profile updated successfully",
+    "deleted": "Profile deleted successfully",
+    "createFailed": "Failed to create profile",
+    "updateFailed": "Failed to update profile",
+    "deleteFailed": "Failed to delete profile",
+    "saveFailed": "Failed to save profile"
   },
   "startPage": {
     "subtitle": "Connect to a backend server to get started",
@@ -656,20 +811,558 @@
     "backendInfo": "Backend Information",
     "version": "Version",
     "engines": "Engines",
-    "speakers": "Speakers",
-    "speakersAvailable": "{{count}} available",
     "busy": "Busy ({{count}} active jobs)",
     "lastConnected": "Last Connected",
     "connect": "Connect to Backend",
     "createProfileHint": "Create a profile to get started",
     "timeAgo": {
       "justNow": "Just now",
-      "minutesAgo_one": "{{count}} minute ago",
+      "minutesAgo": "{{count}} minute ago",
       "minutesAgo_other": "{{count}} minutes ago",
-      "hoursAgo_one": "{{count}} hour ago",
+      "hoursAgo": "{{count}} hour ago",
       "hoursAgo_other": "{{count}} hours ago",
-      "daysAgo_one": "{{count}} day ago",
+      "daysAgo": "{{count}} day ago",
       "daysAgo_other": "{{count}} days ago"
+    },
+    "invalidEngineAlert": {
+      "title": "Invalid TTS Configuration",
+      "engineUnavailable": "Default engine \"{{oldEngine}}\" is no longer available.",
+      "autoSwitched": "Automatically switched to \"{{newEngine}}\".",
+      "checkSettings": "Please check your settings."
+    }
+  },
+  "quality": {
+    "noEngineAvailable": "No analysis engine available (STT or Audio engine required)",
+    "generateFirst": "Audio must be generated first",
+    "status": {
+      "title": "Quality Status",
+      "perfect": "Perfect",
+      "warning": "Warning",
+      "defect": "Defect",
+      "notAnalyzed": "Not analyzed"
+    },
+    "topLabels": {
+      "whisperTranscription": "Whisper Transcription",
+      "audioQuality": "Audio Quality"
+    },
+    "fields": {
+      "confidence": "Confidence",
+      "transcription": "Transcription",
+      "language": "Language",
+      "duration": "Duration",
+      "textMatch": "Text Match",
+      "speechRatio": "Speech Ratio",
+      "silenceRatio": "Silence Ratio",
+      "maxSilence": "Max Silence",
+      "peakVolume": "Peak Volume",
+      "avgVolume": "Avg Volume"
+    },
+    "infoBlocks": {
+      "textDeviations": "Text Deviations",
+      "audioIssues": "Audio Issues"
+    },
+    "issues": {
+      "wordMismatch": "'{{expected}}' → '{{detected}}'",
+      "incompleteTranscription": "+{{missingWords}} words missing (incomplete transcription)",
+      "speechRatioTooLow": "Speech ratio too low",
+      "speechRatioBelowIdeal": "Speech ratio below ideal",
+      "speechRatioTooHigh": "Speech ratio too high",
+      "speechRatioAboveIdeal": "Speech ratio above ideal",
+      "silenceTooLong": "Silence too long",
+      "silenceDetected": "Long silence detected",
+      "clippingDetected": "Audio clipping detected",
+      "volumeTooLow": "Volume too low",
+      "silence": "Long silence detected: {{duration}} sec. (max: {{threshold}} sec.)",
+      "lowSpeechRatioCritical": "Critical: Excessive silence - {{ratio}}% speech (minimum: {{threshold}}%)",
+      "lowSpeechRatioWarning": "Long pauses detected - {{ratio}}% speech (minimum: {{threshold}}%)",
+      "highSpeechRatioCritical": "Critical: Unnaturally high speech ratio - {{ratio}}% speech (maximum: {{threshold}}%)",
+      "highSpeechRatioWarning": "High speech ratio - {{ratio}}% speech (maximum: {{threshold}}%)",
+      "clipping": "Audio clipping detected: {{peak}}dB",
+      "lowVolume": "Low average volume: {{avg}}dB (minimum: {{min}}dB)",
+      "analysisError": "Analysis error: {{error}}"
+    },
+    "whisper": {
+      "andMore": "... and {{count}} more"
+    }
+  },
+  "pronunciation": {
+    "errors": {
+      "ruleNotFound": "Pronunciation rule not found: {{ruleId}}",
+      "deleteFailed": "Failed to delete pronunciation rule {{ruleId}}",
+      "segmentNotFound": "Segment not found: {{segmentId}}",
+      "missingParams": "Missing segment ID or rule",
+      "createFailed": "Failed to create pronunciation rule: {{error}}",
+      "getFailed": "Failed to get pronunciation rules: {{error}}",
+      "updateFailed": "Failed to update pronunciation rule: {{error}}",
+      "ruleDeleteFailed": "Failed to delete pronunciation rule: {{error}}",
+      "testFailed": "Failed to test pronunciation: {{error}}",
+      "conflictsFailed": "Failed to check pronunciation conflicts: {{error}}",
+      "bulkOperationFailed": "Failed to perform bulk operation: {{error}}",
+      "exportFailed": "Failed to export pronunciation rules: {{error}}",
+      "importFailed": "Failed to import pronunciation rules: {{error}}",
+      "testAudioFailed": "Failed to test pronunciation audio: {{error}}"
+    },
+    "dialog": {
+      "title": "Pronunciation Rules Manager",
+      "context": "Context",
+      "search": "Search",
+      "searchPlaceholder": "Pattern or replacement...",
+      "filter": {
+        "allRules": "All Rules",
+        "resetAll": "Reset All Filters",
+        "reset": "Reset Filters",
+        "noRulesFound": "No Rules Found"
+      },
+      "sections": {
+        "active": "Active Rules",
+        "inactive": "Inactive Rules"
+      },
+      "status": {
+        "loading": "Loading pronunciation rules...",
+        "hasConflicts": "Has conflicts with other rules",
+        "conflict": "Conflict"
+      },
+      "language": {
+        "all": "All"
+      },
+      "footer": {
+        "activeRulesCount": "{{count}} active rules",
+        "filteredFrom": "(filtered from {{total}} total)"
+      },
+      "actions": {
+        "addRule": "Add Rule",
+        "edit": "Edit",
+        "delete": "Delete",
+        "toggleActive": "Toggle Active",
+        "export": "Export",
+        "import": "Import",
+        "importing": "Importing..."
+      },
+      "empty": {
+        "noRules": "No pronunciation rules found",
+        "createFirst": "Create First Rule"
+      },
+      "bulk": {
+        "selected": "{{count}} rule selected"
+      },
+      "form": {
+        "addTitle": "Add Pronunciation Rule",
+        "editTitle": "Edit Pronunciation Rule",
+        "pattern": "Pattern",
+        "patternPlaceholder": "e.g., Konsortien",
+        "patternHelperRegex": "Regular expression pattern",
+        "patternHelperExact": "Exact text to match",
+        "replacement": "Replacement",
+        "replacementPlaceholder": "e.g., Konsorzien",
+        "replacementHelper": "Phonetic spelling or alternative text",
+        "ttsEngine": "TTS Engine",
+        "language": "Language",
+        "ruleScope": "Rule Scope",
+        "scopeEngine": "Engine (Medium Priority)",
+        "scopeHelper": "Scope defines where this rule applies",
+        "validInProject": "Valid only in project:",
+        "selectEngine": "Select TTS engine for this rule",
+        "selectLanguage": "Select language for this rule",
+        "useRegex": "Use Regular Expression",
+        "active": "Active",
+        "cancel": "Cancel",
+        "updateRule": "Update Rule",
+        "createRule": "Create Rule"
+      },
+      "deleteConfirm": {
+        "title": "Delete Pronunciation Rule",
+        "message": "Are you sure you want to delete \"{{ruleName}}\"? This action cannot be undone.",
+        "messageMultiple": "Are you sure you want to delete the selected rules? This action cannot be undone."
+      },
+      "importConfirm": {
+        "title": "Import Pronunciation Rules",
+        "message": "Import {{count}} pronunciation rule?\n\nThese will be merged with your existing rules.",
+        "confirm": "Import"
+      },
+      "messages": {
+        "exportSuccess": "Successfully exported {{count}} rule",
+        "exportFailed": "Failed to export rules: {{error}}",
+        "exportEmpty": "No rules to export with current filters.",
+        "importSuccess": "Import complete! Imported: {{imported}}, Skipped: {{skipped}}",
+        "importFailed": "Failed to import rules: {{error}}",
+        "importEmpty": "No rules found in the import file.",
+        "created": "Pronunciation rule created successfully",
+        "updated": "Pronunciation rule updated successfully",
+        "deleted": "Pronunciation rule deleted successfully",
+        "createFailed": "Failed to create pronunciation rule",
+        "updateFailed": "Failed to update pronunciation rule",
+        "deleteFailed": "Failed to delete pronunciation rule"
+      }
+    }
+  },
+  "navigation": {
+    "monitoring": "Monitoring",
+    "import": "Import",
+    "main": "Main",
+    "settings": "Settings",
+    "pronunciation": "Pronunciation",
+    "speakers": "Speakers",
+    "disconnect": "Disconnect",
+    "requiresSpeaker": "Please create an active speaker first"
+  },
+  "nav": {
+    "importWarning": "Text processing engine required for import"
+  },
+  "monitoring": {
+    "title": "Monitoring",
+    "tabs": {
+      "ttsJobs": "TTS Jobs",
+      "qualityJobs": "Quality Jobs",
+      "protocol": "Activity Log"
+    }
+  },
+  "qualityJobs": {
+    "title": "Quality Analysis Jobs",
+    "analysis": "Quality Analysis",
+    "noJobs": "No quality jobs",
+    "noJobsDescription": "Start a quality analysis to see jobs here",
+    "noFinishedJobs": "No finished jobs",
+    "messages": {
+      "cancelSuccess": "Job cancelled successfully",
+      "resumeSuccess": "Job resumed successfully",
+      "deleteSuccess": "Job deleted successfully",
+      "clearHistorySuccess": "History cleared successfully"
+    },
+    "errors": {
+      "cancelFailed": "Failed to cancel job",
+      "resumeFailed": "Failed to resume job",
+      "deleteFailed": "Failed to delete job",
+      "clearHistoryFailed": "Failed to clear history"
+    },
+    "confirmClearHistory": {
+      "title": "Clear History?",
+      "message": "All completed and failed quality jobs will be deleted."
+    }
+  },
+  "import": {
+    "title": "Import Markdown",
+    "fileUpload": {
+      "title": "File Upload",
+      "dragDrop": "Drag & drop markdown file here, or click to select",
+      "dropHere": "Drop file here to upload",
+      "browse": "Browse Files",
+      "selected": "Selected File",
+      "supportedFormats": "Supported formats",
+      "textLanguage": "Text Segmentation Language",
+      "noTextModels": "No text processing models available. Please enable a text engine.",
+      "errorInvalidType": "Invalid file type. Only .md and .markdown files are allowed.",
+      "errorTooLarge": "File too large. Maximum size is 10 MB."
+    },
+    "mapping": {
+      "title": "Mapping Rules",
+      "projectTitle": "Project Title",
+      "chapter": "Chapter",
+      "divider": "Divider",
+      "resetToDefaults": "Reset to Defaults",
+      "projectTitleHelp": "Top-level heading becomes project title",
+      "chapterHelp": "This heading level creates chapters",
+      "dividerHelp": "Pattern that creates silence/pause between segments",
+      "heading1": "Heading 1",
+      "heading2": "Heading 2",
+      "heading3": "Heading 3",
+      "heading4": "Heading 4",
+      "heading5": "Heading 5",
+      "heading6": "Heading 6"
+    },
+    "mode": {
+      "section": "Import Mode",
+      "title": "Import Mode",
+      "new": "Create New Project",
+      "newHelp": "Create a new project from the markdown file",
+      "merge": "Merge into Existing Project",
+      "mergeHelp": "Add chapters to an existing project",
+      "selectProject": "Select Project",
+      "noProjects": "No existing projects available",
+      "noProjectsWarning": "You need to create at least one project before you can use merge mode. Select 'Create New Project' to import.",
+      "projectsLoadError": "Failed to load projects",
+      "mergeInfo": "Chapters from the markdown file will be added to the selected project. Existing chapters will not be affected."
+    },
+    "chapters": {
+      "title": "Chapter Selection",
+      "selectAll": "Select All",
+      "deselectAll": "Deselect All",
+      "selected": "{{count}} of {{total}} selected",
+      "help": "Select chapters to import and rename them to avoid conflicts with existing chapters",
+      "rename": "Rename chapter",
+      "noChapters": "No chapters found"
+    },
+    "tts": {
+      "title": "TTS Settings",
+      "speaker": "Speaker (Optional)",
+      "noSpeakers": "No active speakers available. Please create speakers with voice samples in the Speakers view."
+    },
+    "actions": {
+      "import": "Import",
+      "importing": "Importing...",
+      "error": "Import failed",
+      "success": "Import complete ({{chapters}} chapters, {{segments}} segments)",
+      "invalidConfig": "Please complete all required fields before importing",
+      "noFileSelected": "Please select a file to import",
+      "noMergeTarget": "Please select a project to merge into",
+      "noChaptersSelected": "Please select at least one chapter to import"
+    },
+    "preview": {
+      "emptyTitle": "No Preview Available",
+      "emptyDescription": "Upload a markdown file to preview the import structure",
+      "loading": "Loading preview...",
+      "error": "Failed to preview markdown file",
+      "projectInfo": "Project Information",
+      "statistics": "Statistics",
+      "warnings": "Warnings",
+      "chapters": "Chapters",
+      "totalChapters": "Chapters",
+      "totalSegments": "Segments",
+      "totalCharacters": "Characters",
+      "estimatedDuration": "Est. Duration",
+      "segments": "segments",
+      "characters": "characters",
+      "failed": "too long",
+      "invalidStatus": "This import cannot be completed due to critical errors. Please fix the issues above."
+    },
+    "errors": {
+      "noProjectTitle": "No project title found. Expected a {{projectHeading}} heading at the start of the document. Please check your mapping rules or add a {{projectHeading}} heading with your project title.",
+      "noChapters": "No chapters found. Expected at least one {{chapterHeading}} heading in the document. Current mapping rules: Project={{projectHeading}}, Chapters={{chapterHeading}}. Please adjust your mapping rules to match your document structure, or add {{chapterHeading}} headings for your chapters.",
+      "chapterTooLong": "Chapter '{{chapterTitle}}' has {{charCount}} characters (exceeds {{maxChars}}). Recommend splitting into multiple chapters.",
+      "fileEmpty": "The markdown file is empty. Please provide a file with content.",
+      "projectNotFound": "Target project not found: {{projectId}}. Cannot merge chapters into non-existent project.",
+      "segmentationFailed": "Text segmentation failed: {{error}}. Please check if spaCy models are installed for this language.",
+      "previewFailed": "Failed to preview markdown file: {{error}}",
+      "failed": "Failed to import markdown file: {{error}}"
+    },
+    "noTextEngine": {
+      "title": "Text Processing Engine Required",
+      "message": "The Import feature requires a text processing engine (spaCy) to be installed and enabled. Please install a text engine or enable an existing one in the Engines tab.",
+      "goToEngines": "Go to Engines"
+    }
+  },
+  "languages": {
+    "de": "German",
+    "en": "English",
+    "ar": "Arabic",
+    "cs": "Czech",
+    "da": "Danish",
+    "el": "Greek",
+    "es": "Spanish",
+    "fi": "Finnish",
+    "fr": "French",
+    "he": "Hebrew",
+    "hi": "Hindi",
+    "hu": "Hungarian",
+    "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "ms": "Malay",
+    "nl": "Dutch",
+    "no": "Norwegian",
+    "pl": "Polish",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "sv": "Swedish",
+    "sw": "Swahili",
+    "tr": "Turkish",
+    "zh-cn": "Chinese (Simplified)",
+    "zh": "Chinese"
+  },
+  "activity": {
+    "title": "Activity Log",
+    "filters": {
+      "categories": "Categories",
+      "severity": "Severity",
+      "timeRange": "Time Range",
+      "search": "Search events..."
+    },
+    "categories": {
+      "tts": "TTS",
+      "quality": "Quality",
+      "export": "Export",
+      "health": "Health",
+      "speakers": "Speakers",
+      "settings": "Settings",
+      "chapter": "Chapter",
+      "segment": "Segment",
+      "pronunciation": "Pronunciation"
+    },
+    "severity": {
+      "info": "Info",
+      "success": "Success",
+      "warning": "Warning",
+      "error": "Error"
+    },
+    "timeRange": {
+      "5min": "Last 5 minutes",
+      "1hour": "Last hour",
+      "today": "Today",
+      "all": "All"
+    },
+    "autoScroll": "Auto-scroll",
+    "clearEvents": "Clear Events",
+    "clearConfirm": "Do you want to clear all events? This cannot be undone.",
+    "eventCount": "{{count}} event",
+    "noEvents": "No events to display",
+    "noEventsDescription": "Events will appear here as they occur",
+    "resetFilters": "Reset Filters"
+  },
+  "audioPlayer": {
+    "loadingAudio": "Loading audio...",
+    "noAudioAvailable": "No audio available",
+    "generateAudioHint": "Generate audio for segments to enable playback",
+    "errorLoadingAudio": "Error loading audio",
+    "noChapterSelected": "No chapter selected",
+    "play": "Play",
+    "pause": "Pause",
+    "loaded": "Loaded",
+    "pending": "pending",
+    "playbackError": "Audio playback failed",
+    "urlError": "Could not load audio"
+  },
+  "text": {
+    "errors": {
+      "segmentationFailed": "Text segmentation failed: {{error}}",
+      "segmenterLoadFailed": "Failed to load text segmenter for language '{{language}}': {{error}}",
+      "invalidMethod": "Invalid segmentation method '{{method}}'. Allowed: {{allowedMethods}}",
+      "noEngineAvailable": "No text processing engine available. Please enable a text engine in settings.",
+      "engineNotFound": "Text engine '{{engine}}' not found"
+    }
+  },
+  "health": {
+    "errors": {
+      "checkFailed": "Health check failed: {{error}}"
+    }
+  },
+  "stt": {
+    "errors": {
+      "segmentNotFound": "Segment not found: {{segmentId}}",
+      "chapterNotFound": "Chapter not found: {{chapterId}}",
+      "jobNotFound": "STT job not found: {{jobId}}",
+      "jobDeleteFailed": "Failed to delete STT job {{jobId}}: {{error}}",
+      "noEngineAvailable": "No STT engine available. Please enable an STT engine in settings."
+    }
+  },
+  "engines": {
+    "title": "Engine Management",
+    "types": {
+      "tts": "Text-to-Speech Engines",
+      "ttsDescription": "Engines for converting text to spoken audio",
+      "text": "Text Processing Engines",
+      "textDescription": "Engines for text segmentation and analysis",
+      "stt": "Speech-to-Text Engines",
+      "sttDescription": "Engines for audio transcription and quality analysis",
+      "audio": "Audio Analysis Engines",
+      "audioDescription": "Engines for audio quality metrics and speech detection"
+    },
+    "status": {
+      "running": "Running",
+      "runningOn": "Running on port {{port}}",
+      "stopped": "Stopped",
+      "stoppedTooltip": "Engine is not currently running",
+      "disabled": "Disabled",
+      "disabledTooltip": "Engine is disabled in settings",
+      "error": "Error",
+      "errorTooltip": "Engine encountered an error",
+      "starting": "Starting...",
+      "startingTooltip": "Engine is starting up",
+      "stopping": "Stopping...",
+      "stoppingTooltip": "Engine is stopping"
+    },
+    "selectDefaultEngine": "Select Default Engine",
+    "openSettings": "Engine Settings",
+    "settingsDialogTitle": "{{engine}} Settings",
+    "setDefaultEngineError": "Failed to set default engine",
+    "setDefaultEngineErrorTitle": "Default Engine Update Failed",
+    "defaultModel": "Default Model",
+    "version": "Version",
+    "noEngineConfigured": "No engine configured",
+    "deactivated": "Deactivated",
+    "deactivatedHint": "Click to select an engine",
+    "deactivatedDesc": "No engine active for this function",
+    "selectActiveEngine": "Select Active Engine",
+    "loadError": "Failed to load engines",
+    "toggleEnabledError": "Failed to update engine status",
+    "toggleEnabledErrorTitle": "Engine Update Failed",
+    "actions": {
+      "start": "Start",
+      "stop": "Stop",
+      "enable": "Enable",
+      "disable": "Disable"
+    },
+    "autoStopIn": "Auto-stop in {{time}}",
+    "noOtherEngines": "No other engines available",
+    "addEngineHint": "Additional engines can be added in the backend",
+    "keepRunning": "Keep Running",
+    "keepRunningDescription": "Don't automatically stop engine after inactivity",
+    "globalSettings": "Global Engine Settings",
+    "inactivityTimeout": "Engine Stop after Inactivity",
+    "stopAfterJob": "After Job",
+    "autostartKeepRunning": "Autostart keep-running engines on app startup",
+    "engineStartup": "Engine Startup"
+  },
+  "errorBoundary": {
+    "title": "An unexpected error occurred",
+    "contextMessage": "Error in component: {{context}}",
+    "genericMessage": "An error occurred in the application",
+    "devErrorTitle": "Error Details (Development)",
+    "instructionsTitle": "What you can try:",
+    "instructions": {
+      "refresh": "Try refreshing the page",
+      "checkBackend": "Check your backend connection",
+      "contactSupport": "Contact support if the issue persists"
+    },
+    "retry": "Retry",
+    "reloadPage": "Reload Page",
+    "devStackTrace": "Stack Trace (Development):"
+  },
+  "errors": {
+    "engine": {
+      "enableFailed": "Failed to enable engine: {{engine}}",
+      "disableFailed": "Failed to disable engine: {{engine}}",
+      "startDisabled": "Cannot start disabled engine '{{engine}}'. Enable it first.",
+      "notFound": "Engine '{{engine}}' not found in {{type}} engines",
+      "noModel": "No model specified for engine '{{engine}}'",
+      "startFailed": "Failed to start engine: {{error}}",
+      "stopFailed": "Failed to stop engine: {{error}}",
+      "invalidType": "Invalid engine type '{{type}}'. Valid: {{valid}}",
+      "statusFailed": "Failed to get engine status: {{error}}",
+      "setDefaultFailed": "Failed to set default engine: {{error}}",
+      "clearDefaultFailed": "Failed to clear default engine: {{error}}",
+      "keepRunningFailed": "Failed to update keep-running setting: {{error}}"
+    },
+    "quality": {
+      "noAudio": "Segment has no audio file",
+      "segmentFrozen": "Cannot analyze frozen segment",
+      "noEngines": "No analysis engines configured. Enable STT or Audio engine in settings.",
+      "noSegments": "No analyzable segments in chapter",
+      "jobInProgress": "Analysis already in progress (Job {{jobId}})",
+      "jobListFailed": "Failed to load quality jobs: {{error}}",
+      "activeJobListFailed": "Failed to load active quality jobs: {{error}}",
+      "jobGetFailed": "Failed to get quality job: {{error}}",
+      "jobNotFound": "Quality job not found: {{jobId}}",
+      "jobInvalidState": "Quality job in invalid state: {{state}}",
+      "jobCancelFailed": "Failed to cancel quality job: {{error}}",
+      "jobCleanupFailed": "Failed to cleanup quality jobs: {{error}}",
+      "jobResumeFailed": "Failed to resume quality job: {{error}}",
+      "jobDeleteFailed": "Failed to delete quality job: {{error}}",
+      "jobCreateFailed": "Failed to create quality job: {{error}}"
+    },
+    "job": {
+      "notCancelled": "Job {{jobId}} is not cancelled (status: {{status}})",
+      "notFound": "Job not found: {{jobId}}",
+      "cannotCancel": "Job is {{status}}, cannot cancel",
+      "notRunning": "Job is no longer running",
+      "deleteFailed": "Failed to delete job"
+    },
+    "import": {
+      "internalError": "Internal server error: {{error}}",
+      "invalidMappingJson": "Invalid mapping rules JSON: {{error}}",
+      "invalidChaptersJson": "Invalid selected chapters JSON: {{error}}",
+      "invalidRenamedJson": "Invalid renamed chapters JSON: {{error}}",
+      "invalidMode": "Invalid mode: {{mode}}. Must be 'new' or 'merge'",
+      "missingTargetId": "Target project ID is required for merge mode",
+      "unknownEngine": "Unknown TTS engine: {{engine}}"
     }
   }
 }

@@ -47,13 +47,14 @@ class HealthMonitor:
             name="HealthMonitor"
         )
         self._monitor_thread.start()
-        logger.info("[HealthMonitor] Started")
+        logger.debug("[HealthMonitor] Started")
 
     def stop(self):
         """Stop the health monitoring thread."""
         self._running = False
         if self._monitor_thread:
-            self._monitor_thread.join(timeout=2.0)
+            from config import HEALTH_MONITOR_STOP_TIMEOUT
+            self._monitor_thread.join(timeout=HEALTH_MONITOR_STOP_TIMEOUT)
         logger.info("[HealthMonitor] Stopped")
 
     def _monitor_loop(self):
@@ -62,10 +63,12 @@ class HealthMonitor:
             try:
                 with self._lock:
                     self._status["timestamp"] = datetime.now().isoformat()
-                time.sleep(1)
+                from config import HEALTH_MONITOR_INTERVAL
+                time.sleep(HEALTH_MONITOR_INTERVAL)
             except Exception as e:
                 logger.error(f"[HealthMonitor] Error in monitor loop: {e}")
-                time.sleep(1)
+                from config import HEALTH_MONITOR_INTERVAL
+                time.sleep(HEALTH_MONITOR_INTERVAL)
 
     def get_status(self) -> Dict[str, Any]:
         """
@@ -119,7 +122,7 @@ def get_health_monitor() -> HealthMonitor:
     return _health_monitor
 
 
-def shutdown_health_monitor():
+def shutdown_health_monitor() -> None:
     """Shutdown the global health monitor."""
     global _health_monitor
     if _health_monitor:

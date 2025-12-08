@@ -4,6 +4,7 @@ Audio processing and export endpoints
 from typing import Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
+import asyncio
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -12,6 +13,7 @@ from loguru import logger
 from db.database import get_db_connection_simple
 from db.repositories import ChapterRepository, SegmentRepository, ExportJobRepository, ProjectRepository
 from services.audio_service import AudioService
+from services.event_broadcaster import broadcaster, EventType
 from config import EXPORTS_DIR
 from models.response_models import (
     ExportResponse,
@@ -25,7 +27,6 @@ from pydantic import ConfigDict
 
 router = APIRouter()
 
-# In-memory storage for export jobs (similar to TTS generation jobs)
 export_jobs: Dict[str, Dict[str, Any]] = {}
 
 
@@ -97,12 +98,10 @@ async def export_task(
     """Background task for exporting audio"""
     from services.health_monitor import get_health_monitor
 
-    # Notify health monitor that a job started
     health_monitor = get_health_monitor()
     health_monitor.increment_active_jobs()
 
     try:
-        # Update job status to running
         export_jobs[job_id] = {
             "status": "running",
             "progress": 0.0,
@@ -112,7 +111,17 @@ async def export_task(
             "started_at": datetime.now()
         }
 
-        # Get database connection
+        await broadcaster.broadcast_export_update(
+            export_data={
+                "exportId": job_id,
+                "chapterId": chapter_id,
+                "status": "running",
+                "progress": 0.0,
+                "message": "Starting export..."
+            },
+            event_type=EventType.EXPORT_STARTED
+        )
+
         conn = get_db_connection_simple()
         chapter_repo = ChapterRepository(conn)
         segment_repo = SegmentRepository(conn)
@@ -122,12 +131,12 @@ async def export_task(
         # Get chapter details
         chapter = chapter_repo.get_by_id(chapter_id)
         if not chapter:
-            raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
+            raise HTTPException(status_code=404, detail=f"[EXPORT_CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
 
         # Get project details for naming
         project = project_repo.get_by_id(chapter['project_id'])
         if not project:
-            raise HTTPException(status_code=404, detail="Project not found")
+            raise HTTPException(status_code=404, detail=f"[EXPORT_PROJECT_NOT_FOUND]projectId:{chapter['project_id']}")
 
         # Get segments for chapter (includes both standard and divider segments)
         segments = segment_repo.get_by_chapter(chapter_id)
@@ -170,11 +179,27 @@ async def export_task(
         # Sanitize filename (remove invalid characters)
         custom_filename = "".join(c for c in custom_filename if c.isalnum() or c in ' -_')
 
-        # Progress callback for merging
-        def update_progress(current: int, total: int):
+        # Format-specific progress mapping (WAV is much faster to convert than MP3/M4A)
+        merge_progress_end = 0.95 if output_format == 'wav' else 0.75
+        convert_progress_start = merge_progress_end
+        convert_progress_mid = convert_progress_start + (1.0 - convert_progress_start) * 0.5
+        convert_progress_final = convert_progress_start + (1.0 - convert_progress_start) * 0.8
+
+        # Cancellation callback (checked BEFORE each segment - immediate abort)
+        def check_cancellation() -> None:
+            if job_id in export_jobs and export_jobs[job_id].get('status') == 'cancelled':
+                logger.info(f"Export job {job_id} cancelled by user")
+                raise InterruptedError("Export cancelled by user")
+
+        # Get event loop for thread-safe SSE broadcasting
+        loop = asyncio.get_event_loop()
+
+        # Progress callback for merging (called AFTER each segment)
+        def update_progress(current: int, total: int) -> None:
             progress = current / total if total > 0 else 0
+            progress_pct = progress * merge_progress_end
             export_jobs[job_id].update({
-                "progress": progress * 0.5,  # First 50% for merging
+                "progress": progress_pct,  # Format-specific: 75% or 95%
                 "current_segment": current,
                 "message": f"Merging segment {current}/{total}..."
             })
@@ -182,17 +207,66 @@ async def export_task(
             if export_job:
                 export_repo.update(job_id, merged_segments=current)
 
+            # Broadcast progress event (thread-safe)
+            # Note: update_progress is called from thread pool, so we need run_coroutine_threadsafe
+            asyncio.run_coroutine_threadsafe(
+                broadcaster.broadcast_export_update(
+                    export_data={
+                        "exportId": job_id,
+                        "chapterId": chapter_id,
+                        "status": "running",
+                        "progress": progress_pct,
+                        "message": f"Merging segment {current}/{total}...",
+                        "currentSegment": current,
+                        "totalSegments": total
+                    },
+                    event_type=EventType.EXPORT_PROGRESS
+                ),
+                loop
+            )
+
         # Merge segments (includes standard + divider)
-        logger.info(f"Merging {len(exportable_segments)} segments for chapter {chapter_id}")
-        temp_wav_path, duration = audio_service.merge_segments_to_file(
+        # Run in thread pool to avoid blocking the event loop
+        logger.debug(f"Merging {len(exportable_segments)} segments for chapter {chapter_id}")
+        temp_wav_path, duration = await asyncio.to_thread(
+            audio_service.merge_segments_to_file,
             exportable_segments,
             custom_filename,
             pause_between_segments,
-            update_progress
+            update_progress,
+            check_cancellation  # FIX BUG 2: Check BEFORE each segment (immediate abort)
         )
 
+        # FIX BUG 2: Check for cancellation after merge
+        if job_id in export_jobs and export_jobs[job_id].get('status') == 'cancelled':
+            logger.debug(f"Export job {job_id} was cancelled after merge, cleaning up")
+            # Cleanup temp file
+            if temp_wav_path and temp_wav_path.exists():
+                temp_wav_path.unlink()
+            return
+
+        # Update progress: Merging complete, starting conversion
         export_jobs[job_id]["message"] = f"Converting to {output_format.upper()}..."
-        export_jobs[job_id]["progress"] = 0.5  # 50% done
+        export_jobs[job_id]["progress"] = convert_progress_start  # Format-specific: 75% or 95%
+
+        # Update database
+        if export_job:
+            export_repo.update(job_id, merged_segments=len(exportable_segments))
+
+        # Broadcast progress event
+        await broadcaster.broadcast_export_update(
+            export_data={
+                "exportId": job_id,
+                "chapterId": chapter_id,
+                "status": "running",
+                "progress": convert_progress_start,
+                "message": f"Converting to {output_format.upper()}..."
+            },
+            event_type=EventType.EXPORT_PROGRESS
+        )
+
+        # Give frontend time to receive SSE update (600ms delay)
+        await asyncio.sleep(0.6)
 
         # Prepare metadata
         metadata = {
@@ -201,14 +275,64 @@ async def export_task(
             "track": str(chapter['order_index'] + 1)
         }
 
+        # Update progress: Conversion starting
+        export_jobs[job_id]["progress"] = convert_progress_mid  # Format-specific
+        export_jobs[job_id]["message"] = f"Encoding {output_format.upper()} audio..."
+
+        # Broadcast progress event
+        await broadcaster.broadcast_export_update(
+            export_data={
+                "exportId": job_id,
+                "chapterId": chapter_id,
+                "status": "running",
+                "progress": convert_progress_mid,
+                "message": f"Encoding {output_format.upper()} audio..."
+            },
+            event_type=EventType.EXPORT_PROGRESS
+        )
+
+        # Give frontend time to receive SSE update (600ms delay)
+        await asyncio.sleep(0.6)
+
         # Convert to target format
-        output_path, file_size = audio_service.convert_to_format(
+        # Run in thread pool to avoid blocking the event loop
+        output_path, file_size = await asyncio.to_thread(
+            audio_service.convert_to_format,
             temp_wav_path,
             output_format,
             bitrate if output_format != 'wav' else None,
             sample_rate,
             metadata
         )
+
+        # FIX BUG 2: Check for cancellation after conversion
+        if job_id in export_jobs and export_jobs[job_id].get('status') == 'cancelled':
+            logger.debug(f"Export job {job_id} was cancelled after conversion, cleaning up")
+            # Cleanup both temp and output files
+            if temp_wav_path and temp_wav_path.exists():
+                temp_wav_path.unlink()
+            if output_path and output_path.exists():
+                output_path.unlink()
+            return
+
+        # Update progress: Conversion complete
+        export_jobs[job_id]["progress"] = convert_progress_final  # Format-specific
+        export_jobs[job_id]["message"] = "Finalizing export..."
+
+        # Broadcast progress event
+        await broadcaster.broadcast_export_update(
+            export_data={
+                "exportId": job_id,
+                "chapterId": chapter_id,
+                "status": "running",
+                "progress": convert_progress_final,
+                "message": "Finalizing export..."
+            },
+            event_type=EventType.EXPORT_PROGRESS
+        )
+
+        # Give frontend time to receive SSE update (600ms delay)
+        await asyncio.sleep(0.6)
 
         # Generate HTTP URL for the exported file
         relative_path = output_path.relative_to(Path(EXPORTS_DIR))
@@ -237,7 +361,61 @@ async def export_task(
                 completed_at=datetime.now().isoformat()
             )
 
+        # Broadcast export completed event
+        await broadcaster.broadcast_export_update(
+            export_data={
+                "exportId": job_id,
+                "chapterId": chapter_id,
+                "status": "completed",
+                "progress": 1.0,
+                "message": "Export completed successfully",
+                "outputPath": audio_url,
+                "fileSize": file_size,
+                "duration": duration
+            },
+            event_type=EventType.EXPORT_COMPLETED
+        )
+
         logger.info(f"Export completed: {output_path} ({file_size} bytes, {duration:.1f}s)")
+
+    except InterruptedError as e:
+        # FIX BUG 2: Handle cancellation separately (not an error)
+        error_msg = str(e)
+        logger.info(f"Export cancelled for job {job_id}: {error_msg}")
+
+        # Cleanup any partial temp files (WAV + output format)
+        temp_wav_path = Path(EXPORTS_DIR) / f"{custom_filename}.wav"
+        if temp_wav_path.exists():
+            temp_wav_path.unlink()
+            logger.debug(f"Cleaned up partial temp file: {temp_wav_path}")
+
+        # Also cleanup output file if conversion started
+        output_path = Path(EXPORTS_DIR) / f"{custom_filename}.{output_format}"
+        if output_path.exists():
+            output_path.unlink()
+            logger.debug(f"Cleaned up partial output file: {output_path}")
+
+        # Keep cancelled status (already set by cancel endpoint)
+        if job_id in export_jobs:
+            export_jobs[job_id].update({
+                "progress": 0.0,
+                "message": "Export cancelled by user",
+                "completed_at": datetime.now()
+            })
+
+        # Broadcast export cancelled event
+        await broadcaster.broadcast_export_update(
+            export_data={
+                "exportId": job_id,
+                "chapterId": chapter_id,
+                "status": "cancelled",
+                "progress": 0.0,
+                "message": "Export cancelled by user"
+            },
+            event_type=EventType.EXPORT_CANCELLED
+        )
+
+        # Database already updated by cancel endpoint, no need to update again
 
     except Exception as e:
         error_msg = str(e)
@@ -264,6 +442,19 @@ async def export_task(
             )
         except Exception as db_error:
             logger.error(f"Failed to update database: {db_error}")
+
+        # Broadcast export failed event
+        await broadcaster.broadcast_export_update(
+            export_data={
+                "exportId": job_id,
+                "chapterId": chapter_id,
+                "status": "failed",
+                "progress": 0.0,
+                "message": f"Export failed: {error_msg}",
+                "error": error_msg
+            },
+            event_type=EventType.EXPORT_FAILED
+        )
     finally:
         # Always decrement active jobs count (success or failure)
         health_monitor.decrement_active_jobs()
@@ -293,7 +484,7 @@ async def start_export(
         # Validate chapter exists
         chapter = chapter_repo.get_by_id(request.chapter_id)
         if not chapter:
-            raise HTTPException(status_code=404, detail="Chapter not found")
+            raise HTTPException(status_code=404, detail=f"[EXPORT_CHAPTER_NOT_FOUND]chapterId:{request.chapter_id}")
 
         # Get segments
         segments = segment_repo.get_by_chapter(request.chapter_id)
@@ -306,11 +497,11 @@ async def start_export(
         if incomplete_segments:
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot export: {len(incomplete_segments)} segments are not completed"
+                detail=f"[EXPORT_INCOMPLETE_SEGMENTS]count:{len(incomplete_segments)}"
             )
 
         if not segments:
-            raise HTTPException(status_code=400, detail="Chapter has no segments")
+            raise HTTPException(status_code=400, detail=f"[EXPORT_NO_SEGMENTS]chapterId:{request.chapter_id}")
 
         # Get bitrate and sample_rate from quality preset or explicit values
         bitrate, sample_rate = request.get_export_params()
@@ -359,11 +550,11 @@ async def start_export(
         raise
     except Exception as e:
         logger.error(f"Failed to start export: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[EXPORT_START_FAILED]error:{str(e)}")
 
 
 @router.get("/export/{job_id}/progress", response_model=ExportProgressResponse)
-async def get_export_progress(job_id: str):
+async def get_export_progress(job_id: str) -> ExportProgressResponse:
     """
     Get progress of an export job
 
@@ -407,17 +598,17 @@ async def get_export_progress(job_id: str):
                 error=export_job.get('error_message')
             )
         else:
-            raise HTTPException(status_code=404, detail="Export job not found")
+            raise HTTPException(status_code=404, detail=f"[EXPORT_JOB_NOT_FOUND]jobId:{job_id}")
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get export progress: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[EXPORT_PROGRESS_QUERY_FAILED]jobId:{job_id};error:{str(e)}")
 
 
 @router.delete("/export/{job_id}/cancel", response_model=MessageResponse)
-async def cancel_export(job_id: str):
+async def cancel_export(job_id: str) -> MessageResponse:
     """
     Cancel a running export job
 
@@ -432,10 +623,10 @@ async def cancel_export(job_id: str):
             export_job = export_repo.get_by_id(job_id)
 
             if not export_job:
-                raise HTTPException(status_code=404, detail="Export job not found")
+                raise HTTPException(status_code=404, detail=f"[EXPORT_JOB_NOT_FOUND]jobId:{job_id}")
 
             if export_job['status'] in ['completed', 'failed', 'cancelled']:
-                return {"success": True, "message": f"Job already {export_job['status']}"}
+                return MessageResponse(success=True, message=f"Job already {export_job['status']}")
 
         # Update job status
         if job_id in export_jobs:
@@ -456,17 +647,17 @@ async def cancel_export(job_id: str):
         audio_service = AudioService()
         audio_service.cleanup_temp_files(job_id)
 
-        return {"success": True, "message": "Export cancelled successfully"}
+        return MessageResponse(success=True, message="Export cancelled successfully")
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to cancel export: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[EXPORT_CANCEL_FAILED]jobId:{job_id};error:{str(e)}")
 
 
 @router.get("/export/{job_id}/download")
-async def download_export(job_id: str):
+async def download_export(job_id: str) -> FileResponse:
     """
     Download the exported audio file
 
@@ -479,23 +670,23 @@ async def download_export(job_id: str):
         export_job = export_repo.get_by_id(job_id)
 
         if not export_job:
-            raise HTTPException(status_code=404, detail="Export job not found")
+            raise HTTPException(status_code=404, detail=f"[EXPORT_JOB_NOT_FOUND]jobId:{job_id}")
 
         if export_job['status'] != 'completed':
             raise HTTPException(
                 status_code=400,
-                detail=f"Export not ready: status is {export_job['status']}"
+                detail=f"[EXPORT_NOT_READY]status:{export_job['status']}"
             )
 
         if not export_job.get('output_path'):
-            raise HTTPException(status_code=404, detail="Export file not found")
+            raise HTTPException(status_code=404, detail=f"[EXPORT_FILE_NOT_FOUND]jobId:{job_id}")
 
         # Convert URL back to file path
         audio_service = AudioService()
         local_path = audio_service.url_to_local_path(export_job['output_path'])
 
         if not local_path.exists():
-            raise HTTPException(status_code=404, detail="Export file no longer exists")
+            raise HTTPException(status_code=410, detail=f"[EXPORT_FILE_DELETED]jobId:{job_id};path:{local_path}")
 
         # Return file for download
         return FileResponse(
@@ -508,11 +699,11 @@ async def download_export(job_id: str):
         raise
     except Exception as e:
         logger.error(f"Failed to download export: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[EXPORT_DOWNLOAD_FAILED]jobId:{job_id};error:{str(e)}")
 
 
 @router.delete("/export/{job_id}", response_model=MessageResponse)
-async def delete_export(job_id: str):
+async def delete_export(job_id: str) -> MessageResponse:
     """
     Delete export file and cleanup resources
 
@@ -526,7 +717,7 @@ async def delete_export(job_id: str):
         export_job = export_repo.get_by_id(job_id)
 
         if not export_job:
-            raise HTTPException(status_code=404, detail="Export job not found")
+            raise HTTPException(status_code=404, detail=f"[EXPORT_JOB_NOT_FOUND]jobId:{job_id}")
 
         audio_service = AudioService()
 
@@ -536,7 +727,7 @@ async def delete_export(job_id: str):
                 local_path = audio_service.url_to_local_path(export_job['output_path'])
                 if local_path.exists():
                     local_path.unlink()
-                    logger.info(f"Deleted export file: {local_path}")
+                    logger.debug(f"Deleted export file: {local_path}")
             except Exception as e:
                 logger.warning(f"Failed to delete export file: {e}")
 
@@ -554,13 +745,13 @@ async def delete_export(job_id: str):
         if job_id in export_jobs:
             del export_jobs[job_id]
 
-        return {"success": True, "message": "Export deleted successfully"}
+        return MessageResponse(success=True, message="Export deleted successfully")
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to delete export: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[EXPORT_DELETE_FAILED]jobId:{job_id};error:{str(e)}")
 
 
 class MergeSegmentsRequest(BaseModel):
@@ -575,7 +766,7 @@ class MergeSegmentsRequest(BaseModel):
 
 
 @router.post("/merge", response_model=MergeResponse)
-async def merge_segments(request: MergeSegmentsRequest):
+async def merge_segments(request: MergeSegmentsRequest) -> MergeResponse:
     """
     Quick merge for preview (no format conversion)
 
@@ -595,7 +786,7 @@ async def merge_segments(request: MergeSegmentsRequest):
         segments = segment_repo.get_by_chapter(request.chapter_id)
 
         if not segments:
-            raise HTTPException(status_code=400, detail="No segments found")
+            raise HTTPException(status_code=404, detail=f"[EXPORT_NO_SEGMENTS_FOUND]chapterId:{request.chapter_id}")
 
         # Initialize audio service
         audio_service = AudioService()
@@ -611,29 +802,80 @@ async def merge_segments(request: MergeSegmentsRequest):
         relative_path = output_path.relative_to(Path(EXPORTS_DIR))
         audio_url = f"http://localhost:8765/exports/{relative_path.as_posix()}"
 
-        return {
-            "success": True,
-            "audio_path": audio_url,
-            "duration": duration
-        }
+        return MergeResponse(
+            success=True,
+            audio_path=audio_url,
+            duration=duration
+        )
 
     except Exception as e:
         logger.error(f"Failed to merge segments: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[AUDIO_MERGE_FAILED]chapterId:{request.chapter_id};error:{str(e)}")
 
 
 @router.get("/duration/{file_path:path}", response_model=AudioDurationResponse)
-async def get_audio_duration(file_path: str):
+async def get_audio_duration(file_path: str) -> AudioDurationResponse:
     """Get duration of an audio file"""
     try:
         audio_service = AudioService()
         local_path = Path('output') / file_path
         duration = audio_service.get_audio_duration(local_path)
 
-        return {
-            "file_path": file_path,
-            "duration": duration
-        }
+        return AudioDurationResponse(
+            file_path=file_path,
+            duration=duration
+        )
     except Exception as e:
         logger.error(f"Failed to get duration: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[AUDIO_DURATION_FAILED]filePath:{file_path};error:{str(e)}")
+
+
+# IMPORTANT: This catch-all route MUST be last!
+# FastAPI matches routes in order, so specific routes like /duration must come first
+@router.get("/{file_path:path}")
+async def get_audio_file(file_path: str) -> FileResponse:
+    """
+    Serve audio files with proper CORS headers
+
+    This endpoint serves audio files from the output directory.
+    Using an explicit endpoint instead of StaticFiles mount ensures
+    CORS middleware is applied correctly.
+
+    IMPORTANT: This is a catch-all route and must be defined LAST
+    to avoid shadowing other routes like /duration/{file_path}
+    """
+    from config import OUTPUT_DIR
+
+    # Security: Prevent path traversal
+    if '..' in file_path or file_path.startswith('/'):
+        raise HTTPException(status_code=400, detail=f"[EXPORT_INVALID_PATH]path:{file_path}")
+
+    audio_path = Path(OUTPUT_DIR) / file_path
+
+    if not audio_path.exists():
+        raise HTTPException(status_code=404, detail=f"[EXPORT_AUDIO_FILE_NOT_FOUND]path:{file_path}")
+
+    if not audio_path.is_file():
+        raise HTTPException(status_code=400, detail=f"[EXPORT_NOT_A_FILE]path:{file_path}")
+
+    # Determine media type based on file extension
+    media_type = "audio/wav"
+    if file_path.endswith('.mp3'):
+        media_type = "audio/mpeg"
+    elif file_path.endswith('.m4a'):
+        media_type = "audio/mp4"
+    elif file_path.endswith('.ogg'):
+        media_type = "audio/ogg"
+
+    response = FileResponse(
+        path=str(audio_path),
+        media_type=media_type,
+        filename=audio_path.name
+    )
+
+    # Add CORS headers manually (FileResponse bypasses middleware in some cases)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+
+    return response

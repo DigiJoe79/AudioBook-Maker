@@ -1,0 +1,36 @@
+# ============================================================================
+# Whisper STT Engine Dependencies
+# ============================================================================
+# Last Updated: 2025-12-04
+# Python: 3.12 (specified in engine.yaml)
+# Tested with: torch 2.5.1, torchaudio 2.5.1, openai-whisper 20250625
+# ============================================================================
+
+# OpenAI Whisper
+# v20250625 is latest stable (June 2025), date-based versioning
+# Requires: ffmpeg installed on system, PyTorch 2.x
+# GitHub: https://github.com/openai/whisper
+openai-whisper>=20250625
+
+# PyTorch ML Stack
+# IMPORTANT: torch and torchaudio versions MUST match
+# 2.9.x: torchaudio entered maintenance mode, deprecated APIs removed
+# 2.5.x-2.8.x: stable, all APIs available
+# CUDA: 2.5+ supports CUDA 11.8 and 12.x
+torch>=2.5.0,<3.0.0
+torchaudio>=2.5.0,<3.0.0
+
+# Web Framework
+# FastAPI 0.120+ ensures Pydantic 2.12 compatibility
+fastapi>=0.120.0
+uvicorn[standard]>=0.34.0
+pydantic>=2.10.0,<3.0.0
+
+# Audio Processing
+# NumPy 2.1+ for Python 3.12 compatibility improvements
+numpy>=2.1.0
+pydub>=0.25.1  # MP3 support, no updates since 2021
+
+# Utilities
+loguru>=0.7.0,<1.0.0
+pyyaml>=6.0.1  # 6.0.1 fixes Cython build issue

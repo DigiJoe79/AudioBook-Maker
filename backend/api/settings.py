@@ -3,6 +3,7 @@ Settings API Endpoints
 
 RESTful API for managing global application settings.
 """
+import sqlite3
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Any, Dict
 from pydantic import BaseModel, ConfigDict
@@ -34,7 +35,7 @@ class SettingUpdateRequest(BaseModel):
 
 
 @router.get("/", response_model=AllSettingsResponse)
-async def get_all_settings(db=Depends(get_db)):
+async def get_all_settings(db: sqlite3.Connection = Depends(get_db)) -> AllSettingsResponse:
     """
     Get all global settings
 
@@ -50,11 +51,11 @@ async def get_all_settings(db=Depends(get_db)):
 
     except Exception as e:
         logger.error(f"Failed to get settings: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[SETTINGS_GET_FAILED]error:{str(e)}")
 
 
 @router.get("/{key}", response_model=SettingValueResponse)
-async def get_setting(key: str, db=Depends(get_db)):
+async def get_setting(key: str, db: sqlite3.Connection = Depends(get_db)) -> SettingValueResponse:
     """
     Get specific setting by key
 
@@ -71,28 +72,28 @@ async def get_setting(key: str, db=Depends(get_db)):
         value = service.get_setting(key)
 
         if value is None:
-            raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
+            raise HTTPException(status_code=404, detail=f"[SETTINGS_KEY_NOT_FOUND]key:{key}")
 
         logger.debug(f"Retrieved setting: {key}")
 
-        return {
-            "key": key,
-            "value": value
-        }
+        return SettingValueResponse(
+            key=key,
+            value=value
+        )
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get setting '{key}': {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[SETTINGS_GET_FAILED]key:{key};error:{str(e)}")
 
 
 @router.put("/{key}", response_model=SettingValueResponse)
 async def update_setting(
     key: str,
     request: SettingUpdateRequest,
-    db=Depends(get_db)
-):
+    db: sqlite3.Connection = Depends(get_db)
+) -> SettingValueResponse:
     """
     Update a setting
 
@@ -122,11 +123,11 @@ async def update_setting(
 
     except Exception as e:
         logger.error(f"Failed to update setting '{key}': {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[SETTINGS_UPDATE_FAILED]error:{str(e)}")
 
 
 @router.post("/reset", response_model=MessageResponse)
-async def reset_to_defaults(db=Depends(get_db)):
+async def reset_to_defaults(db: sqlite3.Connection = Depends(get_db)) -> MessageResponse:
     """
     Reset all settings to default values
 
@@ -151,11 +152,11 @@ async def reset_to_defaults(db=Depends(get_db)):
 
     except Exception as e:
         logger.error(f"Failed to reset settings: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[SETTINGS_RESET_FAILED]error:{str(e)}")
 
 
 @router.get("/segment-limits/{engine}", response_model=SegmentLimitsResponse)
-async def get_segment_limits(engine: str, db=Depends(get_db)):
+async def get_segment_limits(engine: str, db: sqlite3.Connection = Depends(get_db)) -> SegmentLimitsResponse:
     """
     Get effective segment length limits for text segmentation
 
@@ -181,29 +182,42 @@ async def get_segment_limits(engine: str, db=Depends(get_db)):
 
     except Exception as e:
         logger.error(f"Failed to get segment limits for engine '{engine}': {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[SETTINGS_GET_SEGMENT_LIMITS_FAILED]engine:{engine};error:{str(e)}")
 
 
-@router.get("/engine-schema/{engine}", response_model=EngineSchemaResponse)
-async def get_engine_parameter_schema(engine: str):
+@router.get("/engine-schema/{engine_type}/{engine}", response_model=EngineSchemaResponse)
+async def get_engine_parameter_schema_by_type(engine_type: str, engine: str) -> EngineSchemaResponse:
     """
-    Get parameter schema for a specific TTS engine
+    Get parameter schema for any engine type
 
     Returns UI metadata for engine parameters (for Settings dialog).
 
     Args:
+        engine_type: Type of engine ('tts', 'stt', 'text', 'audio')
         engine: Engine name
 
     Returns:
         Parameter schema dictionary
     """
     try:
-        from core.engine_manager import get_engine_manager
-
-        manager = get_engine_manager()
+        # Get the appropriate engine manager based on type
+        if engine_type == 'tts':
+            from core.tts_engine_manager import get_tts_engine_manager
+            manager = get_tts_engine_manager()
+        elif engine_type == 'stt':
+            from core.stt_engine_manager import get_stt_engine_manager
+            manager = get_stt_engine_manager()
+        elif engine_type == 'text':
+            from core.text_engine_manager import get_text_engine_manager
+            manager = get_text_engine_manager()
+        elif engine_type == 'audio':
+            from core.audio_engine_manager import get_audio_engine_manager
+            manager = get_audio_engine_manager()
+        else:
+            raise HTTPException(status_code=400, detail=f"[SETTINGS_INVALID_ENGINE_TYPE]type:{engine_type}")
 
         if engine not in manager._engine_metadata:
-            raise HTTPException(status_code=404, detail=f"Engine '{engine}' not found")
+            raise HTTPException(status_code=404, detail=f"[SETTINGS_ENGINE_NOT_FOUND]engine:{engine};type:{engine_type}")
 
         # Get parameter schema from engine metadata (engine.yaml)
         # Note: metadata['config'] contains the entire engine.yaml,
@@ -212,12 +226,52 @@ async def get_engine_parameter_schema(engine: str):
         yaml_config = metadata.get('config', {})
         schema = yaml_config.get('config', {}).get('parameter_schema', {})
 
+        logger.debug(f"Retrieved parameter schema for {engine_type} engine '{engine}': {len(schema)} parameters")
+
+        return EngineSchemaResponse(parameters=schema)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get parameter schema for {engine_type} engine '{engine}': {e}")
+        raise HTTPException(status_code=500, detail=f"[SETTINGS_GET_SCHEMA_FAILED]engine:{engine};type:{engine_type};error:{str(e)}")
+
+
+@router.get("/engine-schema/{engine}", response_model=EngineSchemaResponse)
+async def get_engine_parameter_schema(engine: str) -> EngineSchemaResponse:
+    """
+    Get parameter schema for a specific TTS engine (legacy endpoint)
+
+    Returns UI metadata for engine parameters (for Settings dialog).
+    DEPRECATED: Use /engine-schema/{engine_type}/{engine} instead.
+
+    Args:
+        engine: Engine name
+
+    Returns:
+        Parameter schema dictionary
+    """
+    try:
+        from core.tts_engine_manager import get_tts_engine_manager
+
+        tts_manager = get_tts_engine_manager()
+
+        if engine not in tts_manager._engine_metadata:
+            raise HTTPException(status_code=404, detail=f"[SETTINGS_ENGINE_NOT_FOUND]engine:{engine}")
+
+        # Get parameter schema from engine metadata (engine.yaml)
+        # Note: metadata['config'] contains the entire engine.yaml,
+        # which itself has a 'config' field with 'parameter_schema'
+        metadata = tts_manager._engine_metadata[engine]
+        yaml_config = metadata.get('config', {})
+        schema = yaml_config.get('config', {}).get('parameter_schema', {})
+
         logger.debug(f"Retrieved parameter schema for engine '{engine}': {len(schema)} parameters")
 
-        return {"parameters": schema}
+        return EngineSchemaResponse(parameters=schema)
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get parameter schema for engine '{engine}': {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"[SETTINGS_GET_SCHEMA_FAILED]engine:{engine};error:{str(e)}")

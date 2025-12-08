@@ -43,7 +43,6 @@ from .response_models import (
     HealthResponse,
 
     # Text Processing
-    TextSegmentPreview,
     TextSegmentationResponse,
 
     # Generic
@@ -90,7 +89,6 @@ __all__ = [
     "HealthResponse",
 
     # Text Processing
-    "TextSegmentPreview",
     "TextSegmentationResponse",
 
     # Generic

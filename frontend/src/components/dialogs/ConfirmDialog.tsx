@@ -12,6 +12,7 @@ import {
   DialogActions,
   Button,
   Typography,
+  Box,
 } from '@mui/material'
 import { useTranslation } from 'react-i18next'
 
@@ -31,6 +32,9 @@ export interface ConfirmDialogProps {
   /** Dialog message/description */
   message: string
 
+  /** Optional icon to display in title */
+  icon?: React.ReactNode
+
   /** Text for the confirm button (default: "Confirm") */
   confirmText?: string
 
@@ -46,12 +50,15 @@ export interface ConfirmDialogProps {
  *
  * @example
  * ```tsx
+ * import { Warning as WarningIcon } from '@mui/icons-material'
+ *
  * <ConfirmDialog
  *   open={isOpen}
  *   onClose={() => setIsOpen(false)}
  *   onConfirm={handleDelete}
  *   title="Delete Project?"
  *   message="This action cannot be undone."
+ *   icon={<WarningIcon color="error" />}
  *   confirmText="Delete"
  *   confirmColor="error"
  * />
@@ -63,6 +70,7 @@ export function ConfirmDialog({
   onConfirm,
   title,
   message,
+  icon,
   confirmText,
   confirmColor = 'primary',
   cancelText,
@@ -75,14 +83,35 @@ export function ConfirmDialog({
   }
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{title}</DialogTitle>
-      <DialogContent>
-        <Typography>{message}</Typography>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      maxWidth="xs"
+      fullWidth
+      data-testid="confirm-dialog"
+      PaperProps={{
+        sx: {
+          bgcolor: 'background.paper',
+          backgroundImage: 'none',
+        },
+      }}
+    >
+      <DialogTitle sx={{ borderBottom: 1, borderColor: 'divider' }}>
+        {icon ? (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            {icon}
+            <Typography variant="h6">{title}</Typography>
+          </Box>
+        ) : (
+          title
+        )}
+      </DialogTitle>
+      <DialogContent dividers sx={{ bgcolor: 'background.default' }}>
+        <Typography sx={{ color: 'text.primary' }}>{message}</Typography>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>{cancelText || t('common.cancel')}</Button>
-        <Button onClick={handleConfirm} color={confirmColor} variant="contained">
+      <DialogActions sx={{ borderTop: 1, borderColor: 'divider', p: 2 }}>
+        <Button data-testid="confirm-dialog-cancel" onClick={onClose}>{cancelText || t('common.cancel')}</Button>
+        <Button data-testid="confirm-dialog-confirm" onClick={handleConfirm} color={confirmColor} variant="contained">
           {confirmText || t('common.ok')}
         </Button>
       </DialogActions>

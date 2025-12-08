@@ -37,11 +37,26 @@ export default defineConfig({
     outDir: 'dist',
     // Ensure CSS is properly injected
     cssCodeSplit: true,
+    // Suppress chunk size warning (acceptable for Tauri desktop app)
+    chunkSizeWarningLimit: 1500,
+  },
+
+  // Drop console.* calls in production builds (P3.3)
+  esbuild: {
+    drop: process.env.TAURI_DEBUG ? [] : ['console'],
   },
 
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@components': path.resolve(__dirname, './src/components'),
+      '@hooks': path.resolve(__dirname, './src/hooks'),
+      '@services': path.resolve(__dirname, './src/services'),
+      '@store': path.resolve(__dirname, './src/store'),
+      '@types': path.resolve(__dirname, './src/types/index.ts'),
+      '@utils': path.resolve(__dirname, './src/utils'),
+      '@contexts': path.resolve(__dirname, './src/contexts'),
+      '@pages': path.resolve(__dirname, './src/pages'),
     },
   },
 });

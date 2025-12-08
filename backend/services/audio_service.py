@@ -57,7 +57,8 @@ class AudioService:
         segments: List[Dict[str, Any]],
         output_filename: str,
         pause_ms: int = 500,
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        cancellation_callback: Optional[callable] = None
     ) -> Tuple[Path, float]:
         """
         Merge multiple audio segments into a single file with pauses
@@ -71,6 +72,7 @@ class AudioService:
             output_filename: Name for the output file (without extension)
             pause_ms: Default pause duration between standard segments in milliseconds
             progress_callback: Optional callback for progress updates
+            cancellation_callback: Optional callback to check for cancellation (throws InterruptedError if cancelled)
 
         Returns:
             Tuple of (output_path, total_duration_seconds)
@@ -78,7 +80,7 @@ class AudioService:
         if not segments:
             raise ValueError("No segments to merge")
 
-        logger.info(f"Merging {len(segments)} segments (standard + dividers) with {pause_ms}ms pause")
+        logger.info(f"[AudioService] Merging segments count={len(segments)} pause_ms={pause_ms}")
 
         # Start with empty audio
         combined = AudioSegment.empty()
@@ -86,6 +88,10 @@ class AudioService:
         # Process all segments in order (standard + divider)
         for i, segment in enumerate(segments):
             try:
+                # FIX BUG 2: Check for cancellation BEFORE processing segment (immediate abort)
+                if cancellation_callback:
+                    cancellation_callback()
+
                 segment_type = segment.get('segment_type', 'standard')
 
                 if segment_type == 'divider':
@@ -122,6 +128,11 @@ class AudioService:
                 # Update progress
                 if progress_callback:
                     progress_callback(i + 1, len(segments))
+
+            except InterruptedError:
+                # FIX BUG 2: Re-raise cancellation (not an error, don't log as error)
+                logger.debug(f"Merge interrupted at segment {i} (cancellation requested)")
+                raise
 
             except Exception as e:
                 logger.error(f"Failed to process segment {i} (type: {segment.get('segment_type')}): {e}")

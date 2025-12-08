@@ -32,6 +32,7 @@ import {
   Star as StarIcon,
   StarBorder as StarBorderIcon,
   Close as CloseIcon,
+  Warning as WarningIcon,
 } from '@mui/icons-material'
 import {
   loadProfiles,
@@ -39,10 +40,13 @@ import {
   updateProfile,
   deleteProfile,
   validateUrl,
-} from '../../services/backendProfiles'
-import type { BackendProfile } from '../../types/backend'
-import { useConfirm } from '../../hooks/useConfirm'
+} from '@services/backendProfiles'
+import type { BackendProfile } from '@types'
+import { useConfirm } from '@hooks/useConfirm'
+import { useError } from '@hooks/useError'
+import { useSnackbar } from '@hooks/useSnackbar'
 import { useTranslation } from 'react-i18next'
+import { logger } from '@utils/logger'
 
 interface ProfileManagerDialogProps {
   open: boolean
@@ -70,6 +74,8 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
 
   // Confirmation dialog hook
   const { confirm, ConfirmDialog } = useConfirm()
+  const { showError, ErrorDialog } = useError()
+  const { showSnackbar, SnackbarComponent } = useSnackbar()
 
   // Load profiles on mount and when dialog opens
   useEffect(() => {
@@ -104,20 +110,41 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
   const handleDelete = async (profile: BackendProfile) => {
     const confirmed = await confirm(
       t('profileManager.deleteTitle'),
-      t('profileManager.deleteConfirm', { name: profile.name })
+      t('profileManager.deleteConfirm', { name: profile.name }),
+      {
+        icon: <WarningIcon color="error" />,
+        confirmColor: 'error',
+      }
     )
     if (confirmed) {
-      deleteProfile(profile.id)
-      setProfiles(loadProfiles())
-      onProfilesChanged()
+      logger.group('🔧 Profile Manager', 'Deleting profile', { profileId: profile.id, name: profile.name }, '#FF5722')
+      try {
+        deleteProfile(profile.id)
+        setProfiles(loadProfiles())
+        onProfilesChanged()
+        showSnackbar(t('profileManager.deleted'), { severity: 'success' })
+      } catch (err) {
+        await showError(
+          t('profileManager.deleteTitle'),
+          err instanceof Error ? err.message : t('profileManager.deleteFailed')
+        )
+      }
     }
   }
 
   // Handle toggle default
-  const handleToggleDefault = (profile: BackendProfile) => {
-    updateProfile(profile.id, { isDefault: !profile.isDefault })
-    setProfiles(loadProfiles())
-    onProfilesChanged()
+  const handleToggleDefault = async (profile: BackendProfile) => {
+    logger.group('🔧 Profile Manager', 'Toggling default profile', { profileId: profile.id, name: profile.name, newDefault: !profile.isDefault }, '#2196F3')
+    try {
+      updateProfile(profile.id, { isDefault: !profile.isDefault })
+      setProfiles(loadProfiles())
+      onProfilesChanged()
+    } catch (err) {
+      await showError(
+        t('profileManager.updateFailed'),
+        err instanceof Error ? err.message : t('profileManager.updateError')
+      )
+    }
   }
 
   // Validate form
@@ -148,21 +175,36 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
   }
 
   // Handle save
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validateForm()) return
 
     if (editingProfileId) {
-      // Update existing
-      updateProfile(editingProfileId, formData)
+      logger.group('🔧 Profile Manager', 'Updating profile', { profileId: editingProfileId, name: formData.name, url: formData.url }, '#4CAF50')
     } else {
-      // Create new - add lastConnected: null
-      saveProfile({ ...formData, lastConnected: null })
+      logger.group('🔧 Profile Manager', 'Creating profile', { name: formData.name, url: formData.url, isDefault: formData.isDefault }, '#4CAF50')
     }
 
-    setProfiles(loadProfiles())
-    setIsFormVisible(false)
-    setEditingProfileId(null)
-    onProfilesChanged()
+    try {
+      if (editingProfileId) {
+        // Update existing
+        updateProfile(editingProfileId, formData)
+        showSnackbar(t('profileManager.updated'), { severity: 'success' })
+      } else {
+        // Create new - add lastConnected: null
+        saveProfile({ ...formData, lastConnected: null })
+        showSnackbar(t('profileManager.created'), { severity: 'success' })
+      }
+
+      setProfiles(loadProfiles())
+      setIsFormVisible(false)
+      setEditingProfileId(null)
+      onProfilesChanged()
+    } catch (err) {
+      await showError(
+        editingProfileId ? t('profileManager.updateFailed') : t('profileManager.createFailed'),
+        err instanceof Error ? err.message : t('profileManager.saveFailed')
+      )
+    }
   }
 
   // Handle cancel
@@ -305,6 +347,12 @@ export function ProfileManagerDialog({ open, onClose, onProfilesChanged }: Profi
 
       {/* Confirmation Dialog */}
       <ConfirmDialog />
+
+      {/* Error Dialog */}
+      <ErrorDialog />
+
+      {/* Snackbar Notifications */}
+      <SnackbarComponent />
     </Dialog>
   )
 }

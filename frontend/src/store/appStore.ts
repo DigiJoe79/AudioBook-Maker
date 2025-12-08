@@ -16,41 +16,70 @@
  */
 
 import { create } from 'zustand'
-import type { BackendProfile, SessionState } from '../types/backend'
-import { logger } from '../utils/logger'
+import { produce } from 'immer'
+import type { BackendProfile, SessionState, EngineAvailability } from '@types'
+import { logger } from '@utils/logger'
 
 // ============================================================================
 // Types & Interfaces
 // ============================================================================
 
+// Common engine settings structure
+interface EngineSettings {
+  enabled?: boolean;
+  defaultModelName?: string;
+  parameters?: Record<string, unknown>;
+}
+
 export interface GlobalSettings {
   tts: {
     defaultTtsEngine: string;
-    defaultTtsModelName: string;
-    defaultTtsSpeaker: string | null;
+    // NOTE: defaultTtsModelName removed - now per-engine (see engines.*.defaultModelName)
+    // NOTE: defaultTtsSpeaker removed - speakers table (is_default flag) is the single source of truth
+    //       Use useDefaultSpeaker() hook to get the default speaker
     engines: {
-      [engineType: string]: {
+      [engineName: string]: EngineSettings & {
         defaultLanguage: string;
-        parameters: Record<string, any>;
       };
     };
   };
   audio: {
+    // Export settings
     defaultFormat: 'mp3' | 'wav' | 'm4a';
     defaultQuality: 'low' | 'medium' | 'high';
     pauseBetweenSegments: number;
     defaultDividerDuration: number;
-    volumeNormalization: {
-      enabled: boolean;
-      targetLevel: number;
-      truePeak: number;
+    // Audio Analysis Engine settings
+    defaultAudioEngine?: string;
+    engines?: {
+      [engineName: string]: EngineSettings;
     };
   };
   text: {
-    defaultSegmentationMethod: 'sentences' | 'paragraphs' | 'smart' | 'length';
+    defaultTextEngine?: string;  // Text processing engine to use
     preferredMaxSegmentLength: number;
-    autoCreateSegments: boolean;
-    autoDetectLanguage: boolean;
+    engines?: {
+      [engineName: string]: EngineSettings;
+    };
+  };
+  stt: {
+    defaultSttEngine: string;
+    engines?: {
+      [engineName: string]: EngineSettings;
+    };
+  };
+  quality: {
+    autoAnalyzeSegment: boolean;
+    autoAnalyzeChapter: boolean;
+    autoRegenerateDefects: number;  // 0=Deaktiviert, 1=Gebündelt, 2=Einzeln
+    maxRegenerateAttempts: number;
+  };
+  languages: {
+    allowedLanguages: string[];
+  };
+  engines: {
+    inactivityTimeoutMinutes: number;  // Auto-stop timeout (1-30 minutes)
+    autostartKeepRunning: boolean;     // Start all keepRunning engines on app startup
   };
 }
 
@@ -61,13 +90,6 @@ interface ConnectionState {
   profile: BackendProfile | null
 }
 
-interface SessionOverrides {
-  ttsEngine?: string
-  ttsModelName?: string
-  ttsSpeaker?: string
-  language?: string
-}
-
 export interface AppStore {
   // ====== Backend Connection ======
   connection: ConnectionState
@@ -76,18 +98,32 @@ export interface AppStore {
   settings: GlobalSettings | null
   isSettingsLoaded: boolean
 
-  // ====== Session Overrides (temporary, only RAM) ======
-  sessionOverrides: SessionOverrides
+  // ====== Engine Availability (for feature-gating) ======
+  engineAvailability: EngineAvailability
 
   // ====== Session State (for recovery) ======
   lastSessionState: SessionState | null
 
   // ====== Computed Getters ======
-  // Combine Settings + Overrides automatically
-  getCurrentTtsEngine: () => string
-  getCurrentTtsModelName: () => string
-  getCurrentTtsSpeaker: () => string
-  getCurrentLanguage: () => string
+  // Direct access to DB Settings defaults
+  getDefaultTtsEngine: () => string
+  getDefaultTtsModel: (engineName?: string) => string  // Per-engine default model
+  getDefaultLanguage: (engineName?: string) => string
+
+  // STT getters
+  getDefaultSttEngine: () => string
+  getDefaultSttModel: (engineName?: string) => string  // Per-engine default model
+
+  // Text getters
+  getDefaultTextEngine: () => string
+
+  // Audio getters
+  getDefaultAudioEngine: () => string
+
+  // Engine availability getters
+  canUseImport: () => boolean
+  canUseTTS: () => boolean
+  canUseSTT: () => boolean
 
   // ====== Actions: Connection ======
   setBackendConnection: (profile: BackendProfile, version: string) => void
@@ -95,12 +131,11 @@ export interface AppStore {
 
   // ====== Actions: Settings ======
   loadSettings: (settings: GlobalSettings) => void
-  updateSettings: (category: keyof GlobalSettings, value: any) => void
+  updateSettings: (category: keyof GlobalSettings, value: GlobalSettings[keyof GlobalSettings]) => void
   resetSettings: () => void
 
-  // ====== Actions: Session Overrides ======
-  setSessionOverride: (field: keyof SessionOverrides, value: string) => void
-  clearSessionOverrides: () => void
+  // ====== Actions: Engine Availability ======
+  updateEngineAvailability: (data: { hasTtsEngine: boolean; hasTextEngine: boolean; hasSttEngine: boolean; hasAudioEngine: boolean }) => void
 
   // ====== Actions: Session State ======
   saveSessionState: (state: SessionState) => void
@@ -141,74 +176,130 @@ export const useAppStore = create<AppStore>((set, get) => ({
   settings: null,
   isSettingsLoaded: false,
 
-  // ====== Session Overrides ======
-  sessionOverrides: {},
+  // ====== Engine Availability ======
+  engineAvailability: {
+    tts: {
+      hasEnabled: false,
+      hasRunning: false,
+      engines: [],
+    },
+    text: {
+      hasEnabled: false,
+      hasRunning: false,
+      engines: [],
+    },
+    stt: {
+      hasEnabled: false,
+      hasRunning: false,
+      engines: [],
+    },
+    audio: {
+      hasEnabled: false,
+      hasRunning: false,
+      engines: [],
+    },
+  },
 
   // ====== Session State ======
   lastSessionState: null,
 
   // ====== Computed Getters ======
+  // Direct access to DB Settings (no session overrides)
 
   /**
-   * Get current TTS engine
-   * Priority: Session Override > Settings > Fallback
+   * Get default TTS engine from database settings
    */
-  getCurrentTtsEngine: () => {
+  getDefaultTtsEngine: () => {
     const state = get()
-    return (
-      state.sessionOverrides.ttsEngine ||
-      state.settings?.tts.defaultTtsEngine ||
-      FALLBACK_DEFAULTS.ttsEngine
-    )
+    return state.settings?.tts.defaultTtsEngine || FALLBACK_DEFAULTS.ttsEngine
   },
 
   /**
-   * Get current TTS model name
-   * Priority: Session Override > Settings > Fallback
+   * Get default TTS model for a specific engine (per-engine default)
    */
-  getCurrentTtsModelName: () => {
+  getDefaultTtsModel: (engineName?: string) => {
     const state = get()
-    return (
-      state.sessionOverrides.ttsModelName ||
-      state.settings?.tts.defaultTtsModelName ||
-      FALLBACK_DEFAULTS.ttsModelName
-    )
+    const engine = engineName ?? state.getDefaultTtsEngine()
+    const engineConfig = state.settings?.tts.engines[engine]
+    return engineConfig?.defaultModelName ?? FALLBACK_DEFAULTS.ttsModelName
   },
 
   /**
-   * Get current speaker
-   * Priority: Session Override > Settings > Fallback
+   * Get default language for a specific engine from database settings
    */
-  getCurrentTtsSpeaker: () => {
+  getDefaultLanguage: (engineName?: string) => {
     const state = get()
-    return (
-      state.sessionOverrides.ttsSpeaker ||
-      state.settings?.tts.defaultTtsSpeaker ||
-      FALLBACK_DEFAULTS.ttsSpeaker
-    )
+    const engine = engineName ?? state.getDefaultTtsEngine()
+    const engineConfig = state.settings?.tts.engines[engine]
+    return engineConfig?.defaultLanguage || FALLBACK_DEFAULTS.language
   },
 
   /**
-   * Get current language
-   * Priority: Session Override > Engine-specific default > Fallback
+   * Get default STT engine from database settings
+   * Returns empty string if no default is set (deactivated)
    */
-  getCurrentLanguage: () => {
+  getDefaultSttEngine: () => {
     const state = get()
+    // Use ?? to preserve empty string (deactivated state)
+    // || would fallback for empty string, masking intentional deactivation
+    return state.settings?.stt.defaultSttEngine ?? ''
+  },
 
-    // Check session override first
-    if (state.sessionOverrides.language) {
-      return state.sessionOverrides.language
-    }
+  /**
+   * Get default STT model for a specific engine (per-engine default)
+   * Returns empty string if engine is deactivated (empty string)
+   * Falls back to 'base' only if engine is valid but has no model
+   */
+  getDefaultSttModel: (engineName?: string) => {
+    const state = get()
+    const engine = engineName ?? state.getDefaultSttEngine()
+    // If engine is empty string (deactivated), return empty string
+    if (engine === '') return ''
+    const engineConfig = state.settings?.stt.engines?.[engine]
+    return engineConfig?.defaultModelName || 'base'
+  },
 
-    // Then check engine-specific default language
-    const currentEngine = state.getCurrentTtsEngine()
-    const engineConfig = state.settings?.tts.engines[currentEngine]
-    if (engineConfig?.defaultLanguage) {
-      return engineConfig.defaultLanguage
-    }
+  /**
+   * Get default text processing engine from database settings
+   * Returns empty string if no default is set (deactivated)
+   */
+  getDefaultTextEngine: () => {
+    const state = get()
+    // Use ?? to preserve empty string (deactivated state)
+    // || would fallback for empty string, masking intentional deactivation
+    return state.settings?.text.defaultTextEngine ?? ''
+  },
 
-    // Fallback
-    return FALLBACK_DEFAULTS.language
+  /**
+   * Get default audio analysis engine from database settings
+   */
+  getDefaultAudioEngine: () => {
+    const state = get()
+    return state.settings?.audio?.defaultAudioEngine ?? ''
+  },
+
+  /**
+   * Check if import feature is available (requires text processing engine)
+   */
+  canUseImport: () => {
+    const state = get()
+    return state.engineAvailability.text.hasEnabled
+  },
+
+  /**
+   * Check if TTS generation is available (requires TTS engine)
+   */
+  canUseTTS: () => {
+    const state = get()
+    return state.engineAvailability.tts.hasEnabled
+  },
+
+  /**
+   * Check if STT analysis is available (requires STT engine)
+   */
+  canUseSTT: () => {
+    const state = get()
+    return state.engineAvailability.stt.hasEnabled
   },
 
   // ====== Actions: Connection ======
@@ -266,9 +357,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       '💾 App Store',
       'Loading settings',
       {
-        'Engine': settings.tts.defaultTtsEngine,
-        'Model': settings.tts.defaultTtsModelName,
-        'Speaker': settings.tts.defaultTtsSpeaker || 'none'
+        'Default TTS Engine': settings.tts.defaultTtsEngine
       },
       '#2196F3'  // Blue for info
     )
@@ -290,19 +379,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
       '#2196F3'  // Blue for info
     )
 
-    set((state) => {
-      if (!state.settings) {
-        logger.warn('[AppStore] Cannot update settings - settings not loaded')
-        return state
-      }
-
-      return {
-        settings: {
-          ...state.settings,
-          [category]: value,
-        },
-      }
-    })
+    set(
+      produce((draft) => {
+        if (!draft.settings) {
+          logger.warn('[AppStore] Cannot update settings - settings not loaded')
+          return
+        }
+        draft.settings[category] = value
+      })
+    )
   },
 
   resetSettings: () => {
@@ -322,37 +407,33 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })
   },
 
-  // ====== Actions: Session Overrides ======
+  // ====== Actions: Engine Availability ======
 
-  setSessionOverride: (field, value) => {
-    logger.group('💾 App Store', 'Setting session override', {
-      'Field': field,
-      'Value': value || 'undefined'
-    }, '#2196F3')
-
+  updateEngineAvailability: (data) => {
     set((state) => ({
-      sessionOverrides: {
-        ...state.sessionOverrides,
-        [field]: value,
+      engineAvailability: {
+        tts: {
+          hasEnabled: data.hasTtsEngine,
+          hasRunning: state.engineAvailability.tts.hasRunning,
+          engines: state.engineAvailability.tts.engines,
+        },
+        text: {
+          hasEnabled: data.hasTextEngine,
+          hasRunning: state.engineAvailability.text.hasRunning,
+          engines: state.engineAvailability.text.engines,
+        },
+        stt: {
+          hasEnabled: data.hasSttEngine,
+          hasRunning: state.engineAvailability.stt.hasRunning,
+          engines: state.engineAvailability.stt.engines,
+        },
+        audio: {
+          hasEnabled: data.hasAudioEngine,
+          hasRunning: state.engineAvailability.audio.hasRunning,
+          engines: state.engineAvailability.audio.engines,
+        },
       },
     }))
-  },
-
-  clearSessionOverrides: () => {
-    const state = get()
-    logger.group(
-      '💾 App Store',
-      'Clearing all session overrides',
-      {
-        'Previous Overrides': Object.keys(state.sessionOverrides).length,
-        'Action': 'clear'
-      },
-      '#FF9800'  // Orange for cleanup
-    )
-
-    set({
-      sessionOverrides: {},
-    })
   },
 
   // ====== Actions: Session State ======
@@ -480,4 +561,12 @@ export function getDefaultLanguage(settings: GlobalSettings | null, engineType: 
   if (!settings) return 'en'
   const engineConfig = settings.tts.engines[engineType]
   return engineConfig?.defaultLanguage || 'en'
+}
+
+// ============================================================================
+// Expose store to window in development for E2E testing
+// ============================================================================
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
+  ;(window as any).useAppStore = useAppStore
+  logger.debug('[AppStore] Exposed to window.useAppStore for E2E testing')
 }

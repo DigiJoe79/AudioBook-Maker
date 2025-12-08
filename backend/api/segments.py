@@ -11,6 +11,7 @@ from db.database import get_db
 from db.repositories import SegmentRepository
 from models.response_models import SegmentResponse, DeleteResponse, ReorderResponse, to_camel
 from config import OUTPUT_DIR
+from services.event_broadcaster import broadcaster, EventType
 
 router = APIRouter(tags=["segments"])
 
@@ -86,37 +87,80 @@ async def create_segment(
     - standard: Regular text segment (requires engine, model_name, language)
     - divider: Pause/scene break (only needs pause_duration)
     """
-    segment_repo = SegmentRepository(conn)
+    try:
+        segment_repo = SegmentRepository(conn)
 
-    new_segment = segment_repo.create(
-        chapter_id=segment.chapter_id,
-        text=segment.text,
-        order_index=segment.order_index,
-        tts_engine=segment.tts_engine,
-        tts_model_name=segment.tts_model_name,
-        tts_speaker_name=segment.tts_speaker_name,
-        language=segment.language,
-        audio_path=segment.audio_path,
-        start_time=segment.start_time,
-        end_time=segment.end_time,
-        status=segment.status,
-        segment_type=segment.segment_type,
-        pause_duration=segment.pause_duration
-    )
+        new_segment = segment_repo.create(
+            chapter_id=segment.chapter_id,
+            text=segment.text,
+            order_index=segment.order_index,
+            tts_engine=segment.tts_engine,
+            tts_model_name=segment.tts_model_name,
+            tts_speaker_name=segment.tts_speaker_name,
+            language=segment.language,
+            audio_path=segment.audio_path,
+            start_time=segment.start_time,
+            end_time=segment.end_time,
+            status=segment.status,
+            segment_type=segment.segment_type,
+            pause_duration=segment.pause_duration
+        )
 
-    return new_segment
+        # Broadcast segment.created event for ALL segments (CRUD consistency)
+        try:
+            logger.debug(f"Broadcasting segment.created event: segmentId={new_segment['id']}, chapterId={new_segment['chapter_id']}")
+            await broadcaster.broadcast_event(
+                event_type=EventType.SEGMENT_CREATED,
+                data={
+                    "segmentId": new_segment["id"],
+                    "chapterId": new_segment["chapter_id"],
+                    "text": new_segment.get("text", ""),
+                    "segmentType": new_segment.get("segment_type", "standard"),
+                    "orderIndex": new_segment.get("order_index", 0)
+                },
+                channel="projects"
+            )
+
+            # Additional segment.updated event for divider segments (triggers audio/waveform update)
+            # Standard segments get segment.completed after TTS generation
+            if new_segment.get("segment_type") == "divider" and new_segment.get("pause_duration", 0) > 0:
+                logger.debug(f"Broadcasting segment.updated event for new divider: segmentId={new_segment['id']}, chapterId={new_segment['chapter_id']}")
+                await broadcaster.broadcast_segment_update({
+                    "segmentId": new_segment["id"],
+                    "chapterId": new_segment["chapter_id"],
+                    "pauseDuration": new_segment.get("pause_duration"),
+                })
+        except Exception as sse_err:
+            logger.warning(f"Failed to broadcast segment events: {sse_err}")
+
+        return new_segment
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create segment: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"[SEGMENT_CREATE_FAILED]error:{str(e)}")
 
 
 @router.get("/segments/{segment_id}", response_model=SegmentResponse)
 async def get_segment(segment_id: str, conn: sqlite3.Connection = Depends(get_db)):
-    """Get a segment"""
-    segment_repo = SegmentRepository(conn)
+    """
+    Get a single segment by ID.
 
-    segment = segment_repo.get_by_id(segment_id)
-    if not segment:
-        raise HTTPException(status_code=404, detail="Segment not found")
+    Used for segment detail view and editing.
+    """
+    try:
+        segment_repo = SegmentRepository(conn)
 
-    return segment
+        segment = segment_repo.get_by_id(segment_id)
+        if not segment:
+            raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+
+        return segment
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get segment {segment_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"[SEGMENT_GET_FAILED]segmentId:{segment_id};error:{str(e)}")
 
 
 @router.put("/segments/{segment_id}", response_model=SegmentResponse)
@@ -125,63 +169,135 @@ async def update_segment(
     segment: SegmentUpdate,
     conn: sqlite3.Connection = Depends(get_db)
 ):
-    """Update a segment"""
-    segment_repo = SegmentRepository(conn)
+    """
+    Update segment text, audio, or TTS parameters.
 
-    updated = segment_repo.update(
-        segment_id,
-        text=segment.text,
-        audio_path=segment.audio_path,
-        start_time=segment.start_time,
-        end_time=segment.end_time,
-        status=segment.status,
-        pause_duration=segment.pause_duration,
-        tts_engine=segment.tts_engine,
-        tts_model_name=segment.tts_model_name,
-        language=segment.language,
-        tts_speaker_name=segment.tts_speaker_name
-    )
+    Deletes quality analysis if text changes. Broadcasts segment.updated SSE event.
+    """
+    try:
+        from db.segments_analysis_repository import SegmentsAnalysisRepository
 
-    if not updated:
-        raise HTTPException(status_code=404, detail="Segment not found")
+        segment_repo = SegmentRepository(conn)
+        analysis_repo = SegmentsAnalysisRepository(conn)
 
-    return updated
+        # If text is changed, delete analysis (text is now different from analyzed audio)
+        if segment.text is not None:
+            deleted = analysis_repo.delete_by_segment_id(segment_id)
+            if deleted:
+                logger.debug(f"Deleted segment analysis for {segment_id} (text changed)")
+
+        updated = segment_repo.update(
+            segment_id,
+            text=segment.text,
+            audio_path=segment.audio_path,
+            start_time=segment.start_time,
+            end_time=segment.end_time,
+            status=segment.status,
+            pause_duration=segment.pause_duration,
+            tts_engine=segment.tts_engine,
+            tts_model_name=segment.tts_model_name,
+            language=segment.language,
+            tts_speaker_name=segment.tts_speaker_name
+        )
+
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+
+        # Broadcast SSE event for real-time UI updates (including MSE player hot-swap)
+        try:
+            logger.debug(f"Broadcasting segment.updated event: segmentId={updated['id']}, chapterId={updated['chapter_id']}")
+            await broadcaster.broadcast_segment_update({
+                "segmentId": updated["id"],
+                "chapterId": updated["chapter_id"],
+                "pauseDuration": updated.get("pause_duration"),
+                "text": updated.get("text"),
+            })
+        except Exception as sse_err:
+            logger.warning(f"Failed to broadcast segment.updated event: {sse_err}")
+
+        return updated
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update segment {segment_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"[SEGMENT_UPDATE_FAILED]segmentId:{segment_id};error:{str(e)}")
 
 
 @router.delete("/segments/{segment_id}", response_model=DeleteResponse)
 async def delete_segment(segment_id: str, conn: sqlite3.Connection = Depends(get_db)):
-    """Delete a segment and its audio file"""
-    from pathlib import Path
-    import os
+    """
+    Delete a segment and its audio file.
 
-    segment_repo = SegmentRepository(conn)
+    Deletes audio file and quality analysis. Broadcasts segment.deleted and chapter.updated SSE events.
+    """
+    try:
+        from pathlib import Path
+        import os
+        from db.segments_analysis_repository import SegmentsAnalysisRepository
 
-    # Get segment to delete its audio file
-    segment = segment_repo.get_by_id(segment_id)
-    if not segment:
-        raise HTTPException(status_code=404, detail="Segment not found")
+        segment_repo = SegmentRepository(conn)
+        analysis_repo = SegmentsAnalysisRepository(conn)
 
-    # Delete audio file if it exists
-    if segment.get('audio_path'):
+        # Get segment to delete its audio file
+        segment = segment_repo.get_by_id(segment_id)
+        if not segment:
+            raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+
+        # Delete audio file if it exists
+        if segment.get('audio_path'):
+            try:
+                # audio_path is just the filename (e.g., segment_123.wav)
+                filename = segment['audio_path']
+                audio_file = Path(OUTPUT_DIR) / filename
+
+                if audio_file.exists():
+                    os.remove(audio_file)
+                    logger.debug(f"✓ Deleted audio file: {filename}")
+                else:
+                    logger.warning(f"Audio file not found: {audio_file}")
+            except Exception as e:
+                # Log but don't fail the deletion
+                logger.warning(f"Could not delete audio file for segment {segment_id}: {e}")
+
+        # Delete segment analysis (if exists)
+        analysis_repo.delete_by_segment_id(segment_id)
+
+        # Delete segment from database
+        if not segment_repo.delete(segment_id):
+            raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+
+        chapter_id = segment.get("chapter_id")
+
+        # Broadcast SSE events
         try:
-            # audio_path is just the filename (e.g., segment_123.wav)
-            filename = segment['audio_path']
-            audio_file = Path(OUTPUT_DIR) / filename
+            # Broadcast segment.deleted event (CRUD consistency)
+            logger.debug(f"Broadcasting segment.deleted event: segmentId={segment_id}, chapterId={chapter_id}")
+            await broadcaster.broadcast_event(
+                event_type=EventType.SEGMENT_DELETED,
+                data={"segmentId": segment_id, "chapterId": chapter_id},
+                channel="projects"
+            )
 
-            if audio_file.exists():
-                os.remove(audio_file)
-                logger.info(f"✓ Deleted audio file: {filename}")
-            else:
-                logger.warning(f"Audio file not found: {audio_file}")
-        except Exception as e:
-            # Log but don't fail the deletion
-            logger.warning(f"Could not delete audio file for segment {segment_id}: {e}")
+            # Also broadcast chapter.updated event to trigger AudioPlayer refresh
+            # (on "projects" channel for unified channel architecture)
+            logger.debug(f"Broadcasting chapter.updated event after segment deletion: chapterId={chapter_id}")
+            await broadcaster.broadcast_event(
+                event_type=EventType.CHAPTER_UPDATED,
+                data={"chapterId": chapter_id},
+                channel="projects"
+            )
+        except Exception as sse_err:
+            logger.warning(f"Failed to broadcast segment deletion events: {sse_err}")
 
-    # Delete segment from database
-    if not segment_repo.delete(segment_id):
-        raise HTTPException(status_code=404, detail="Segment not found")
-
-    return {"success": True, "message": "Segment deleted"}
+        return DeleteResponse(
+            success=True,
+            message="Segment deleted"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete segment {segment_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"[SEGMENT_DELETE_FAILED]segmentId:{segment_id};error:{str(e)}")
 
 
 @router.post("/segments/reorder", response_model=ReorderResponse)
@@ -190,35 +306,48 @@ async def reorder_segments(
     conn: sqlite3.Connection = Depends(get_db)
 ):
     """
-    Reorder segments within a chapter
+    Reorder segments within a chapter.
 
-    Request body:
-    {
-      "segment_ids": ["seg1", "seg2", "seg3"],
-      "chapter_id": "ch1"
-    }
+    Array index determines new position. Broadcasts segment.reordered SSE event.
     """
-    segment_repo = SegmentRepository(conn)
+    try:
+        segment_repo = SegmentRepository(conn)
 
-    # Validate segments belong to chapter
-    for segment_id in data.segment_ids:
-        segment = segment_repo.get_by_id(segment_id)
-        if not segment:
-            raise HTTPException(status_code=404, detail=f"Segment {segment_id} not found")
-        if segment['chapter_id'] != data.chapter_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Segment {segment_id} does not belong to chapter {data.chapter_id}"
+        # Validate segments belong to chapter
+        for segment_id in data.segment_ids:
+            segment = segment_repo.get_by_id(segment_id)
+            if not segment:
+                raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+            if segment['chapter_id'] != data.chapter_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"[SEGMENT_CHAPTER_MISMATCH]segmentId:{segment_id};chapterId:{data.chapter_id}"
+                )
+
+        # Reorder
+        segment_repo.reorder_batch(data.segment_ids, data.chapter_id)
+
+        # Broadcast segment.reordered event (CRUD consistency)
+        try:
+            logger.debug(f"Broadcasting segment.reordered event: chapterId={data.chapter_id}, segments={len(data.segment_ids)}")
+            await broadcaster.broadcast_event(
+                event_type=EventType.SEGMENT_REORDERED,
+                data={"chapterId": data.chapter_id, "segmentIds": data.segment_ids},
+                channel="projects"
             )
+        except Exception as sse_err:
+            logger.warning(f"Failed to broadcast segment.reordered event: {sse_err}")
 
-    # Reorder
-    segment_repo.reorder_batch(data.segment_ids, data.chapter_id)
-
-    return {
-        "success": True,
-        "message": f"Reordered {len(data.segment_ids)} segments",
-        "count": len(data.segment_ids)
-    }
+        return ReorderResponse(
+            success=True,
+            message=f"Reordered {len(data.segment_ids)} segments",
+            count=len(data.segment_ids)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to reorder segments: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"[SEGMENT_REORDER_FAILED]chapterId:{data.chapter_id};error:{str(e)}")
 
 
 @router.put("/segments/{segment_id}/move", response_model=SegmentResponse)
@@ -228,33 +357,95 @@ async def move_segment(
     conn: sqlite3.Connection = Depends(get_db)
 ):
     """
-    Move segment to another chapter
+    Move segment to another chapter.
+
+    Updates chapter_id and reorders segments in both source and target chapters.
+    """
+    try:
+        from db.repositories import ChapterRepository
+
+        segment_repo = SegmentRepository(conn)
+        chapter_repo = ChapterRepository(conn)
+
+        # Validate segment exists
+        segment = segment_repo.get_by_id(segment_id)
+        if not segment:
+            raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+
+        # Validate new chapter exists
+        if not chapter_repo.get_by_id(data.new_chapter_id):
+            raise HTTPException(status_code=404, detail=f"[TARGET_CHAPTER_NOT_FOUND]chapterId:{data.new_chapter_id}")
+
+        # Move segment
+        updated_segment = segment_repo.move_to_chapter(
+            segment_id,
+            data.new_chapter_id,
+            data.new_order_index
+        )
+
+        return updated_segment
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to move segment {segment_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"[SEGMENT_MOVE_FAILED]segmentId:{segment_id};targetChapterId:{data.new_chapter_id};error:{str(e)}")
+
+
+class FreezeSegmentRequest(BaseModel):
+    """Request body for freezing/unfreezing a segment"""
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True
+    )
+
+    freeze: bool
+
+
+@router.patch("/segments/{segment_id}/freeze", response_model=SegmentResponse)
+async def toggle_freeze_segment(
+    segment_id: str,
+    data: FreezeSegmentRequest,
+    conn: sqlite3.Connection = Depends(get_db)
+):
+    """
+    Freeze or unfreeze a segment.
+
+    Frozen segments are:
+    - Protected from regeneration (TTS jobs skip them)
+    - Protected from STT analysis
+    - Visually marked with blue background + checkmark
 
     Request body:
     {
-      "new_chapter_id": "ch2",
-      "new_order_index": 0
+      "freeze": true  // or false
     }
     """
-    from db.repositories import ChapterRepository
-
     segment_repo = SegmentRepository(conn)
-    chapter_repo = ChapterRepository(conn)
 
     # Validate segment exists
     segment = segment_repo.get_by_id(segment_id)
     if not segment:
-        raise HTTPException(status_code=404, detail="Segment not found")
+        raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
 
-    # Validate new chapter exists
-    if not chapter_repo.get_by_id(data.new_chapter_id):
-        raise HTTPException(status_code=404, detail="Target chapter not found")
+    # Update frozen status
+    try:
+        updated_segment = segment_repo.set_frozen(segment_id, data.freeze)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=f"[SEGMENT_FREEZE_FAILED]segmentId:{segment_id};error:{str(e)}")
 
-    # Move segment
-    updated_segment = segment_repo.move_to_chapter(
-        segment_id,
-        data.new_chapter_id,
-        data.new_order_index
+    # Broadcast SSE event
+    event_type = EventType.SEGMENT_FROZEN if data.freeze else EventType.SEGMENT_UNFROZEN
+
+    await broadcaster.broadcast_event(
+        event_type=event_type,
+        data={
+            "segmentId": segment_id,
+            "chapterId": updated_segment["chapter_id"],
+            "isFrozen": data.freeze
+        },
+        channel="jobs"
     )
+
+    logger.debug(f"{'Frozen' if data.freeze else 'Unfrozen'} segment {segment_id}")
 
     return updated_segment

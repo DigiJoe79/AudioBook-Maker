@@ -27,17 +27,17 @@ import {
   CircularProgress,
   Alert,
   Stack,
-  Chip,
-  FormHelperText,
 } from '@mui/material';
 import { Settings } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';
+import { useError } from '@hooks/useError';
 import { useQuery } from '@tanstack/react-query';
-import { useTTSEngines, useTTSModels } from '../../hooks/useTTSQuery';
-import { fetchSpeakers } from '../../services/settingsApi';
-import type { Segment } from '../../types';
-import { logger } from '../../utils/logger';
-import { useAppStore } from '../../store/appStore';
+import { useAllEnginesStatus } from '@hooks/useEnginesQuery';
+import { fetchSpeakers } from '@services/settingsApi';
+import { queryKeys } from '@services/queryKeys';
+import type { Segment } from '@types';
+import { logger } from '@utils/logger';
+import { useAppStore } from '@store/appStore';
 
 interface EditSegmentSettingsDialogProps {
   open: boolean;
@@ -58,6 +58,7 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
   onSave,
 }) => {
   const { t } = useTranslation();
+  const { showError, ErrorDialog } = useError();
 
   // Get settings for default language
   const settings = useAppStore(state => state.settings);
@@ -69,25 +70,23 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
   const [selectedSpeaker, setSelectedSpeaker] = useState<string>('');
   const [saving, setSaving] = useState(false);
 
-  // Load available engines
-  const { data: availableEngines = [], isLoading: enginesLoading } = useTTSEngines();
-
-  // Load available models for selected engine
-  const { data: availableModels = [], isLoading: modelsLoading } = useTTSModels(
-    selectedEngine || null
-  );
+  // Load available engines and models (only enabled engines)
+  const { data: enginesStatus, isLoading: enginesLoading } = useAllEnginesStatus();
+  const availableEngines = (enginesStatus?.tts ?? []).filter(e => e.isEnabled);
+  const selectedEngineInfo = availableEngines.find(e => e.name === selectedEngine);
+  const availableModels = selectedEngineInfo?.availableModels ?? [];
 
   // Load available speakers
   const { data: allSpeakers = [], isLoading: speakersLoading } = useQuery({
-    queryKey: ['speakers'],
+    queryKey: queryKeys.speakers.lists(),
     queryFn: fetchSpeakers,
   });
 
   // Only show active speakers
   const availableSpeakers = allSpeakers.filter(s => s.isActive);
 
-  // Get supported languages for selected engine
-  const supportedLanguages = availableEngines.find(e => e.name === selectedEngine)?.supportedLanguages || [];
+  // Get supported languages for selected engine (filtered by allowedLanguages in backend)
+  const supportedLanguages = selectedEngineInfo?.supportedLanguages ?? [];
 
   // Initialize local state from segment when dialog opens
   useEffect(() => {
@@ -111,7 +110,7 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
   // Validate model when models load or engine changes
   useEffect(() => {
     if (availableModels.length > 0 && selectedModel) {
-      const modelExists = availableModels.some(m => m.modelName === selectedModel);
+      const modelExists = availableModels.includes(selectedModel);
       if (!modelExists) {
         setSelectedModel(''); // Clear invalid model
       }
@@ -128,29 +127,52 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
     }
   }, [supportedLanguages, selectedLanguage]);
 
-  // Auto-select first model when engine changes
+  // Auto-select model when engine changes: use per-engine default if available, otherwise first model
   useEffect(() => {
     if (selectedEngine && availableModels.length > 0) {
-      const modelExists = availableModels.some(m => m.modelName === selectedModel);
+      const modelExists = availableModels.includes(selectedModel);
 
-      // If current model is invalid or empty, select first available model
+      // If current model is invalid or empty, select best available model
       if (!modelExists || !selectedModel) {
-        const firstModel = availableModels[0].modelName;
-        setSelectedModel(firstModel);
+        // Try per-engine default model first
+        const engineConfig = settings?.tts.engines[selectedEngine];
+        const perEngineDefault = engineConfig?.defaultModelName;
+        const perEngineModelAvailable = perEngineDefault && availableModels.includes(perEngineDefault);
 
-        logger.group(
-          '🔄 Engine Model Auto-Select',
-          'Automatically selected first model after engine change',
-          {
-            'Engine': selectedEngine,
-            'Auto-Selected Model': firstModel,
-            'Previous Model': selectedModel || '(none)'
-          },
-          '#FF9800'
-        );
+        if (perEngineModelAvailable) {
+          setSelectedModel(perEngineDefault);
+
+          logger.group(
+            '🔄 Engine Model Auto-Select',
+            'Using per-engine default model from settings',
+            {
+              'Engine': selectedEngine,
+              'Auto-Selected Model': perEngineDefault,
+              'Previous Model': selectedModel || '(none)',
+              'Source': 'settings.tts.engines.defaultModelName'
+            },
+            '#4CAF50'
+          );
+        } else {
+          // Fallback to first available model
+          const firstModel = availableModels[0];
+          setSelectedModel(firstModel);
+
+          logger.group(
+            '🔄 Engine Model Auto-Select',
+            'Using first available model (no per-engine default)',
+            {
+              'Engine': selectedEngine,
+              'Auto-Selected Model': firstModel,
+              'Previous Model': selectedModel || '(none)',
+              'Per-Engine Default': perEngineDefault || 'none'
+            },
+            '#FF9800'
+          );
+        }
       }
     }
-  }, [selectedEngine, availableModels]);
+  }, [selectedEngine, availableModels, settings]);
 
   // Auto-select default language when engine changes
   useEffect(() => {
@@ -199,7 +221,10 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
 
     // Validation: All fields must be filled (including speaker)
     if (!selectedEngine || !selectedModel || !selectedLanguage || !selectedSpeaker) {
-      alert(t('segments.settings.validation.allFieldsRequired'));
+      await showError(
+        t('segments.settings.title'),
+        t('segments.settings.validation.allFieldsRequired')
+      );
       return;
     }
 
@@ -227,135 +252,129 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
       onClose();
     } catch (err) {
       logger.error('[EditSegmentSettingsDialog] Failed to update segment settings:', err);
-      alert(t('segments.settings.messages.error'));
+      await showError(
+        t('segments.settings.title'),
+        t('segments.settings.messages.error')
+      );
     } finally {
       setSaving(false);
     }
   };
 
   const handleClose = () => {
-    // Reset to original values
-    if (segment) {
-      const engineExists = availableEngines.some(e => e.name === segment.ttsEngine);
-      setSelectedEngine(engineExists ? segment.ttsEngine : '');
-      setSelectedModel(segment.ttsModelName || '');
-      setSelectedLanguage(segment.language || '');
-      const speakerExists = availableSpeakers.some(s => s.name === segment.ttsSpeakerName);
-      setSelectedSpeaker((segment.ttsSpeakerName && speakerExists) ? segment.ttsSpeakerName : '');
-    }
+    // State will be reset when dialog opens again (see useEffect Line 93-109)
     onClose();
   };
 
-  const isLoading = enginesLoading || modelsLoading || speakersLoading;
+  const isLoading = enginesLoading || speakersLoading;
   const canSave = selectedEngine && selectedModel && selectedLanguage && selectedSpeaker;
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitle>
-        <Box display="flex" alignItems="center" gap={1}>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth="sm"
+      fullWidth
+      data-testid="segment-settings-dialog"
+      PaperProps={{
+        sx: {
+          bgcolor: 'background.paper',
+          backgroundImage: 'none',
+        },
+      }}
+    >
+      <DialogTitle sx={{ borderBottom: 1, borderColor: 'divider' }}>
+        <Box display="flex" alignItems="center" gap={1.5}>
           <Settings />
-          {t('segments.settings.title')}
+          <Typography variant="h6">{t('segments.settings.title')}</Typography>
         </Box>
       </DialogTitle>
 
-      <DialogContent>
+      <DialogContent dividers sx={{ bgcolor: 'background.default' }}>
         {isLoading ? (
           <Box display="flex" justifyContent="center" p={4}>
             <CircularProgress />
           </Box>
         ) : (
-          <Box sx={{ mt: 2, display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <Stack spacing={3}>
             {/* Info Alert */}
-            <Alert severity="info" sx={{ mb: 1 }}>
+            <Alert severity="info">
               {t('segments.settings.description')}
             </Alert>
 
-            {/* Engine Selection */}
-            <FormControl fullWidth>
-              <InputLabel>{t('segments.settings.engine')}</InputLabel>
-              <Select
-                value={selectedEngine}
-                onChange={(e) => setSelectedEngine(e.target.value)}
-                label={t('segments.settings.engine')}
-                displayEmpty={false}
-              >
-                {availableEngines.map((engine) => (
-                  <MenuItem key={engine.name} value={engine.name}>
-                    {engine.displayName}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            {/* Engine & Model Row */}
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+              {/* Engine Selection */}
+              <FormControl fullWidth>
+                <InputLabel>{t('segments.settings.engine')}</InputLabel>
+                <Select
+                  value={selectedEngine}
+                  onChange={(e) => setSelectedEngine(e.target.value)}
+                  label={t('segments.settings.engine')}
+                  displayEmpty={false}
+                >
+                  {availableEngines.map((engine) => (
+                    <MenuItem key={engine.name} value={engine.name}>
+                      {engine.displayName}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
 
-            {/* Model Selection */}
-            <FormControl fullWidth disabled={!selectedEngine || modelsLoading}>
-              <InputLabel>{t('segments.settings.model')}</InputLabel>
-              <Select
-                value={availableModels.some(m => m.modelName === selectedModel) ? selectedModel : ''}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                label={t('segments.settings.model')}
-                displayEmpty={false}
-              >
-                {availableModels.map((model) => (
-                  <MenuItem key={model.modelName} value={model.modelName}>
-                    {model.displayName || model.modelName}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+              {/* Model Selection */}
+              <FormControl fullWidth disabled={!selectedEngine}>
+                <InputLabel>{t('segments.settings.model')}</InputLabel>
+                <Select
+                  value={availableModels.includes(selectedModel) ? selectedModel : ''}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  label={t('segments.settings.model')}
+                  displayEmpty={false}
+                >
+                  {availableModels.map((model) => (
+                    <MenuItem key={model} value={model}>
+                      {model}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
 
-            {/* Language Selection */}
-            <FormControl fullWidth disabled={!selectedEngine}>
-              <InputLabel>{t('segments.settings.language')}</InputLabel>
-              <Select
-                value={supportedLanguages.includes(selectedLanguage) ? selectedLanguage : ''}
-                onChange={(e) => setSelectedLanguage(e.target.value)}
-                label={t('segments.settings.language')}
-                displayEmpty={false}
-              >
-                {supportedLanguages.map((lang) => (
-                  <MenuItem key={lang} value={lang}>
-                    {lang}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            {/* Speaker & Language Row */}
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+              {/* Speaker Selection */}
+              <FormControl fullWidth>
+                <InputLabel>{t('segments.settings.speaker')}</InputLabel>
+                <Select
+                  value={availableSpeakers.some(s => s.name === selectedSpeaker) ? selectedSpeaker : ''}
+                  onChange={(e) => setSelectedSpeaker(e.target.value)}
+                  label={t('segments.settings.speaker')}
+                  data-testid="segment-settings-speaker-select"
+                >
+                  {availableSpeakers.map((speaker) => (
+                    <MenuItem key={speaker.id} value={speaker.name}>
+                      {speaker.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
 
-            {/* Speaker Selection */}
-            <FormControl fullWidth>
-              <InputLabel>{t('segments.settings.speaker')}</InputLabel>
-              <Select
-                value={availableSpeakers.some(s => s.name === selectedSpeaker) ? selectedSpeaker : ''}
-                onChange={(e) => setSelectedSpeaker(e.target.value)}
-                label={t('segments.settings.speaker')}
-              >
-                {availableSpeakers.map((speaker) => (
-                  <MenuItem key={speaker.id} value={speaker.name}>
-                    <Stack direction="row" alignItems="center" spacing={1} sx={{ width: '100%' }}>
-                      <Typography>{speaker.name}</Typography>
-                      {speaker.samples.length > 0 && (
-                        <Chip
-                          label={`${speaker.samples.length} ${speaker.samples.length === 1 ? 'sample' : 'samples'}`}
-                          size="small"
-                          variant="outlined"
-                        />
-                      )}
-                      {speaker.gender && (
-                        <Chip
-                          label={speaker.gender}
-                          size="small"
-                          color="primary"
-                          variant="outlined"
-                        />
-                      )}
-                    </Stack>
-                  </MenuItem>
-                ))}
-              </Select>
-              <FormHelperText>
-                {availableSpeakers.length} speaker(s) available
-              </FormHelperText>
-            </FormControl>
+              {/* Language Selection */}
+              <FormControl fullWidth disabled={!selectedEngine}>
+                <InputLabel>{t('segments.settings.language')}</InputLabel>
+                <Select
+                  value={supportedLanguages.includes(selectedLanguage) ? selectedLanguage : ''}
+                  onChange={(e) => setSelectedLanguage(e.target.value)}
+                  label={t('segments.settings.language')}
+                  displayEmpty={false}
+                >
+                  {supportedLanguages.map((lang) => (
+                    <MenuItem key={lang} value={lang}>
+                      {t(`languages.${lang}`, lang.toUpperCase())}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Box>
 
             {/* Validation Warning */}
             {!canSave && (
@@ -363,11 +382,11 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
                 {t('segments.settings.validation.allFieldsRequired')}
               </Alert>
             )}
-          </Box>
+          </Stack>
         )}
       </DialogContent>
 
-      <DialogActions>
+      <DialogActions sx={{ borderTop: 1, borderColor: 'divider', p: 2 }}>
         <Button onClick={handleClose} disabled={saving}>
           {t('common.cancel')}
         </Button>
@@ -379,6 +398,9 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
           {saving ? t('common.saving') : t('common.save')}
         </Button>
       </DialogActions>
+
+      {/* Error Dialog */}
+      <ErrorDialog />
     </Dialog>
   );
 };

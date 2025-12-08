@@ -4,15 +4,15 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, useEffect, useRef } from 'react'
-import { exportApi, type ExportRequest, type ExportProgress } from '../services/api'
-import { queryKeys } from '../services/queryKeys'
-import { useSSEConnection } from '@/contexts/SSEContext'
-import { logger } from '../utils/logger'
+import { exportApi, type ExportRequest, type ExportProgress } from '@services/api'
+import { queryKeys } from '@services/queryKeys'
+import { useSSEConnection } from '@contexts/SSEContext'
+import { logger } from '@utils/logger'
 
 /**
- * Hook to start an export job
+ * Hook to start an export job (internal helper for useExportWorkflow)
  */
-export function useStartExport() {
+function useStartExport() {
   const queryClient = useQueryClient()
 
   return useMutation({
@@ -28,10 +28,10 @@ export function useStartExport() {
 }
 
 /**
- * Hook to get export progress with automatic polling
+ * Hook to get export progress with automatic polling (internal helper for useExportWorkflow)
  * Automatically polls while export is running and stops when completed/failed
  */
-export function useExportProgress(jobId: string | null, enabled = false) {
+function useExportProgress(jobId: string | null, enabled = false) {
   const [isPolling, setIsPolling] = useState(enabled)
   const queryClient = useQueryClient()
   const pollingIntervalRef = useRef<number | null>(null)
@@ -43,16 +43,22 @@ export function useExportProgress(jobId: string | null, enabled = false) {
   // Query for export progress
   const query = useQuery({
     queryKey: queryKeys.export.progress(jobId ?? ''),
-    queryFn: () => {
+    queryFn: async () => {
       if (!jobId) throw new Error('No job ID')
-      return exportApi.getExportProgress(jobId)
+      return await exportApi.getExportProgress(jobId)
     },
     enabled: enabled && !!jobId,
-    // Disable polling when SSE active, use 1s fallback otherwise
-    refetchInterval: isSSEActive ? false : (isPolling ? 1000 : false),
+    // FIX: Always poll when enabled, stop when completed/failed (handled by effect below)
+    refetchInterval: (query) => {
+      // Stop polling if job is done
+      if (query.state.data?.status === 'completed' || query.state.data?.status === 'failed' || query.state.data?.status === 'cancelled') {
+        return false
+      }
+      // Poll every 500ms while running
+      return 500
+    },
     retry: false,
-    // Increase staleTime when SSE active (events update cache)
-    staleTime: isSSEActive ? Infinity : 0,
+    staleTime: 0,
   })
 
   // Handle polling lifecycle
@@ -105,9 +111,9 @@ export function useExportProgress(jobId: string | null, enabled = false) {
 }
 
 /**
- * Hook to cancel an export job
+ * Hook to cancel an export job (internal helper for useExportWorkflow)
  */
-export function useCancelExport() {
+function useCancelExport() {
   const queryClient = useQueryClient()
 
   return useMutation({
@@ -126,13 +132,16 @@ export function useCancelExport() {
         }
       )
     },
+    onError: (error: Error) => {
+      logger.error('[useCancelExport] Failed to cancel export', { error: error.message })
+    },
   })
 }
 
 /**
- * Hook to trigger file download
+ * Hook to trigger file download (internal helper for useExportWorkflow)
  */
-export function useDownloadExport() {
+function useDownloadExport() {
   return {
     download: async (jobId: string, defaultFilename: string): Promise<string | null> => {
       return await exportApi.downloadExport(jobId, defaultFilename)
@@ -141,21 +150,13 @@ export function useDownloadExport() {
 }
 
 /**
- * Hook for quick segment merging (preview)
- */
-export function useMergeSegments() {
-  return useMutation({
-    mutationFn: ({ chapterId, pauseMs }: { chapterId: string; pauseMs?: number }) =>
-      exportApi.mergeSegments(chapterId, pauseMs),
-  })
-}
-
-/**
  * Combined hook for complete export workflow
  */
 export function useExportWorkflow(chapterId: string) {
   const [jobId, setJobId] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
+  const [isResetting, setIsResetting] = useState(false)  // FIX BUG 1: Track reset state
+  const queryClient = useQueryClient()
 
   const startExport = useStartExport()
   const progress = useExportProgress(jobId, isExporting)
@@ -164,15 +165,37 @@ export function useExportWorkflow(chapterId: string) {
 
   const handleStartExport = async (request: Omit<ExportRequest, 'chapterId'>) => {
     try {
+      // FIX BUG 1: Set resetting flag to prevent showing old data
+      setIsResetting(true)
+
+      // Step 1: Explicitly clear old data from cache
+      if (jobId) {
+        queryClient.setQueryData(queryKeys.export.progress(jobId), undefined)
+        queryClient.setQueryData(queryKeys.export.job(jobId), undefined)
+      }
+
+      // Step 2: Reset state
+      setJobId(null)
+      setIsExporting(false)
+
+      // Step 3: Force React to process state updates before continuing
+      await new Promise(resolve => setTimeout(resolve, 50))
+
+      // Step 4: Start new export
       setIsExporting(true)
       const result = await startExport.mutateAsync({
         ...request,
         chapterId,
       })
       setJobId(result.jobId)
+
+      // Clear resetting flag
+      setIsResetting(false)
+
       return result
     } catch (error) {
       setIsExporting(false)
+      setIsResetting(false)
       throw error
     }
   }
@@ -199,6 +222,7 @@ export function useExportWorkflow(chapterId: string) {
   return {
     jobId,
     isExporting,
+    isResetting,  // FIX BUG 1: Export resetting state
     progress: progress.data,
     isLoading: progress.isLoading,
     error: progress.error,
@@ -206,6 +230,11 @@ export function useExportWorkflow(chapterId: string) {
     cancelExport: handleCancelExport,
     downloadExport: handleDownload,
     resetExport: () => {
+      // FIX BUG 1: Clear cache when resetting
+      if (jobId) {
+        queryClient.setQueryData(queryKeys.export.progress(jobId), undefined)
+        queryClient.setQueryData(queryKeys.export.job(jobId), undefined)
+      }
       setJobId(null)
       setIsExporting(false)
     },

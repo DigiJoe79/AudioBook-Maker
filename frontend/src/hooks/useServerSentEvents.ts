@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { useAppStore } from '../store/appStore'
-import { logger } from '../utils/logger'
+import { useAppStore } from '@store/appStore'
+import { logger } from '@utils/logger'
 
 /**
  * SSE Connection Status and Metadata

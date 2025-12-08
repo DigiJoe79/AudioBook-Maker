@@ -1,0 +1,83 @@
+name: "whisper"
+display_name: "OpenAI Whisper"
+type: stt
+
+python_version: "3.12"
+venv_path: "./venv"
+
+# Default enabled state (can be overridden in settings)
+enabled: true
+
+capabilities:
+  supports_model_hotswap: true
+  supports_transcription: true
+  supports_audio_analysis: true
+  supports_streaming: false
+
+constraints:
+  min_audio_length: 0.1  # seconds
+  max_audio_length: 600  # 10 minutes
+  sample_rate: 16000
+  audio_format: "wav"
+
+# Available Whisper models
+models:
+  - name: "tiny"
+    display_name: "Tiny (39 MB)"
+    size_mb: 39
+    speed: "~10x realtime"
+    accuracy: "lowest"
+  - name: "base"
+    display_name: "Base (74 MB)"
+    size_mb: 74
+    speed: "~7x realtime"
+    accuracy: "basic"
+  - name: "small"
+    display_name: "Small (244 MB)"
+    size_mb: 244
+    speed: "~4x realtime"
+    accuracy: "good"
+  - name: "medium"
+    display_name: "Medium (769 MB)"
+    size_mb: 769
+    speed: "~2x realtime"
+    accuracy: "better"
+  - name: "large"
+    display_name: "Large (1550 MB)"
+    size_mb: 1550
+    speed: "~1x realtime"
+    accuracy: "best"
+
+# Default model to load on startup
+default_model: "base"
+
+supported_languages:
+  - en
+  - de
+  - fr
+  - es
+  - it
+  - pt
+  - nl
+  - pl
+  - ru
+  - ja
+  - zh
+  - ko
+
+# Service settings
+config:
+  parameter_schema:
+    confidence_threshold:
+      type: "float"
+      label: "settings.stt.whisper.confidenceThreshold"
+      description: "settings.stt.whisper.confidenceThresholdDesc"
+      default: 0.80
+      min: 0.5
+      max: 1.0
+      step: 0.05
+      category: "analysis"
+
+  settings:
+    device: "auto"  # auto, cpu, cuda
+    compute_type: "default"  # default, int8, float16

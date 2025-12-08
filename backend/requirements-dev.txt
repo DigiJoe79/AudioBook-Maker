@@ -1,0 +1,16 @@
+# ============================================================================
+# Backend Development Dependencies
+# ============================================================================
+# Last Updated: 2025-12-08
+# Python: 3.10+
+#
+# Install:
+#   pip install -r requirements-dev.txt
+# ============================================================================
+
+# Include production dependencies
+-r requirements.txt
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.24.0

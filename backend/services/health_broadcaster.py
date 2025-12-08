@@ -3,6 +3,9 @@ Health Broadcaster Service
 
 Periodically broadcasts system health updates via SSE to all connected clients.
 Provides real-time health information without requiring polling.
+
+NOTE: Engine availability (hasTtsEngine, hasTextEngine, hasSttEngine) is NOT
+included here. It's sent via engine.status events from EngineStatusBroadcaster.
 """
 
 import asyncio
@@ -11,7 +14,7 @@ from loguru import logger
 
 from services.event_broadcaster import broadcaster
 from core.tts_worker import get_tts_worker
-from core.engine_manager import get_engine_manager
+from core.tts_engine_manager import get_tts_engine_manager
 from db.repositories import TTSJobRepository
 from db.database import get_db_connection_simple
 from models.response_models import HealthResponse
@@ -24,14 +27,17 @@ class HealthBroadcaster:
     Background service that periodically broadcasts health updates via SSE.
 
     Runs as background task, independent of TTS Worker.
-    Broadcasts health updates every 5 seconds to all connected SSE clients.
+    Broadcasts health updates every 30 seconds to all connected SSE clients.
+
+    NOTE: Only broadcasts worker status and active jobs count.
+    Engine availability is handled by EngineStatusBroadcaster.
     """
 
     def __init__(self):
         """Initialize health broadcaster"""
         self.running = False
         self.task: asyncio.Task | None = None
-        self.interval_seconds = 5  # Broadcast every 5 seconds
+        self.interval_seconds = 30  # Broadcast every 30 seconds (reduced from 5s)
 
         logger.debug("[HealthBroadcaster] Initialized")
 
@@ -44,6 +50,9 @@ class HealthBroadcaster:
 
         IMPORTANT: Uses HealthResponse Pydantic model for consistent formatting.
         Returns dict with camelCase keys via model_dump(by_alias=True).
+
+        NOTE: Engine availability flags are NOT included here - they come from
+        engine.status SSE events instead.
         """
         try:
             # Get active jobs count from database
@@ -55,11 +64,12 @@ class HealthBroadcaster:
             worker = get_tts_worker()
             busy = (worker.current_job_id is not None) if worker else False
 
-            # Get available engines
-            manager = get_engine_manager()
-            available_engines = manager.list_available_engines()
+            # Get available TTS engines for health response
+            tts_manager = get_tts_engine_manager()
+            available_engines = tts_manager.list_available_engines()
 
             # Create HealthResponse model (use snake_case field names)
+            # NOTE: Engine availability flags set to None - they come from engine.status
             health_response = HealthResponse(
                 status="ok",
                 version=__version__,
@@ -67,7 +77,11 @@ class HealthBroadcaster:
                 database=True,  # We successfully queried DB
                 tts_engines=available_engines,
                 busy=busy,
-                active_jobs=active_jobs_count
+                active_jobs=active_jobs_count,
+                # Engine availability now comes from engine.status events
+                has_tts_engine=None,
+                has_text_engine=None,
+                has_stt_engine=None,
             )
 
             # Serialize to dict with camelCase keys (by_alias=True)
@@ -87,7 +101,10 @@ class HealthBroadcaster:
                 database=False,
                 tts_engines=[],
                 busy=False,
-                active_jobs=0
+                active_jobs=0,
+                has_tts_engine=None,
+                has_text_engine=None,
+                has_stt_engine=None,
             )
 
             return error_response.model_dump(by_alias=True)

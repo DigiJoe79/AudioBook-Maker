@@ -24,12 +24,18 @@ class ProjectRepository:
         now = datetime.now().isoformat()
 
         cursor = self.conn.cursor()
+
+        # Get next order_index (max + 1, or 0 if no projects exist)
+        cursor.execute("SELECT MAX(order_index) FROM projects")
+        max_order = cursor.fetchone()[0]
+        order_index = 0 if max_order is None else max_order + 1
+
         cursor.execute(
             """
-            INSERT INTO projects (id, title, description, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO projects (id, title, description, order_index, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (project_id, title, description, now, now)
+            (project_id, title, description, order_index, now, now)
         )
         self.conn.commit()
 
@@ -114,8 +120,7 @@ class ChapterRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
-    def create(self, project_id: str, title: str, order_index: int,
-               default_tts_engine: str, default_tts_model_name: str) -> Dict[str, Any]:
+    def create(self, project_id: str, title: str, order_index: int) -> Dict[str, Any]:
         """Create a new chapter"""
         chapter_id = str(uuid.uuid4())
         now = datetime.now().isoformat()
@@ -123,10 +128,10 @@ class ChapterRepository:
         cursor = self.conn.cursor()
         cursor.execute(
             """
-            INSERT INTO chapters (id, project_id, title, order_index, default_tts_engine, default_tts_model_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO chapters (id, project_id, title, order_index, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (chapter_id, project_id, title, order_index, default_tts_engine, default_tts_model_name, now, now)
+            (chapter_id, project_id, title, order_index, now, now)
         )
         self.conn.commit()
 
@@ -149,9 +154,7 @@ class ChapterRepository:
         return [dict_from_row(row) for row in cursor.fetchall()]
 
     def update(self, chapter_id: str, title: Optional[str] = None,
-               order_index: Optional[int] = None,
-               default_tts_engine: Optional[str] = None,
-               default_tts_model_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+               order_index: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Update chapter"""
         updates = []
         params = []
@@ -162,12 +165,6 @@ class ChapterRepository:
         if order_index is not None:
             updates.append("order_index = ?")
             params.append(order_index)
-        if default_tts_engine is not None:
-            updates.append("default_tts_engine = ?")
-            params.append(default_tts_engine)
-        if default_tts_model_name is not None:
-            updates.append("default_tts_model_name = ?")
-            params.append(default_tts_model_name)
 
         if not updates:
             return self.get_by_id(chapter_id)
@@ -338,13 +335,72 @@ class SegmentRepository:
         return dict_from_row(row)
 
     def get_by_chapter(self, chapter_id: str) -> List[Dict[str, Any]]:
-        """Get all segments for a chapter"""
+        """Get all segments for a chapter with quality analysis data."""
+        import json
+
         cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT * FROM segments WHERE chapter_id = ? ORDER BY order_index",
-            (chapter_id,)
-        )
-        return [dict_from_row(row) for row in cursor.fetchall()]
+
+        # Get segments with quality analysis (generic format)
+        cursor.execute("""
+            SELECT
+                s.*,
+                sa.quality_status,
+                sa.quality_score,
+                sa.engine_results,
+                CASE
+                    WHEN sa.engine_results IS NOT NULL
+                    THEN 1
+                    ELSE 0
+                END as quality_analyzed
+            FROM segments s
+            LEFT JOIN segments_analysis sa ON s.id = sa.segment_id
+            WHERE s.chapter_id = ?
+            ORDER BY s.order_index
+        """, (chapter_id,))
+
+        segments = []
+        for row in cursor.fetchall():
+            segment = dict_from_row(row)
+
+            # Parse engine_results from JSON string to list with camelCase conversion
+            if segment.get('engine_results'):
+                try:
+                    engine_results = json.loads(segment['engine_results'])
+                    # Convert snake_case keys to camelCase for frontend
+                    segment['engine_results'] = self._convert_engine_results_to_camel_case(engine_results)
+                except (json.JSONDecodeError, TypeError):
+                    segment['engine_results'] = []
+            else:
+                segment['engine_results'] = []
+
+            segments.append(segment)
+
+        return segments
+
+    def _convert_engine_results_to_camel_case(self, engine_results: List[Dict]) -> List[Dict]:
+        """Convert engine results from snake_case to camelCase for frontend."""
+        def to_camel_case(snake_str: str) -> str:
+            """Convert snake_case to camelCase."""
+            components = snake_str.split('_')
+            return components[0] + ''.join(x.title() for x in components[1:])
+
+        def convert_dict(d: Dict) -> Dict:
+            """Recursively convert dict keys from snake_case to camelCase."""
+            result = {}
+            for key, value in d.items():
+                camel_key = to_camel_case(key)
+                if isinstance(value, dict):
+                    result[camel_key] = convert_dict(value)
+                elif isinstance(value, list):
+                    result[camel_key] = [
+                        convert_dict(item) if isinstance(item, dict) else item
+                        for item in value
+                    ]
+                else:
+                    result[camel_key] = value
+            return result
+
+        return [convert_dict(result) for result in engine_results]
 
     def update(self, segment_id: str, text: Optional[str] = None,
                audio_path: Optional[str] = None,
@@ -412,6 +468,36 @@ class SegmentRepository:
             params
         )
         self.conn.commit()
+
+        return self.get_by_id(segment_id)
+
+    def set_frozen(self, segment_id: str, is_frozen: bool) -> Dict[str, Any]:
+        """
+        Set frozen status of a segment.
+
+        Frozen segments are protected from regeneration and STT analysis.
+
+        Args:
+            segment_id: ID of the segment to freeze/unfreeze
+            is_frozen: True to freeze, False to unfreeze
+
+        Returns:
+            Updated segment dict
+
+        Raises:
+            ValueError: If segment not found
+        """
+        cursor = self.conn.cursor()
+        updated_at = datetime.now().isoformat()
+
+        cursor.execute(
+            "UPDATE segments SET is_frozen = ?, updated_at = ? WHERE id = ?",
+            (is_frozen, updated_at, segment_id)
+        )
+        self.conn.commit()
+
+        if cursor.rowcount == 0:
+            raise ValueError(f"Segment {segment_id} not found")
 
         return self.get_by_id(segment_id)
 
@@ -518,6 +604,52 @@ class SegmentRepository:
                 "UPDATE segments SET order_index = ? WHERE id = ?",
                 (idx, segment['id'])
             )
+
+        self.conn.commit()
+
+    def increment_regenerate_attempts(self, segment_id: str) -> int:
+        """
+        Increment the regenerate_attempts counter for a segment.
+
+        Used when auto-regenerate creates a TTS job for a defective segment.
+
+        Args:
+            segment_id: Segment ID
+
+        Returns:
+            New regenerate_attempts value
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            UPDATE segments
+            SET regenerate_attempts = regenerate_attempts + 1,
+                updated_at = ?
+            WHERE id = ?
+        """, (datetime.now().isoformat(), segment_id))
+
+        self.conn.commit()
+
+        # Get updated value
+        cursor.execute("SELECT regenerate_attempts FROM segments WHERE id = ?", (segment_id,))
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
+    def reset_regenerate_attempts(self, segment_id: str) -> None:
+        """
+        Reset the regenerate_attempts counter to 0.
+
+        Called when user manually triggers regeneration (not auto-regenerate).
+
+        Args:
+            segment_id: Segment ID
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            UPDATE segments
+            SET regenerate_attempts = 0,
+                updated_at = ?
+            WHERE id = ?
+        """, (datetime.now().isoformat(), segment_id))
 
         self.conn.commit()
 
@@ -755,7 +887,11 @@ class TTSJobRepository:
         multiple workers try to pick up the same job.
 
         Returns:
-            Job dictionary or None if no pending jobs
+            Job dictionary with updated started_at, or None if no pending jobs
+
+        Note:
+            Returns FRESH job data after the update (not stale data before update).
+            This ensures started_at is correctly populated for SSE events.
         """
         cursor = self.conn.cursor()
 
@@ -764,9 +900,9 @@ class TTSJobRepository:
         self.conn.execute("BEGIN IMMEDIATE")
 
         try:
-            # Get oldest pending job
+            # Get oldest pending job (only need the ID)
             cursor.execute("""
-                SELECT * FROM tts_jobs
+                SELECT id FROM tts_jobs
                 WHERE status = 'pending'
                 ORDER BY created_at
                 LIMIT 1
@@ -775,19 +911,22 @@ class TTSJobRepository:
             row = cursor.fetchone()
 
             if row:
-                job = dict_from_row(row)
+                job_id = row[0]
 
-                # Mark as running
+                # Mark as running and set started_at
+                started_at = datetime.now().isoformat()
                 cursor.execute("""
                     UPDATE tts_jobs
                     SET status = 'running',
-                        started_at = datetime('now'),
-                        updated_at = datetime('now')
+                        started_at = ?,
+                        updated_at = ?
                     WHERE id = ?
-                """, (job['id'],))
+                """, (started_at, started_at, job_id))
 
                 self.conn.commit()
-                return self._parse_job_segment_ids(job)
+
+                # Return fresh job data with updated started_at
+                return self.get_by_id(job_id)
             else:
                 self.conn.rollback()
                 return None
@@ -833,6 +972,8 @@ class TTSJobRepository:
 
         params.append(job_id)
 
+        # Safe: Column names are hardcoded in updates list (lines 957-970), values parameterized
+        # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
         cursor.execute(f"""
             UPDATE tts_jobs
             SET {', '.join(updates)}
@@ -866,10 +1007,6 @@ class TTSJobRepository:
         segment_objs = job.get('segment_ids')
         if not segment_objs:
             return
-
-        # Handle legacy case where it might still be a string
-        if isinstance(segment_objs, str):
-            segment_objs = json.loads(segment_objs)
 
         # Find and update the segment
         updated = False
@@ -1343,7 +1480,8 @@ class TTSJobRepository:
         placeholders = ','.join('?' * len(statuses))
         query = f"DELETE FROM tts_jobs WHERE status IN ({placeholders})"
 
-        cursor.execute(query, statuses)
+        # Safe: Placeholders are just '?,?,?' string, values parameterized
+        cursor.execute(query, statuses)  # nosemgrep: python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
         affected = cursor.rowcount
         self.conn.commit()
 

@@ -1,6 +1,6 @@
 {
   "productName": "Audiobook Maker",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "identifier": "com.audiobookmaker.tauri",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Audiobook Maker v0.2.0",
+        "title": "Audiobook Maker v1.0.0",
         "width": 1400,
         "height": 900,
         "minWidth": 1200,
@@ -35,7 +35,7 @@
         "script-src": ["'self'"],
         "style-src": ["'self'", "'unsafe-inline'"],
         "img-src": ["'self'", "data:", "blob:", "http://localhost:8765", "http://127.0.0.1:8765"],
-        "media-src": ["'self'", "http://localhost:8765", "http://127.0.0.1:8765"],
+        "media-src": ["'self'", "blob:", "http://localhost:8765", "http://127.0.0.1:8765"],
         "font-src": ["'self'", "data:"]
       },
       "freezePrototype": false,

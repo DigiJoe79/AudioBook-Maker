@@ -4,7 +4,7 @@
  * Allows users to export a chapter with various audio format options
  */
 
-import React, { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import {
   Dialog,
   DialogTitle,
@@ -31,12 +31,15 @@ import {
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
 } from '@mui/icons-material'
-import { useExportWorkflow } from '../../hooks/useExportQuery'
-import type { Chapter, Project } from '../../types'
-import { exportApi } from '../../services/api'
-import { useAppStore } from '../../store/appStore'
+import { useExportWorkflow } from '@hooks/useExportQuery'
+import type { Chapter, Project } from '@types'
+import { exportApi } from '@services/api'
+import { useAppStore } from '@store/appStore'
 import { useTranslation } from 'react-i18next'
-import { logger } from '../../utils/logger'
+import { useSnackbar } from '@hooks/useSnackbar'
+import { useError } from '@hooks/useError'
+import { logger } from '@utils/logger'
+import { translateBackendError } from '@utils/translateBackendError'
 
 interface ExportDialogProps {
   open: boolean
@@ -50,24 +53,6 @@ interface ExportDialogProps {
 // Quality presets for all formats
 type QualityLevel = 'low' | 'medium' | 'high'
 
-const QUALITY_PRESETS = {
-  mp3: {
-    low: { label: 'Low (96 kbps, 22 kHz)', labelShort: 'Low' },
-    medium: { label: 'Medium (128 kbps, 44.1 kHz)', labelShort: 'Medium' },
-    high: { label: 'High (192 kbps, 48 kHz)', labelShort: 'High' },
-  },
-  m4a: {
-    low: { label: 'Low (96 kbps, 24 kHz)', labelShort: 'Low' },
-    medium: { label: 'Medium (128 kbps, 44.1 kHz)', labelShort: 'Medium' },
-    high: { label: 'High (192 kbps, 48 kHz)', labelShort: 'High' },
-  },
-  wav: {
-    low: { label: 'Low (22 kHz)', labelShort: 'Low' },
-    medium: { label: 'Medium (24 kHz)', labelShort: 'Medium' },
-    high: { label: 'High (48 kHz)', labelShort: 'High' },
-  },
-}
-
 export function ExportDialog({
   open,
   onClose,
@@ -77,6 +62,8 @@ export function ExportDialog({
   completedSegmentCount,
 }: ExportDialogProps) {
   const { t } = useTranslation()
+  const { showSnackbar, SnackbarComponent } = useSnackbar()
+  const { showError, ErrorDialog } = useError()
   const settings = useAppStore((state) => state.settings)
 
   // Initialize from backend settings
@@ -86,11 +73,33 @@ export function ExportDialog({
 
   // Use pause from backend settings
   const pauseBetweenSegments = settings?.audio.pauseBetweenSegments ?? 500
-  const [downloadSuccess, setDownloadSuccess] = useState(false)
-  const [downloadError, setDownloadError] = useState<string | null>(null)
 
   const exportWorkflow = useExportWorkflow(chapter.id)
-  const { progress, isExporting, startExport, cancelExport, downloadExport } = exportWorkflow
+  const { progress, isExporting, isResetting, startExport, cancelExport, downloadExport } = exportWorkflow
+
+  // Don't show any progress data while resetting (prevents showing 100% from old export)
+  const currentProgress = (!isResetting && exportWorkflow.jobId) ? progress : null
+
+  // Quality presets using translations
+  const getQualityPresets = () => ({
+    mp3: {
+      low: { label: t('export.qualityLabels.mp3.low'), labelShort: t('export.qualityLabels.low') },
+      medium: { label: t('export.qualityLabels.mp3.medium'), labelShort: t('export.qualityLabels.medium') },
+      high: { label: t('export.qualityLabels.mp3.high'), labelShort: t('export.qualityLabels.high') },
+    },
+    m4a: {
+      low: { label: t('export.qualityLabels.m4a.low'), labelShort: t('export.qualityLabels.low') },
+      medium: { label: t('export.qualityLabels.m4a.medium'), labelShort: t('export.qualityLabels.medium') },
+      high: { label: t('export.qualityLabels.m4a.high'), labelShort: t('export.qualityLabels.high') },
+    },
+    wav: {
+      low: { label: t('export.qualityLabels.wav.low'), labelShort: t('export.qualityLabels.low') },
+      medium: { label: t('export.qualityLabels.wav.medium'), labelShort: t('export.qualityLabels.medium') },
+      high: { label: t('export.qualityLabels.wav.high'), labelShort: t('export.qualityLabels.high') },
+    },
+  })
+
+  const QUALITY_PRESETS = getQualityPresets()
 
   // Generate default filename and reset settings when dialog opens
   useEffect(() => {
@@ -113,9 +122,9 @@ export function ExportDialog({
 
   // Estimate file size (rough calculation based on quality preset)
   const estimatedFileSize = useMemo(() => {
-    if (!progress?.duration) return null
+    if (!currentProgress?.duration) return null
 
-    const duration = progress.duration
+    const duration = currentProgress.duration
     // Bitrate mapping for quality levels (in kbps)
     const bitrateMap = {
       mp3: { low: 96, medium: 128, high: 192 },
@@ -141,7 +150,7 @@ export function ExportDialog({
       const bytes = (bitrateNum * duration) / 8
       return bytes / (1024 * 1024) // MB
     }
-  }, [format, quality, progress?.duration])
+  }, [format, quality, currentProgress?.duration])
 
   const handleStartExport = async () => {
     try {
@@ -153,13 +162,14 @@ export function ExportDialog({
       })
     } catch (error) {
       logger.error('[ExportDialog] Failed to start export:', error)
+      await showError(t('export.title'), t('export.startFailed'))
     }
   }
 
   const handleClose = async () => {
-    if (!isExporting || progress?.status === 'completed') {
+    if (!isExporting || currentProgress?.status === 'completed') {
       // Cleanup export file when closing without download
-      if (exportWorkflow.jobId && progress?.status === 'completed' && !downloadSuccess) {
+      if (exportWorkflow.jobId && currentProgress?.status === 'completed') {
         try {
           await exportApi.deleteExport(exportWorkflow.jobId)
           logger.debug('[ExportDialog] Export file cleaned up on dialog close')
@@ -170,24 +180,18 @@ export function ExportDialog({
       }
 
       exportWorkflow.resetExport()
-      setDownloadSuccess(false)
-      setDownloadError(null)
       onClose()
     }
   }
 
   const handleDownload = async () => {
     try {
-      setDownloadError(null)
-      setDownloadSuccess(false)
-
       // Generate filename with extension
       const filenameWithExt = `${customFilename}.${format}`
 
       const savedPath = await downloadExport(filenameWithExt)
 
       if (savedPath) {
-        setDownloadSuccess(true)
         logger.group(
           '📤 Export',
           'File saved successfully',
@@ -205,19 +209,27 @@ export function ExportDialog({
             // Non-critical error, don't show to user
           }
         }
+
+        // Show success snackbar
+        showSnackbar(t('export.status.fileSaved'), { severity: 'success' })
+
+        // Close dialog automatically after successful download
+        exportWorkflow.resetExport()
+        onClose()
       } else {
         // User cancelled
         logger.debug('[ExportDialog] Download cancelled by user')
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unknown error'
-      setDownloadError(errorMsg)
+      const translatedError = translateBackendError(errorMsg, t)
+      showSnackbar(t('export.status.downloadFailed', { error: translatedError }), { severity: 'error' })
       logger.error('[ExportDialog] Download failed:', error)
     }
   }
 
   const getStatusIcon = () => {
-    switch (progress?.status) {
+    switch (currentProgress?.status) {
       case 'completed':
         return <CheckCircleIcon color="success" />
       case 'failed':
@@ -230,17 +242,50 @@ export function ExportDialog({
   }
 
   const getProgressPercentage = () => {
-    if (!progress) return 0
-    return Math.round(progress.progress * 100)
+    if (!currentProgress) return 0
+    return Math.round(currentProgress.progress * 100)
+  }
+
+  // Generate localized progress message based on progress state
+  const getProgressMessage = () => {
+    if (!currentProgress) return t('export.status.starting')
+
+    const progressPercent = currentProgress.progress
+    const mergeThreshold = format === 'wav' ? 0.95 : 0.75
+
+    if (progressPercent < mergeThreshold) {
+      // Merging phase
+      return t('export.progress.merging', {
+        current: currentProgress.currentSegment,
+        total: currentProgress.totalSegments,
+      })
+    } else if (progressPercent < 1.0) {
+      // Converting phase
+      return t('export.progress.converting', { format: format.toUpperCase() })
+    } else {
+      // Completed
+      return t('export.status.completed')
+    }
   }
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
-      <DialogTitle>
+    <Dialog
+      open={open}
+      onClose={handleClose}
+      maxWidth="sm"
+      fullWidth
+      PaperProps={{
+        sx: {
+          bgcolor: 'background.paper',
+          backgroundImage: 'none',
+        },
+      }}
+    >
+      <DialogTitle sx={{ borderBottom: 1, borderColor: 'divider' }}>
         {t('export.title')}
       </DialogTitle>
 
-      <DialogContent>
+      <DialogContent dividers sx={{ bgcolor: 'background.default' }}>
         <Stack spacing={3} sx={{ mt: 2 }}>
           {/* Warning if not all segments are completed */}
           {!canExport && (
@@ -250,78 +295,58 @@ export function ExportDialog({
           )}
 
           {/* Export in progress */}
-          {isExporting && progress && (
+          {isExporting && (
             <Box>
               <Box display="flex" alignItems="center" mb={1}>
                 {getStatusIcon()}
                 <Typography variant="body2" sx={{ ml: 1 }}>
-                  {progress.message}
+                  {getProgressMessage()}
                 </Typography>
               </Box>
               <LinearProgress
-                variant="determinate"
-                value={getProgressPercentage()}
+                variant={currentProgress ? 'determinate' : 'indeterminate'}
+                value={currentProgress ? getProgressPercentage() : undefined}
+                sx={{
+                  // FIX BUG 1: Disable CSS transitions to prevent 100→0 animation when switching exports
+                  '& .MuiLinearProgress-bar': {
+                    transition: 'none !important'
+                  }
+                }}
               />
-              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
-                {t('export.progress.segmentsProcessed', { current: progress.currentSegment, total: progress.totalSegments })}
-              </Typography>
+              {currentProgress && (
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                  {t('export.progress.segmentsProcessed', { current: currentProgress.currentSegment, total: currentProgress.totalSegments })}
+                </Typography>
+              )}
             </Box>
           )}
 
           {/* Export completed */}
-          {progress?.status === 'completed' && (
-            <>
-              <Alert
-                severity="success"
-                action={
-                  <Button
-                    color="inherit"
-                    size="small"
-                    startIcon={<DownloadIcon />}
-                    onClick={handleDownload}
-                  >
-                    {t('export.download')}
-                  </Button>
-                }
-              >
-                {t('export.status.completed')}
-                {progress.fileSize && (
-                  <Typography variant="caption" display="block">
-                    {t('export.fileSize', { size: (progress.fileSize / (1024 * 1024)).toFixed(2) })}
-                  </Typography>
-                )}
-                {progress.duration && (
-                  <Typography variant="caption" display="block">
-                    {t('export.duration', { duration: Math.round(progress.duration) })}
-                  </Typography>
-                )}
-              </Alert>
-
-              {/* Download success feedback */}
-              {downloadSuccess && (
-                <Alert severity="success">
-                  {t('export.status.fileSaved')}
-                </Alert>
+          {currentProgress?.status === 'completed' && (
+            <Alert severity="success">
+              {t('export.status.completed')}
+              {currentProgress.fileSize && (
+                <Typography variant="caption" display="block">
+                  {t('export.fileSize', { size: (currentProgress.fileSize / (1024 * 1024)).toFixed(2) })}
+                </Typography>
               )}
-
-              {/* Download error feedback */}
-              {downloadError && (
-                <Alert severity="error">
-                  {t('export.status.downloadFailed', { error: downloadError })}
-                </Alert>
+              {currentProgress.duration && (
+                <Typography variant="caption" display="block">
+                  {t('export.duration', { duration: Math.round(currentProgress.duration) })}
+                </Typography>
               )}
-            </>
+            </Alert>
           )}
 
           {/* Export failed */}
-          {progress?.status === 'failed' && (
+          {currentProgress?.status === 'failed' && (
             <Alert severity="error">
-              {t('export.status.failed', { error: progress.error || 'Unknown error' })}
+              {t('export.status.failed', { error: translateBackendError(currentProgress.error || 'Unknown error', t) })}
             </Alert>
           )}
 
           {/* Export options (hidden during export) */}
-          {!isExporting && progress?.status !== 'completed' && (
+          {!isExporting && currentProgress?.status !== 'completed' && (
             <>
               {/* Output filename */}
               <TextField
@@ -329,16 +354,22 @@ export function ExportDialog({
                 value={customFilename}
                 onChange={(e) => setCustomFilename(e.target.value)}
                 fullWidth
+                InputLabelProps={{ shrink: true }}
+                placeholder={t('export.filenamePlaceholder')}
                 helperText={t('export.filenameHint')}
               />
 
               {/* Format selection */}
               <FormControl fullWidth>
-                <InputLabel>{t('export.audioFormat')}</InputLabel>
+                <InputLabel shrink sx={{ backgroundColor: 'background.paper', px: 0.5 }}>
+                  {t('export.audioFormat')}
+                </InputLabel>
                 <Select
                   value={format}
                   label={t('export.audioFormat')}
                   onChange={(e) => setFormat(e.target.value as typeof format)}
+                  displayEmpty
+                  notched
                 >
                   <MenuItem value="mp3">{t('export.formats.mp3')}</MenuItem>
                   <MenuItem value="m4a">{t('export.formats.m4a')}</MenuItem>
@@ -351,11 +382,15 @@ export function ExportDialog({
 
               {/* Quality selector - unified for all formats */}
               <FormControl fullWidth>
-                <InputLabel>{t('export.quality')}</InputLabel>
+                <InputLabel shrink sx={{ backgroundColor: 'background.paper', px: 0.5 }}>
+                  {t('export.quality')}
+                </InputLabel>
                 <Select
                   value={quality}
                   label={t('export.quality')}
                   onChange={(e) => setQuality(e.target.value as QualityLevel)}
+                  displayEmpty
+                  notched
                 >
                   <MenuItem value="low">{QUALITY_PRESETS[format].low.label}</MenuItem>
                   <MenuItem value="medium">{QUALITY_PRESETS[format].medium.label}</MenuItem>
@@ -365,8 +400,6 @@ export function ExportDialog({
                   {t('export.qualityHint')}
                 </FormHelperText>
               </FormControl>
-
-
 
               {/* File size estimate (if available) */}
               {estimatedFileSize && (
@@ -379,20 +412,37 @@ export function ExportDialog({
         </Stack>
       </DialogContent>
 
-      <DialogActions>
+      <DialogActions sx={{ borderTop: 1, borderColor: 'divider', p: 2 }}>
         {/* Cancel button (different behavior based on state) */}
-        {isExporting && progress?.status === 'running' ? (
-          <Button onClick={cancelExport} color="error" startIcon={<CancelIcon />}>
+        {isExporting && currentProgress?.status === 'running' ? (
+          <Button
+            onClick={cancelExport}
+            color="error"
+            variant="contained"
+            startIcon={<CancelIcon />}
+          >
             {t('export.cancelExport')}
           </Button>
         ) : (
           <Button onClick={handleClose}>
-            {progress?.status === 'completed' ? t('common.close') : t('common.cancel')}
+            {currentProgress?.status === 'completed' ? t('common.close') : t('common.cancel')}
+          </Button>
+        )}
+
+        {/* Download button (when export completed) */}
+        {currentProgress?.status === 'completed' && (
+          <Button
+            onClick={handleDownload}
+            variant="contained"
+            startIcon={<DownloadIcon />}
+            color="success"
+          >
+            {t('export.download')}
           </Button>
         )}
 
         {/* Start export button */}
-        {!isExporting && progress?.status !== 'completed' && (
+        {!isExporting && currentProgress?.status !== 'completed' && (
           <Button
             onClick={handleStartExport}
             variant="contained"
@@ -404,6 +454,12 @@ export function ExportDialog({
         )}
 
       </DialogActions>
+
+      {/* Snackbar for success/error notifications */}
+      <SnackbarComponent />
+
+      {/* Error dialog for critical failures */}
+      <ErrorDialog />
     </Dialog>
   )
 }

@@ -29,7 +29,7 @@ Data Flow:
 """
 
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 
 # NOTE: This function is intentionally duplicated in backend/engines/base_server.py
 # because engine servers run in isolated VENVs and need their own copy.
@@ -90,8 +90,15 @@ class SegmentResponse(CamelCaseModel):
     start_time: float = Field(default=0.0, description="Audio start time in seconds")
     end_time: float = Field(default=0.0, description="Audio end time in seconds")
     status: str = Field(default="pending", description="Generation status: pending, processing, completed, failed")
+    is_frozen: bool = Field(default=False, description="Whether segment is frozen (protected from regeneration)")
     created_at: str = Field(description="ISO timestamp of creation")
     updated_at: str = Field(description="ISO timestamp of last update")
+
+    # Quality analysis fields (generic format from Quality Worker)
+    quality_analyzed: Optional[bool] = Field(None, description="Whether segment has been analyzed by Quality system")
+    quality_score: Optional[int] = Field(None, description="Aggregated quality score (0-100)")
+    quality_status: Optional[str] = Field(None, description="Quality status: 'perfect', 'warning', or 'defect'")
+    engine_results: Optional[List[Dict[str, Any]]] = Field(None, description="Results from each quality engine in generic format")
 
 
 # ============================================================================
@@ -108,8 +115,6 @@ class ChapterResponse(CamelCaseModel):
     project_id: str = Field(description="Parent project ID")
     title: str = Field(description="Chapter title")
     order_index: int = Field(description="Position within project (0-indexed)")
-    default_tts_engine: str = Field(description="Default TTS engine for new segments")
-    default_tts_model_name: str = Field(description="Default TTS model for new segments")
     created_at: str = Field(description="ISO timestamp of creation")
     updated_at: str = Field(description="ISO timestamp of last update")
 
@@ -226,11 +231,15 @@ class TTSEngineInfo(CamelCaseModel):
     """Full TTS engine information with capabilities."""
     name: str = Field(description="Unique engine identifier")
     display_name: str = Field(description="Human-readable display name")
-    supported_languages: List[str] = Field(description="List of supported ISO language codes")
+    supported_languages: List[str] = Field(description="List of supported ISO language codes (filtered by settings)")
+    all_supported_languages: List[str] = Field(default_factory=list, description="All supported ISO language codes (unfiltered, for Settings UI)")
     constraints: GenerationConstraints = Field(description="Engine-specific generation constraints")
     default_parameters: Dict[str, Any] = Field(description="Engine-specific default parameters")
     tts_model_loaded: bool = Field(description="Whether the TTS model is currently loaded in memory")
     device: str = Field(default="cpu", description="Device being used (cpu/cuda)")
+    is_enabled: bool = Field(default=True, description="Whether engine is enabled in settings")
+    is_running: bool = Field(default=False, description="Whether engine server is currently running")
+    port: Optional[int] = Field(default=None, description="HTTP port if engine is running")
 
 
 class EnginesListResponse(CamelCaseModel):
@@ -263,6 +272,14 @@ class TTSGenerationResponse(CamelCaseModel):
     message: str = Field(description="Human-readable status message")
     segment: Optional[SegmentResponse] = Field(None, description="Updated segment (if single generation)")
     segments: Optional[List[SegmentResponse]] = Field(None, description="Updated segments (if batch generation)")
+
+
+class SegmentQueueResponse(CamelCaseModel):
+    """Response for segment queued for TTS generation."""
+    success: bool = Field(description="Whether segment was queued successfully")
+    job_id: str = Field(description="ID of the created job")
+    segment_id: str = Field(description="ID of the segment queued")
+    message: str = Field(description="Human-readable status message")
 
 
 class TTSProgressResponse(CamelCaseModel):
@@ -455,6 +472,13 @@ class HealthResponse(CamelCaseModel):
     busy: bool = Field(default=False, description="Backend currently processing long-running operation")
     active_jobs: int = Field(default=0, description="Number of active generation/export jobs")
 
+    # Engine availability (for feature-gating)
+    # NOTE: These are Optional because they're now sent via engine.status SSE events
+    # Health broadcast no longer includes these values (set to None)
+    has_tts_engine: Optional[bool] = Field(default=None, description="At least one enabled TTS engine exists (via engine.status)")
+    has_text_engine: Optional[bool] = Field(default=None, description="At least one enabled text engine exists (via engine.status)")
+    has_stt_engine: Optional[bool] = Field(default=None, description="At least one enabled STT engine exists (via engine.status)")
+
 
 class RootResponse(CamelCaseModel):
     """Root endpoint response."""
@@ -467,24 +491,13 @@ class RootResponse(CamelCaseModel):
 # Text Processing Response Models
 # ============================================================================
 
-class TextSegmentPreview(CamelCaseModel):
-    """Preview of a text segment before creation."""
-    text: str = Field(description="Segment text content")
-    order_index: int = Field(description="Segment position")
-    length: int = Field(description="Character count")
-
-
 class TextSegmentationResponse(CamelCaseModel):
     """Response for text segmentation operations."""
     success: bool = Field(description="Whether operation succeeded")
     message: str = Field(description="Status message")
     segments: List[SegmentResponse] = Field(
         default_factory=list,
-        description="Created segments (if auto_create=true)"
-    )
-    preview: Optional[List[TextSegmentPreview]] = Field(
-        None,
-        description="Segment previews (if auto_create=false)"
+        description="Created segments"
     )
     segment_count: int = Field(description="Number of segments")
     engine: str = Field(description="Engine used for constraints")
@@ -526,9 +539,13 @@ class SettingValueResponse(CamelCaseModel):
 
 class AllSettingsResponse(CamelCaseModel):
     """Response for all global settings organized by category."""
+    engines: Dict[str, Any] = Field(description="Global engine lifecycle settings")
     tts: Dict[str, Any] = Field(description="TTS-related settings")
     audio: Dict[str, Any] = Field(description="Audio processing settings")
     text: Dict[str, Any] = Field(description="Text processing settings")
+    stt: Dict[str, Any] = Field(description="STT (Speech-to-Text) settings")
+    quality: Dict[str, Any] = Field(description="Quality analysis settings")
+    languages: Dict[str, Any] = Field(description="Language-related settings")
 
 
 class SegmentLimitsResponse(CamelCaseModel):
@@ -561,19 +578,6 @@ class AudioDurationResponse(CamelCaseModel):
 
 
 # ============================================================================
-# Markdown Import Response Model
-# ============================================================================
-
-class MarkdownImportResponse(CamelCaseModel):
-    """Response for markdown import operation."""
-    success: bool = Field(description="Whether import succeeded")
-    project: ProjectWithChaptersResponse = Field(description="Created project with chapters and segments")
-    total_segments: int = Field(description="Total standard segments created")
-    total_dividers: int = Field(description="Total divider segments created")
-    message: str = Field(description="Success message")
-
-
-# ============================================================================
 # TTS Job Control Response Models
 # ============================================================================
 
@@ -582,21 +586,6 @@ class CancelJobResponse(CamelCaseModel):
     status: str = Field(description="Cancellation status: cancelled, cancelling, cannot_cancel, not_found")
     job_id: str = Field(description="Job identifier")
     message: str = Field(description="Human-readable status message")
-
-
-class QueueSegmentsResponse(CamelCaseModel):
-    """Response for segment regeneration queue operations."""
-    status: str = Field(description="Queue status: queued, error")
-    job_id: str = Field(description="Created job identifier")
-    segment_count: int = Field(description="Number of segments queued")
-    message: str = Field(description="Human-readable status message")
-
-
-class DiscoverEnginesResponse(CamelCaseModel):
-    """Response for engine discovery/rediscovery operations."""
-    success: bool = Field(description="Whether discovery succeeded")
-    engines_discovered: int = Field(description="Number of engines found")
-    engines: List[str] = Field(description="List of discovered engine identifiers")
 
 
 class CleanupJobsResponse(CamelCaseModel):
@@ -610,3 +599,345 @@ class DeleteJobResponse(CamelCaseModel):
     success: bool = Field(description="Whether deletion succeeded")
     deleted: bool = Field(description="Deletion confirmation flag")
     job_id: str = Field(description="Deleted job identifier")
+
+
+# ============================================================================
+# Pronunciation Rules Response Models
+# ============================================================================
+
+class PronunciationRuleResponse(CamelCaseModel):
+    """Response model for pronunciation rules."""
+    id: str = Field(description="Unique rule identifier")
+    pattern: str = Field(description="Text pattern to match")
+    replacement: str = Field(description="Replacement text")
+    is_regex: bool = Field(description="Whether pattern is regex")
+    scope: str = Field(description="Rule scope: project_engine, engine, or global")
+    project_id: Optional[str] = Field(None, description="Project ID (for project_engine scope)")
+    engine_name: str = Field(description="TTS engine name")
+    language: str = Field(description="Language code")
+    is_active: bool = Field(description="Whether rule is active")
+    created_at: str = Field(description="ISO timestamp of creation")
+    updated_at: str = Field(description="ISO timestamp of last update")
+
+
+class PronunciationRulesListResponse(CamelCaseModel):
+    """Response for listing pronunciation rules."""
+    rules: List[PronunciationRuleResponse] = Field(description="List of pronunciation rules")
+    total: int = Field(description="Total number of rules")
+
+
+class PronunciationTestResponse(CamelCaseModel):
+    """Response for pronunciation rule testing."""
+    original_text: str = Field(description="Original input text")
+    transformed_text: str = Field(description="Text after applying rules")
+    rules_applied: List[str] = Field(description="List of rules that matched")
+    would_exceed_limit: bool = Field(description="Whether transformed text exceeds engine limit")
+    chunks_required: int = Field(description="Number of chunks needed if split")
+
+
+class PronunciationConflict(CamelCaseModel):
+    """Details of a conflicting pronunciation rule."""
+    rule1: Dict[str, str] = Field(description="First conflicting rule (id, pattern, scope)")
+    rule2: Dict[str, str] = Field(description="Second conflicting rule (id, pattern, scope)")
+    reason: str = Field(description="Conflict reason description")
+
+
+class PronunciationConflictsResponse(CamelCaseModel):
+    """Response for pronunciation rule conflict detection."""
+    conflicts: List[PronunciationConflict] = Field(description="List of detected conflicts")
+    total: int = Field(description="Total number of conflicts")
+
+
+class PronunciationBulkResponse(CamelCaseModel):
+    """Response for bulk pronunciation rule operations."""
+    message: str = Field(description="Operation status message")
+    modified: int = Field(description="Number of rules modified")
+
+
+class PronunciationImportResponse(CamelCaseModel):
+    """Response for pronunciation rules import operation."""
+    success: bool = Field(description="Whether import succeeded")
+    imported: int = Field(description="Number of rules successfully imported")
+    skipped: int = Field(description="Number of rules skipped due to errors")
+    message: str = Field(description="Import summary message")
+
+
+class PronunciationTestAudioResponse(CamelCaseModel):
+    """Response for pronunciation rule audio testing."""
+    original_text: str = Field(description="Original segment text")
+    transformed_text: str = Field(description="Text after applying pronunciation rule")
+    rules_applied: List[str] = Field(description="List of rules that were applied")
+    audio_path: Optional[str] = Field(None, description="URL/path to generated test audio file")
+    message: str = Field(description="Status message")
+
+
+class PronunciationExportRuleResponse(CamelCaseModel):
+    """Response for a single exported pronunciation rule."""
+    pattern: str = Field(description="The pattern to match")
+    replacement: str = Field(description="The replacement text")
+    is_regex: bool = Field(description="Whether pattern is a regex")
+    scope: str = Field(description="Rule scope (global, engine, project)")
+    project_id: Optional[str] = Field(None, description="Project ID if scope is project")
+    engine_name: Optional[str] = Field(None, description="Engine name if scope is engine")
+    language: Optional[str] = Field(None, description="Language code")
+    is_active: bool = Field(description="Whether rule is active")
+    created_at: str = Field(description="ISO timestamp of creation")
+    updated_at: str = Field(description="ISO timestamp of last update")
+
+
+class STTEngineInfo(CamelCaseModel):
+    """Information about an STT engine."""
+    name: str = Field(description="Engine identifier")
+    display_name: str = Field(description="Human-readable engine name")
+    models: List[str] = Field(description="Available model names")
+    default_model: str = Field(description="Default model name")
+
+
+# ============================================================================
+# Quality Analysis Response Models
+# ============================================================================
+
+class QualityField(CamelCaseModel):
+    """Single field in quality analysis details."""
+    key: str = Field(description="i18n key for field label")
+    value: Any = Field(description="Field value")
+    type: str = Field(description="Rendering type: percent, seconds, text, string, number")
+
+
+class QualityInfoBlockItem(CamelCaseModel):
+    """Single item in an info block."""
+    text: str = Field(description="i18n key or display text")
+    severity: str = Field(description="Severity: error, warning, info")
+
+
+class QualityEngineDetails(CamelCaseModel):
+    """Engine-specific details for UI rendering."""
+    top_label: str = Field(description="i18n key for section header")
+    fields: List[QualityField] = Field(default_factory=list, description="Key-value pairs")
+    info_blocks: Dict[str, List[QualityInfoBlockItem]] = Field(
+        default_factory=dict,
+        description="Grouped messages/issues"
+    )
+
+
+class QualityEngineResult(CamelCaseModel):
+    """Result from a single analysis engine."""
+    engine_type: str = Field(description="Engine type: stt or audio")
+    engine_name: str = Field(description="Engine identifier")
+    quality_score: int = Field(description="Quality score 0-100")
+    quality_status: str = Field(description="Status: perfect, warning, defect")
+    details: QualityEngineDetails = Field(description="Engine-specific details")
+
+
+class QualityAnalysisResult(CamelCaseModel):
+    """Combined quality analysis result for a segment."""
+    quality_score: int = Field(description="Aggregated score 0-100")
+    quality_status: str = Field(description="Worst status: perfect, warning, defect")
+    engines: List[QualityEngineResult] = Field(
+        default_factory=list,
+        description="Results from each engine"
+    )
+
+
+class QualityJobSegmentStatus(CamelCaseModel):
+    """Segment status within a quality job."""
+    id: str
+    job_status: str  # 'pending' or 'analyzed'
+
+
+class QualityJobResponse(CamelCaseModel):
+    """Quality job status response."""
+    id: str
+    job_type: str
+    status: str
+    stt_engine: Optional[str] = None
+    stt_model_name: Optional[str] = None
+    audio_engine: Optional[str] = None
+    language: str
+    total_segments: int
+    processed_segments: int
+    failed_segments: int = 0
+    current_segment_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    segment_id: Optional[str] = None
+    segment_ids: Optional[List[QualityJobSegmentStatus]] = None  # Segment tracking
+    trigger_source: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    # Display fields (from JOINs)
+    chapter_title: Optional[str] = None
+    project_title: Optional[str] = None
+
+
+class QualityJobsListResponse(CamelCaseModel):
+    """
+    Response model for list of quality jobs.
+
+    Used by endpoints that return multiple jobs with optional filtering.
+    """
+    success: bool = Field(default=True, description="Whether the request was successful")
+    jobs: List[QualityJobResponse] = Field(
+        default_factory=list,
+        description="List of quality jobs matching the query filters"
+    )
+    count: int = Field(description="Number of jobs returned (may be less than limit if filtered)")
+
+
+class QualityJobCreatedResponse(CamelCaseModel):
+    """Response when quality job is created."""
+    job_id: str
+    message: str
+    status: str
+
+
+# ============================================================================
+# Import System Models
+# ============================================================================
+
+class MappingRules(BaseModel):
+    """Configurable markdown parsing rules"""
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    project_heading: str = "#"  # Default: # Heading 1
+    chapter_heading: str = "###"  # Default: ### Heading 3
+    divider_pattern: str = "***"  # Default: ***
+
+
+class ImportWarning(CamelCaseModel):
+    """Warning or error from import validation"""
+    type: str  # e.g., 'too_long', 'empty', 'no_project_title'
+    message: str
+    severity: Literal["critical", "warning", "info"]
+
+
+# Commented out for performance - Preview now shows only stats, not individual segments
+# Segments are still generated internally and used for stats calculation
+# Uncomment if detailed segment preview is needed in the future
+# class SegmentPreview(CamelCaseModel):
+#     """Preview of a single segment"""
+#     id: str  # Temporary ID for frontend
+#     type: Literal["text", "divider"]
+#     content: Optional[str] = None  # Only for text segments
+#     char_count: Optional[int] = None  # Only for text segments
+#     pause_duration: Optional[int] = None  # Only for dividers
+#     order_index: int
+
+
+class ChapterStats(CamelCaseModel):
+    """Chapter statistics (auto-converts snake_case → camelCase for frontend)"""
+    segment_count: int = Field(description="Total number of segments in chapter")
+    total_chars: int = Field(description="Total character count")
+    divider_count: int = Field(description="Number of divider segments")
+    failed_count: int = Field(description="Number of oversized segments (sentences > max_length)")
+
+
+class ChapterPreview(CamelCaseModel):
+    """Preview of a chapter with statistics (segments not included for performance)"""
+    id: str  # Temporary ID for frontend
+    title: str  # Cleaned title
+    original_title: str  # Raw title from markdown
+    order_index: int
+    # segments: List[SegmentPreview]  # Commented out - only stats shown in preview
+    stats: ChapterStats  # Automatic camelCase conversion (segmentCount, totalChars, etc.)
+    warnings: List[ImportWarning]
+
+
+class ImportStats(CamelCaseModel):
+    """Overall import statistics"""
+    total_chapters: int
+    total_segments: int
+    total_chars: int
+    estimated_duration: Optional[str] = None  # e.g., "~15min"
+
+
+class ImportPreviewResponse(CamelCaseModel):
+    """Complete preview response for import"""
+    is_valid: bool  # False if critical warnings exist
+    project: Dict[str, Any]  # title, description
+    chapters: List[ChapterPreview]
+    global_warnings: List[ImportWarning]
+    stats: ImportStats
+
+
+class ImportConfig(BaseModel):
+    """Configuration for final import"""
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    mode: Literal["new", "merge"]
+    merge_target_id: Optional[str] = None
+    selected_chapters: List[Dict[str, Any]]  # [{original_title, new_title?, include}]
+    tts_settings: Dict[str, Any]  # tts_engine, tts_model_name, language, tts_speaker_name
+
+
+class ImportExecuteResponse(CamelCaseModel):
+    """Response for import execution (POST /api/projects/import)"""
+    project: ProjectWithChaptersResponse = Field(description="Created or updated project with chapters and segments")
+    chapters_created: int = Field(description="Number of chapters created/added")
+    segments_created: int = Field(description="Total number of segments created")
+
+
+# ============================================================================
+# Engine Management Response Models
+# ============================================================================
+
+class EngineStatusInfo(CamelCaseModel):
+    """
+    Detailed engine status for management UI.
+
+    Used by /api/engines/status endpoint to display engine status across all types.
+
+    Status Values (complete lifecycle):
+        - 'disabled': Engine is disabled in settings (not available for use)
+        - 'stopped': Engine is enabled but not running
+        - 'starting': Engine server is being started (process launching, waiting for health check)
+        - 'running': Engine server is running and healthy
+        - 'stopping': Engine server is being stopped (shutdown in progress)
+        - 'error': Engine encountered an error
+    """
+    name: str = Field(description="Unique engine identifier")
+    display_name: str = Field(description="Human-readable display name")
+    version: str = Field(description="Engine version")
+    engine_type: str = Field(description="Engine type: 'tts', 'text', 'stt', or 'audio'")
+
+    # Status
+    is_enabled: bool = Field(description="Whether engine is enabled in settings")
+    is_running: bool = Field(description="Whether engine server is currently running")
+    is_default: bool = Field(default=False, description="True for default engine of its type")
+    status: str = Field(description="Status: 'disabled', 'stopped', 'starting', 'running', 'stopping', 'error'")
+    port: Optional[int] = Field(None, description="HTTP port if engine is running")
+    error_message: Optional[str] = Field(None, description="Error message if status='error'")
+
+    # Auto-stop info
+    idle_timeout_seconds: Optional[int] = Field(None, description="Inactivity timeout in seconds (None = exempt from auto-stop)")
+    seconds_until_auto_stop: Optional[int] = Field(None, description="Seconds remaining until auto-stop (None = not applicable)")
+    keep_running: bool = Field(default=False, description="Whether engine is kept running (prevents auto-stop)")
+
+    # Capabilities
+    supported_languages: List[str] = Field(default_factory=list, description="Supported ISO language codes (filtered by allowedLanguages for TTS)")
+    all_supported_languages: List[str] = Field(default_factory=list, description="All supported ISO language codes (unfiltered, for Settings UI)")
+    device: str = Field(default="cpu", description="Device: 'cpu' or 'cuda'")
+
+    # Models (for engines that support multiple models)
+    available_models: List[str] = Field(default_factory=list, description="List of available model names")
+    loaded_model: Optional[str] = Field(None, description="Currently loaded model name")
+    default_model_name: Optional[str] = Field(None, description="Default model name from settings (per-engine)")
+
+
+class AllEnginesStatusResponse(CamelCaseModel):
+    """
+    All engines grouped by type.
+
+    Used by /api/engines/status endpoint for Engine Management UI.
+    """
+    success: bool = Field(description="Whether operation succeeded")
+    tts: List[EngineStatusInfo] = Field(default_factory=list, description="TTS engines")
+    text: List[EngineStatusInfo] = Field(default_factory=list, description="Text processing engines")
+    stt: List[EngineStatusInfo] = Field(default_factory=list, description="Speech-to-text engines")
+    audio: List[EngineStatusInfo] = Field(default_factory=list, description="Audio analysis engines")
+
+    # Summary for feature-gating
+    has_tts_engine: bool = Field(description="At least one enabled TTS engine exists")
+    has_text_engine: bool = Field(description="At least one enabled text engine exists")
+    has_stt_engine: bool = Field(description="At least one enabled STT engine exists")

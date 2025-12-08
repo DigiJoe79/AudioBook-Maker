@@ -1,0 +1,35 @@
+# ============================================================================
+# spaCy Text Processing Engine Dependencies
+# ============================================================================
+# Last Updated: 2025-12-04
+# Python: 3.10+ (specified in engine.yaml)
+# Tested with: spaCy 3.8.11, Python 3.10
+# ============================================================================
+
+# spaCy NLP Framework
+# v3.8.11 is latest stable (Nov 2024)
+# v3.8.8+ dropped Python 3.9 support (project uses 3.10+, OK)
+# v3.8.7+ added Python 3.13 support, Cython 3
+# GitHub: https://github.com/explosion/spaCy
+# Note: spaCy 4.x expected in future - pin to 3.x for stability
+spacy>=3.8.7,<4.0.0
+
+# Web Framework (aligned with Whisper engine)
+fastapi>=0.120.0
+uvicorn[standard]>=0.34.0
+pydantic>=2.10.0,<3.0.0
+
+# Utilities
+loguru>=0.7.0,<1.0.0
+pyyaml>=6.0.1
+
+# ============================================================================
+# Language Models (downloaded separately via setup script)
+# ============================================================================
+# Models are NOT pip packages - download with: python -m spacy download <model>
+# This engine uses MD models only (balanced speed/accuracy, CPU-only)
+#
+# Required models (downloaded by setup script):
+#   python -m spacy download de_core_news_md
+#   python -m spacy download en_core_web_md
+# ============================================================================

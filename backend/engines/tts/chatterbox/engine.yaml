@@ -1,0 +1,103 @@
+name: "chatterbox"
+display_name: "Chatterbox"
+
+# Default enabled state (can be overridden in settings)
+enabled: false
+
+# Python version requirement
+python_version: "3.11"  # Required: numpy 1.25.x not compatible with 3.12
+
+# Path to virtual environment (relative to this file)
+venv_path: "./venv"
+
+# Available models
+models:
+  - name: "multilingual"
+    display_name: "Multilingual (Pretrained)"
+    path: "pretrained"  # Loaded via from_pretrained()
+
+# Capabilities
+capabilities:
+  supports_model_hotswap: false  # Single pretrained model
+  supports_speaker_cloning: true  # Supports reference audio for voice cloning
+  supports_streaming: false
+
+# Constraints
+constraints:
+  min_text_length: 1
+  max_text_length: 300  # Recommended max for quality
+  sample_rate: 24000  # Chatterbox output sample rate
+  audio_format: "wav"
+  supports_streaming: false
+  requires_punctuation: false
+
+# Supported languages (23 languages)
+supported_languages:
+  - ar  # Arabic
+  - da  # Danish
+  - de  # German
+  - el  # Greek
+  - en  # English
+  - es  # Spanish
+  - fi  # Finnish
+  - fr  # French
+  - he  # Hebrew
+  - hi  # Hindi
+  - it  # Italian
+  - ja  # Japanese
+  - ko  # Korean
+  - ms  # Malay
+  - nl  # Dutch
+  - "no"  # Norwegian (quoted to avoid YAML boolean parsing)
+  - pl  # Polish
+  - pt  # Portuguese
+  - ru  # Russian
+  - sv  # Swedish
+  - sw  # Swahili
+  - tr  # Turkish
+  - zh  # Chinese
+
+# Configuration
+config:
+  # Parameter schema for Settings dialog
+  # These parameters are exposed in the UI and sent to the engine during generation
+  parameter_schema:
+    exaggeration:
+      type: "float"
+      label: "settings.tts.chatterbox.exaggeration"
+      description: "settings.tts.chatterbox.exaggerationDesc"
+      default: 0.5
+      min: 0.25
+      max: 2.0
+      step: 0.05
+      readonly: false
+
+    temperature:
+      type: "float"
+      label: "settings.tts.chatterbox.temperature"
+      description: "settings.tts.chatterbox.temperatureDesc"
+      default: 0.8
+      min: 0.05
+      max: 5.0
+      step: 0.05
+      readonly: false
+
+    cfg_weight:
+      type: "float"
+      label: "settings.tts.chatterbox.cfgWeight"
+      description: "settings.tts.chatterbox.cfgWeightDesc"
+      default: 0.5
+      min: 0.2
+      max: 1.0
+      step: 0.05
+      readonly: false
+
+    seed:
+      type: "int"
+      label: "settings.tts.chatterbox.seed"
+      description: "settings.tts.chatterbox.seedDesc"
+      default: 0
+      min: 0
+      max: 2147483647
+      step: 1
+      readonly: false

@@ -1,0 +1,100 @@
+# Silero-VAD Audio Analysis Engine
+name: silero-vad
+display_name: Silero VAD Audio Analysis
+type: audio
+
+# Python version requirement
+python_version: "3.12"
+
+description: |
+  Audio quality analysis using Silero Voice Activity Detection.
+  Detects speech/silence ratio, clipping, and volume issues.
+
+# Model configuration
+# Note: display_name is set dynamically by server.py using silero_vad.__version__
+default_model: silero-vad
+models:
+  - name: silero-vad
+    display_name: Silero VAD
+
+capabilities:
+  speech_detection: true
+  silence_detection: true
+  clipping_detection: true
+  volume_analysis: true
+
+# Service settings (parameter_schema for UI rendering)
+config:
+  parameter_schema:
+    speech_ratio_ideal_min:
+      type: "int"
+      label: "settings.audio.sileroVad.speechRatioIdealMin"
+      description: "settings.audio.sileroVad.speechRatioIdealMinDesc"
+      default: 75
+      min: 0
+      max: 100
+      step: 1
+      category: "speechRatio"
+    speech_ratio_ideal_max:
+      type: "int"
+      label: "settings.audio.sileroVad.speechRatioIdealMax"
+      description: "settings.audio.sileroVad.speechRatioIdealMaxDesc"
+      default: 90
+      min: 0
+      max: 100
+      step: 1
+      category: "speechRatio"
+    speech_ratio_warning_min:
+      type: "int"
+      label: "settings.audio.sileroVad.speechRatioWarningMin"
+      description: "settings.audio.sileroVad.speechRatioWarningMinDesc"
+      default: 65
+      min: 0
+      max: 100
+      step: 1
+      category: "speechRatio"
+    speech_ratio_warning_max:
+      type: "int"
+      label: "settings.audio.sileroVad.speechRatioWarningMax"
+      description: "settings.audio.sileroVad.speechRatioWarningMaxDesc"
+      default: 93
+      min: 0
+      max: 100
+      step: 1
+      category: "speechRatio"
+    max_silence_duration_warning:
+      type: "int"
+      label: "settings.audio.sileroVad.maxSilenceWarning"
+      description: "settings.audio.sileroVad.maxSilenceWarningDesc"
+      default: 2500
+      min: 0
+      max: 10000
+      step: 100
+      category: "silence"
+    max_silence_duration_critical:
+      type: "int"
+      label: "settings.audio.sileroVad.maxSilenceCritical"
+      description: "settings.audio.sileroVad.maxSilenceCriticalDesc"
+      default: 3750
+      min: 0
+      max: 10000
+      step: 100
+      category: "silence"
+    max_clipping_peak:
+      type: "float"
+      label: "settings.audio.sileroVad.maxClippingPeak"
+      description: "settings.audio.sileroVad.maxClippingPeakDesc"
+      default: 0.0
+      min: -10.0
+      max: 3.0
+      step: 0.1
+      category: "clipping"
+    min_average_volume:
+      type: "float"
+      label: "settings.audio.sileroVad.minAverageVolume"
+      description: "settings.audio.sileroVad.minAverageVolumeDesc"
+      default: -40.0
+      min: -60.0
+      max: 0.0
+      step: 1.0
+      category: "volume"

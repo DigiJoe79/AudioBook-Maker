@@ -16,8 +16,6 @@ CREATE TABLE IF NOT EXISTS chapters (
     project_id TEXT NOT NULL,
     title TEXT NOT NULL,
     order_index INTEGER NOT NULL,
-    default_tts_engine TEXT NOT NULL,
-    default_tts_model_name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -39,6 +37,8 @@ CREATE TABLE IF NOT EXISTS segments (
     start_time REAL DEFAULT 0.0,
     end_time REAL DEFAULT 0.0,
     status TEXT DEFAULT 'pending', -- pending, queued, processing, completed, failed
+    regenerate_attempts INTEGER DEFAULT 0, -- Auto-regenerate counter for quality defects
+    is_frozen BOOLEAN DEFAULT FALSE, -- Frozen segments are protected from regeneration
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
@@ -99,10 +99,50 @@ CREATE TABLE IF NOT EXISTS export_jobs (
     FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
 );
 
+-- Pronunciation Rules Table (language-specific text transformations)
+CREATE TABLE IF NOT EXISTS pronunciation_rules (
+    id TEXT PRIMARY KEY,
+    pattern TEXT NOT NULL,
+    replacement TEXT NOT NULL,
+    is_regex BOOLEAN DEFAULT FALSE,
+    scope TEXT NOT NULL CHECK (scope IN ('project_engine', 'engine', 'global')),
+    project_id TEXT,
+    engine_name TEXT NOT NULL,
+    language TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    UNIQUE(pattern, engine_name, language, project_id)
+);
+
+-- Segments Analysis Table (quality analysis results in generic format)
+CREATE TABLE IF NOT EXISTS segments_analysis (
+    id TEXT PRIMARY KEY,
+    segment_id TEXT NOT NULL,
+    chapter_id TEXT NOT NULL,
+
+    -- Quality Analysis Results (generic format)
+    quality_score INTEGER, -- Aggregated quality score (0-100)
+    quality_status TEXT DEFAULT 'perfect' CHECK(quality_status IN ('perfect', 'warning', 'defect')),
+    engine_results TEXT, -- JSON array of engine results in generic format
+
+    -- Timestamps
+    analyzed_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+
+    FOREIGN KEY (segment_id) REFERENCES segments(id) ON DELETE CASCADE,
+    FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE,
+    UNIQUE(segment_id)
+);
+
 -- Global Settings Table
+-- NOTE: value must be TEXT (not JSON) to prevent SQLite auto-parsing
+-- All values are stored as JSON-encoded strings via json.dumps()
 CREATE TABLE IF NOT EXISTS global_settings (
     key TEXT PRIMARY KEY,
-    value JSON NOT NULL,
+    value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
 
@@ -143,11 +183,19 @@ CREATE INDEX IF NOT EXISTS idx_segments_speaker ON segments(tts_speaker_name);
 CREATE INDEX IF NOT EXISTS idx_segments_language ON segments(language);
 CREATE INDEX IF NOT EXISTS idx_projects_order ON projects(order_index);
 CREATE INDEX IF NOT EXISTS idx_segments_type ON segments(segment_type);
+CREATE INDEX IF NOT EXISTS idx_segments_frozen ON segments(is_frozen);
 CREATE INDEX IF NOT EXISTS idx_tts_jobs_status ON tts_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_tts_jobs_chapter ON tts_jobs(chapter_id);
 CREATE INDEX IF NOT EXISTS idx_tts_jobs_created ON tts_jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_export_jobs_chapter ON export_jobs(chapter_id);
 CREATE INDEX IF NOT EXISTS idx_export_jobs_status ON export_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_pronunciation_rules_engine ON pronunciation_rules(engine_name, language);
+CREATE INDEX IF NOT EXISTS idx_pronunciation_rules_project ON pronunciation_rules(project_id);
+CREATE INDEX IF NOT EXISTS idx_pronunciation_rules_scope ON pronunciation_rules(scope);
+CREATE INDEX IF NOT EXISTS idx_segments_analysis_segment ON segments_analysis(segment_id);
+CREATE INDEX IF NOT EXISTS idx_segments_analysis_chapter ON segments_analysis(chapter_id);
+CREATE INDEX IF NOT EXISTS idx_segments_analysis_quality_status ON segments_analysis(quality_status);
+CREATE INDEX IF NOT EXISTS idx_segments_analysis_quality_score ON segments_analysis(quality_score);
 CREATE INDEX IF NOT EXISTS idx_speaker_samples_speaker ON speaker_samples(speaker_id);
 CREATE INDEX IF NOT EXISTS idx_speakers_default ON speakers(is_default);
 CREATE INDEX IF NOT EXISTS idx_speakers_active ON speakers(is_active);

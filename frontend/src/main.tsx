@@ -1,12 +1,13 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, QueryCache } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { CacheProvider } from '@emotion/react'
 import createCache from '@emotion/cache'
 import App from './App'
 import './styles/globals.css'
 import './i18n/config' // Initialize i18n
+import { logger } from '@utils/logger'
 
 // Get the CSP nonce injected by Tauri
 // Tauri 2.0 automatically adds a nonce to the CSP, which makes 'unsafe-inline' ignored
@@ -26,6 +27,12 @@ const emotionCache = createCache({
 
 // Create QueryClient with sensible defaults
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    // Global error handler to ensure no query errors are completely silent
+    onError: (error: Error) => {
+      logger.error('[QueryClient] Query error:', { error: error.message })
+    },
+  }),
   defaultOptions: {
     queries: {
       // Stale time: How long data is considered fresh (default: 0 = always stale)
@@ -34,8 +41,8 @@ const queryClient = new QueryClient({
       gcTime: 10 * 60 * 1000,
       // Retry failed requests 1 time
       retry: 1,
-      // Refetch on window focus
-      refetchOnWindowFocus: true,
+      // Refetch on window focus - disabled since SSE provides real-time updates
+      refetchOnWindowFocus: false,
       // Refetch on mount if data is stale
       refetchOnMount: true,
     },

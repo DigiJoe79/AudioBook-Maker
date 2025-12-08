@@ -13,11 +13,40 @@ import {
   type UseQueryResult,
   type UseMutationResult,
 } from '@tanstack/react-query'
-import { ttsApi, type TTSOptions } from '../services/api'
-import { queryKeys } from '../services/queryKeys'
-import type { TTSEngine, TTSModel } from '../types'
-import { useSSEConnection } from '../contexts/SSEContext'
-import { logger } from '../utils/logger'
+import { ttsApi, type TTSOptions, type ApiSegment } from '@services/api'
+import { queryKeys } from '@services/queryKeys'
+import type { Chapter, TTSJob, TTSJobsListResponse, Speaker } from '@types'
+import type { ApiTTSJob, ApiTTSJobsListResponse, ApiSpeaker } from '@/types/api'
+import { useSSEConnection } from '@contexts/SSEContext'
+import { logger } from '@utils/logger'
+
+// ============================================================================
+// Transform Functions (API → App Types)
+// ============================================================================
+
+/**
+ * Transform API TTS Job response to app type with Date objects
+ */
+const transformTTSJob = (apiJob: ApiTTSJob): TTSJob => ({
+  ...apiJob,
+  createdAt: new Date(apiJob.createdAt),
+  startedAt: apiJob.startedAt ? new Date(apiJob.startedAt) : null,
+  completedAt: apiJob.completedAt ? new Date(apiJob.completedAt) : null,
+  updatedAt: new Date(apiJob.updatedAt),
+})
+
+/**
+ * Transform API Speaker response to app type with Date objects
+ */
+const transformSpeaker = (apiSpeaker: ApiSpeaker): Speaker => ({
+  ...apiSpeaker,
+  createdAt: new Date(apiSpeaker.createdAt),
+  updatedAt: new Date(apiSpeaker.updatedAt),
+  samples: apiSpeaker.samples.map(sample => ({
+    ...sample,
+    createdAt: new Date(sample.createdAt),
+  })),
+})
 
 /**
  * Fetch list of available speakers from database
@@ -30,119 +59,21 @@ import { logger } from '../utils/logger'
  * const { data: speakers } = useSpeakers()
  * ```
  */
-export function useSpeakers(): UseQueryResult<
-  Array<{
-    id: string
-    name: string
-    description?: string
-    gender?: string
-    languages: string[]
-    tags: string[]
-    isDefault: boolean
-    isActive: boolean
-    sampleCount: number
-    createdAt: string
-    updatedAt: string
-    samples: Array<{
-      id: string
-      filePath: string
-      fileName: string
-      fileSize: number
-      duration?: number
-      sampleRate?: number
-      transcript?: string
-      createdAt: string
-    }>
-  }>,
-  Error
-> {
+export function useSpeakers(): UseQueryResult<Speaker[], Error> {
   return useQuery({
-    queryKey: queryKeys.tts.speakers(),
+    queryKey: queryKeys.speakers.lists(),
     queryFn: async () => {
-      return await ttsApi.getSpeakers()
+      const apiSpeakers = await ttsApi.getSpeakers()
+      return apiSpeakers.map(transformSpeaker)
     },
     // Speakers don't change often, cache for longer
     staleTime: 60 * 60 * 1000, // 1 hour
   })
 }
 
-/**
- * Fetch list of available TTS engines
- *
- * Returns metadata for all registered engines including their capabilities,
- * supported languages, and generation constraints.
- *
- * @example
- * ```tsx
- * const { data: engines, isLoading } = useTTSEngines()
- *
- * // Show engine dropdown
- * {engines?.map(engine => (
- *   <MenuItem key={engine.name} value={engine.name}>
- *     {engine.displayName}
- *   </MenuItem>
- * ))}
- * ```
- */
-export function useTTSEngines(): UseQueryResult<TTSEngine[], Error> {
-  return useQuery({
-    queryKey: queryKeys.tts.engines(),
-    queryFn: async () => {
-      const result = await ttsApi.getEngines()
-      return result.engines
-    },
-    // Engines don't change at runtime, cache for longer
-    staleTime: 30 * 60 * 1000, // 30 minutes
-  })
-}
-
-/**
- * Fetch list of available models for a specific TTS engine
- *
- * Returns metadata for all available models including version, size, and path.
- *
- * @param engineType - Engine identifier 
- *
- * @example
- * ```tsx
- * const { data: models, isLoading } = useTTSModels('engine')
- *
- * // Show model dropdown
- * {models?.map(model => (
- *   <MenuItem key={model.modelName} value={model.modelName}>
- *     {model.displayName}
- *     {model.sizeMb && ` (${model.sizeMb.toFixed(0)} MB)`}
- *   </MenuItem>
- * ))}
- * ```
- */
-export function useTTSModels(engineType: string | null | undefined): UseQueryResult<TTSModel[], Error> {
-  // Validate that engine exists before querying models
-  const { data: engines = [], isLoading: enginesLoading } = useTTSEngines()
-
-  // Only enable query if:
-  // 1. engineType is provided
-  // 2. engines list has loaded (not loading)
-  // 3. engineType exists in available engines list
-  const engineExists = !enginesLoading && engines.some(e => e.name === engineType)
-  const shouldFetch = !!engineType && engineExists
-
-  return useQuery({
-    queryKey: queryKeys.tts.models(engineType || ''),
-    queryFn: async () => {
-      if (!engineType) throw new Error('Engine type is required')
-      const result = await ttsApi.getEngineModels(engineType)
-      // Map API response (ttsModelName) to frontend interface (modelName)
-      return result.models.map(model => ({
-        ...model,
-        modelName: model.ttsModelName
-      }))
-    },
-    enabled: shouldFetch,
-    // Models don't change often, cache for longer
-    staleTime: 30 * 60 * 1000, // 30 minutes
-  })
-}
+// Note: useTTSEngines() and useTTSModels() have been removed.
+// All components now use useAllEnginesStatus() from @hooks/useEnginesQuery instead.
+// Models are now part of EngineStatusInfo.availableModels: string[]
 
 /**
  * Generate audio for a single segment (regenerate)
@@ -163,7 +94,7 @@ export function useTTSModels(engineType: string | null | undefined): UseQueryRes
 export function useGenerateSegment(): UseMutationResult<
   {
     success: boolean
-    segment: any
+    segment: ApiSegment // Use ApiSegment (string dates) instead of Segment (Date objects)
     message: string
   },
   Error,
@@ -186,14 +117,14 @@ export function useGenerateSegment(): UseMutationResult<
       const previousChapter = queryClient.getQueryData(queryKeys.chapters.detail(chapterId))
 
       // Optimistically set segment status to processing
-      queryClient.setQueryData<any>(
+      queryClient.setQueryData<Chapter>(
         queryKeys.chapters.detail(chapterId),
-        (old: any) => {
+        (old) => {
           if (!old) return old
           return {
             ...old,
-            segments: old.segments.map((s: any) =>
-              s.id === segmentId ? { ...s, status: 'processing', audioPath: null } : s
+            segments: old.segments.map((s) =>
+              s.id === segmentId ? { ...s, status: 'processing' as const, audioPath: null } : s
             ),
           }
         }
@@ -226,17 +157,30 @@ export function useGenerateSegment(): UseMutationResult<
  * Returns immediately, generation happens in background.
  * Progress monitoring is handled by SSE events (useSSEEventHandlers).
  *
+ * **Two modes:**
+ * 1. **Default** (overrideSegmentSettings=false): Segments keep their individual TTS parameters
+ * 2. **Override** (overrideSegmentSettings=true): All segments updated with provided parameters
+ *
  * @example
  * ```tsx
  * const generateChapter = useGenerateChapter()
  *
+ * // Default mode - use segment parameters
  * await generateChapter.mutateAsync({
  *   chapterId: 'chapter-123',
- *   ttsSpeakerName: 'default_speaker',  
+ *   forceRegenerate: false,
+ *   overrideSegmentSettings: false
+ * })
+ *
+ * // Override mode - set parameters for all segments
+ * await generateChapter.mutateAsync({
+ *   chapterId: 'chapter-123',
+ *   overrideSegmentSettings: true,
+ *   ttsSpeakerName: 'speaker-name',
  *   language: 'de',
- *   ttsEngine: 'engineName',  // Required
- *   ttsModelName: 'modelName',  // Required
- *   forceRegenerate: false  // Optional, if true, regenerates completed segments
+ *   ttsEngine: 'xtts',
+ *   ttsModelName: 'v2.0.2',
+ *   forceRegenerate: false
  * })
  * ```
  */
@@ -249,11 +193,13 @@ export function useGenerateChapter(): UseMutationResult<
   Error,
   {
     chapterId: string
-    ttsSpeakerName: string  
-    language: string
-    ttsEngine: string
-    ttsModelName: string
     forceRegenerate?: boolean
+    overrideSegmentSettings?: boolean
+    // TTS parameters (only used when overrideSegmentSettings=true)
+    ttsSpeakerName?: string
+    language?: string
+    ttsEngine?: string
+    ttsModelName?: string
     options?: TTSOptions
   }
 > {
@@ -262,11 +208,12 @@ export function useGenerateChapter(): UseMutationResult<
   return useMutation({
     mutationFn: async (data: {
       chapterId: string
-      ttsSpeakerName: string  
-      language: string
-      ttsEngine: string
-      ttsModelName: string
       forceRegenerate?: boolean
+      overrideSegmentSettings?: boolean
+      ttsSpeakerName?: string
+      language?: string
+      ttsEngine?: string
+      ttsModelName?: string
       options?: TTSOptions
     }) => {
       return await ttsApi.generateChapter(data)
@@ -278,31 +225,6 @@ export function useGenerateChapter(): UseMutationResult<
       })
       // NOTE: NO activeJobs invalidation - SSE job.created event handles this automatically
     },
-  })
-}
-
-/**
- * Cancel chapter generation
- *
- * @example
- * ```tsx
- * const cancelGeneration = useCancelChapterGeneration()
- * await cancelGeneration.mutateAsync('chapter-123')
- * ```
- */
-export function useCancelChapterGeneration(): UseMutationResult<
-  {
-    status: string
-    chapterId: string
-  },
-  Error,
-  string
-> {
-  return useMutation({
-    mutationFn: async (chapterId: string) => {
-      return await ttsApi.cancelChapterGeneration(chapterId)
-    },
-    // NO invalidation needed - SSE job.cancelled event handles updates automatically
   })
 }
 
@@ -336,21 +258,6 @@ export function useCancelJob(): UseMutationResult<
       // The job.cancelled SSE event will update the cache immediately
     },
   })
-}
-
-/**
- * Helper hook to check if any segment in a chapter is generating
- *
- * @example
- * ```tsx
- * const isGenerating = useIsChapterGenerating(chapter)
- * ```
- */
-export function useIsChapterGenerating(chapter: any | null | undefined): boolean {
-  if (!chapter?.segments) return false
-  return chapter.segments.some(
-    (s: any) => s.status === 'processing'
-  )
 }
 
 // ============================================================================
@@ -390,7 +297,13 @@ export function useTTSJobs(
 
   return useQuery({
     queryKey: queryKeys.tts.jobs(filters),
-    queryFn: () => ttsApi.listJobs(filters),
+    queryFn: async () => {
+      const response = await ttsApi.listJobs(filters) as unknown as ApiTTSJobsListResponse
+      return {
+        ...response,
+        jobs: response.jobs.map(transformTTSJob)
+      } as TTSJobsListResponse
+    },
     enabled: options?.enabled ?? true,
     // When SSE active: Never refetch (infinite stale time)
     // When SSE unavailable: Allow refetch after 5s
@@ -403,7 +316,7 @@ export function useTTSJobs(
       : (query) => {
           // Smart polling when SSE unavailable
           const data = query.state.data
-          const hasActiveJobs = data?.jobs && data.jobs.some((job: any) =>
+          const hasActiveJobs = data?.jobs && data.jobs.some((job) =>
             job.status === 'pending' || job.status === 'running'
           )
           // Poll every 10s if jobs exist, otherwise don't poll
@@ -440,7 +353,13 @@ export function useActiveTTSJobs(options?: {
   // React Query's refetchInterval is NOT reactive, so we control it via config
   return useQuery({
     queryKey: queryKeys.tts.activeJobs(),
-    queryFn: () => ttsApi.listActiveJobs(),
+    queryFn: async () => {
+      const response = await ttsApi.listActiveJobs() as unknown as ApiTTSJobsListResponse
+      return {
+        ...response,
+        jobs: response.jobs.map(transformTTSJob)
+      } as TTSJobsListResponse
+    },
     enabled,
     // When SSE active: Never refetch (infinite stale time)
     // When SSE unavailable: Allow refetch after 5s
@@ -458,55 +377,6 @@ export function useActiveTTSJobs(options?: {
         },
     // IMPORTANT: Refetch on mount to get fresh data after reconnect
     refetchOnMount: 'always',
-  })
-}
-
-/**
- * Query single TTS job by ID with auto-polling
- *
- * Automatically polls while job is active (pending, running, cancelling)
- * and stops when job completes or fails.
- *
- * @example
- * ```tsx
- * const { data: job } = useTTSJob(jobId)
- * const progress = job ? (job.processedSegments / job.totalSegments) * 100 : 0
- *
- * // With custom polling
- * const { data: job } = useTTSJob(jobId, { pollingInterval: 1000 })
- * ```
- */
-export function useTTSJob(
-  jobId: string | null | undefined,
-  options?: {
-    pollingInterval?: number
-    enabled?: boolean
-  }
-) {
-  const { pollingInterval = 500, enabled = true } = options || {}
-
-  // Check if SSE is active
-  const { connection: sseConnection } = useSSEConnection()
-  const isSSEActive = sseConnection.connectionType === 'sse'
-
-  return useQuery({
-    queryKey: queryKeys.tts.job(jobId ?? ''),
-    queryFn: () => {
-      if (!jobId) throw new Error('Job ID is required')
-      return ttsApi.getJob(jobId)
-    },
-    enabled: enabled && !!jobId,
-    refetchInterval: isSSEActive
-      ? false // No polling when SSE active
-      : (query) => {
-          // Auto-stop polling when job completes
-          const data = query.state.data
-          if (!data) return false
-          const isActive = ['pending', 'running', 'cancelling'].includes(data.status)
-          return isActive ? pollingInterval : false
-        },
-    // Increase staleTime when SSE active
-    staleTime: isSSEActive ? Infinity : 0,
   })
 }
 
@@ -534,24 +404,24 @@ export function useDeleteJob(): UseMutationResult<
     },
     onMutate: async (jobId) => {
       // Cancel any outgoing refetches
-      await queryClient.cancelQueries({ queryKey: ['tts', 'jobs'] })
+      await queryClient.cancelQueries({ queryKey: queryKeys.tts.all })
 
       // Snapshot all job queries for rollback
-      const snapshots = new Map<string, any>()
-      queryClient.getQueriesData<any>({ queryKey: ['tts', 'jobs'] }).forEach(([key, data]) => {
+      const snapshots = new Map<string, TTSJobsListResponse | TTSJob[]>()
+      queryClient.getQueriesData<TTSJobsListResponse | TTSJob[]>({ queryKey: queryKeys.tts.all }).forEach(([key, data]) => {
         if (data) {
           snapshots.set(JSON.stringify(key), data)
         }
       })
 
       // Optimistically remove job from ALL job queries
-      queryClient.setQueriesData<any>({ queryKey: ['tts', 'jobs'] }, (old: any) => {
+      queryClient.setQueriesData<TTSJobsListResponse | TTSJob[]>({ queryKey: queryKeys.tts.all }, (old) => {
         if (!old) return old
         if (Array.isArray(old)) {
-          return old.filter((job: any) => job.id !== jobId)
+          return old.filter((job) => job.id !== jobId)
         }
-        if (old.jobs && Array.isArray(old.jobs)) {
-          return { ...old, jobs: old.jobs.filter((job: any) => job.id !== jobId) }
+        if ('jobs' in old && Array.isArray(old.jobs)) {
+          return { ...old, jobs: old.jobs.filter((job) => job.id !== jobId) }
         }
         return old
       })
@@ -597,26 +467,26 @@ export function useClearJobHistory(): UseMutationResult<
     },
     onMutate: async () => {
       // Cancel any outgoing refetches
-      await queryClient.cancelQueries({ queryKey: ['tts', 'jobs'] })
+      await queryClient.cancelQueries({ queryKey: queryKeys.tts.all })
 
       // Snapshot all job queries for rollback
-      const snapshots = new Map<string, any>()
-      queryClient.getQueriesData<any>({ queryKey: ['tts', 'jobs'] }).forEach(([key, data]) => {
+      const snapshots = new Map<string, TTSJobsListResponse | TTSJob[]>()
+      queryClient.getQueriesData<TTSJobsListResponse | TTSJob[]>({ queryKey: queryKeys.tts.all }).forEach(([key, data]) => {
         if (data) {
           snapshots.set(JSON.stringify(key), data)
         }
       })
 
       // Optimistically remove completed/failed jobs from ALL job queries
-      queryClient.setQueriesData<any>({ queryKey: ['tts', 'jobs'] }, (old: any) => {
+      queryClient.setQueriesData<TTSJobsListResponse | TTSJob[]>({ queryKey: queryKeys.tts.all }, (old) => {
         if (!old) return old
         if (Array.isArray(old)) {
-          return old.filter((job: any) => job.status !== 'completed' && job.status !== 'failed')
+          return old.filter((job) => job.status !== 'completed' && job.status !== 'failed')
         }
-        if (old.jobs && Array.isArray(old.jobs)) {
+        if ('jobs' in old && Array.isArray(old.jobs)) {
           return {
             ...old,
-            jobs: old.jobs.filter((job: any) => job.status !== 'completed' && job.status !== 'failed')
+            jobs: old.jobs.filter((job) => job.status !== 'completed' && job.status !== 'failed')
           }
         }
         return old
@@ -657,7 +527,7 @@ export function useClearJobHistory(): UseMutationResult<
  * ```
  */
 export function useResumeJob(): UseMutationResult<
-  import('../types').TTSJob,
+  TTSJob,
   Error,
   string
 > {
@@ -665,7 +535,8 @@ export function useResumeJob(): UseMutationResult<
 
   return useMutation({
     mutationFn: async (jobId: string) => {
-      return await ttsApi.resumeJob(jobId)
+      const apiJob = await ttsApi.resumeJob(jobId) as unknown as ApiTTSJob
+      return transformTTSJob(apiJob)
     },
     onSuccess: (newJob) => {
       // NO invalidation here - SSE will handle the update optimistically
@@ -675,6 +546,64 @@ export function useResumeJob(): UseMutationResult<
         '📋 Job Resume',
         'Resumed job with new job ID',
         { newJobId: newJob.id, totalSegments: newJob.totalSegments },
+        '#4CAF50'
+      )
+    },
+  })
+}
+
+/**
+ * Enable or disable a TTS engine
+ *
+ * Updates engine enabled status in settings. Disabled engines are not
+ * shown in engine selection dropdowns and cannot be used for generation.
+ *
+ * @example
+ * ```tsx
+ * const setEngineEnabled = useSetEngineEnabled()
+ *
+ * // Enable engine
+ * await setEngineEnabled.mutateAsync({
+ *   engineType: 'tts',
+ *   engineName: 'xtts',
+ *   enabled: true
+ * })
+ *
+ * // Disable engine
+ * await setEngineEnabled.mutateAsync({
+ *   engineType: 'tts',
+ *   engineName: 'chatterbox',
+ *   enabled: false
+ * })
+ * ```
+ */
+export function useSetEngineEnabled(): UseMutationResult<
+  {
+    success: boolean
+    message: string
+  },
+  Error,
+  {
+    engineType: string
+    engineName: string
+    enabled: boolean
+  }
+> {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ engineType, engineName, enabled }) => {
+      return await ttsApi.setEngineEnabled(engineType, engineName, enabled)
+    },
+    onSuccess: () => {
+      // Invalidate engines list to refresh enabled status
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.engines.all(),
+      })
+      logger.group(
+        '🔧 Engine Management',
+        'Engine enabled status updated',
+        {},
         '#4CAF50'
       )
     },

@@ -8,11 +8,12 @@
 
 import { useState, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ConfirmDialog } from '../components/dialogs/ConfirmDialog'
+import { ConfirmDialog } from '@components/dialogs/ConfirmDialog'
 
 interface ConfirmOptions {
   title: string
   message: string
+  icon?: React.ReactNode
   confirmText?: string
   cancelText?: string
   confirmColor?: 'primary' | 'secondary' | 'error' | 'warning'
@@ -41,6 +42,7 @@ export function useConfirm() {
         open: true,
         title,
         message,
+        icon: options?.icon,
         confirmText: options?.confirmText || t('common.yes'),
         cancelText: options?.cancelText || t('common.no'),
         confirmColor: options?.confirmColor || 'warning',
@@ -73,6 +75,7 @@ export function useConfirm() {
         onConfirm={handleConfirm}
         title={state.title}
         message={state.message}
+        icon={state.icon}
         confirmText={state.confirmText}
         cancelText={state.cancelText}
         confirmColor={state.confirmColor}

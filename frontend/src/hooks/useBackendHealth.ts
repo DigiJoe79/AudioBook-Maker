@@ -6,7 +6,8 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import type { BackendHealthResponse } from '../types/backend'
+import { queryKeys } from '@services/queryKeys'
+import type { BackendHealthResponse } from '@types'
 
 export interface BackendHealthResult {
   /** Whether the backend is online and responding */
@@ -23,6 +24,11 @@ export interface BackendHealthResult {
 
   /** Number of active generation/export jobs */
   activeJobs: number
+
+  /** Engine availability (for feature-gating) */
+  hasTtsEngine: boolean
+  hasTextEngine: boolean
+  hasSttEngine: boolean
 
   /** Error object if health check failed */
   error: Error | null
@@ -73,7 +79,7 @@ export function useBackendHealth(
     refetch,
     isError,
   } = useQuery({
-    queryKey: ['backend-health', backendUrl],
+    queryKey: queryKeys.health(),
     queryFn: async () => {
       if (!backendUrl) {
         throw new Error('No backend URL provided')
@@ -118,6 +124,9 @@ export function useBackendHealth(
     ttsEngines: isOnline ? (data?.ttsEngines || []) : [],
     busy: isOnline ? (data?.busy || false) : false,
     activeJobs: isOnline ? (data?.activeJobs || 0) : 0,
+    hasTtsEngine: isOnline ? (data?.hasTtsEngine || false) : false,
+    hasTextEngine: isOnline ? (data?.hasTextEngine || false) : false,
+    hasSttEngine: isOnline ? (data?.hasSttEngine || false) : false,
     error: error as Error | null,
     isLoading,
     refetch,
