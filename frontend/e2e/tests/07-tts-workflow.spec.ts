@@ -58,17 +58,9 @@ async function countTextSegments(page: import('@playwright/test').Page): Promise
   // Count all segment menu buttons (both text and dividers have them)
   const totalSegments = await page.getByTestId('segment-menu-button').count()
 
-  // Count dividers by looking for elements containing "Szenenumbruch"
+  // Count dividers using locale-agnostic data-segment-type attribute
   const segmentList = page.getByTestId('segment-list')
-  const listItems = segmentList.locator('li')
-  let dividerCount = 0
-
-  for (let i = 0; i < totalSegments; i++) {
-    const text = await listItems.nth(i).textContent()
-    if (text?.includes('Szenenumbruch')) {
-      dividerCount++
-    }
-  }
+  const dividerCount = await segmentList.locator('[data-segment-type="divider"]').count()
 
   return totalSegments - dividerCount
 }
@@ -116,10 +108,10 @@ test.describe('07-TTS-Workflow', () => {
     let generateButton = null
     for (let i = 0; i < totalItems; i++) {
       const item = listItems.nth(i)
-      const text = await item.textContent()
 
-      // Skip dividers
-      if (text?.includes('Szenenumbruch')) continue
+      // Skip dividers (locale-agnostic check)
+      const segmentType = await item.getAttribute('data-segment-type')
+      if (segmentType === 'divider') continue
 
       // Find generate button in this segment
       const btn = item.getByTestId('segment-generate-button')
@@ -273,10 +265,10 @@ test.describe('07-TTS-Workflow', () => {
 
     for (let i = 0; i < totalItems; i++) {
       const item = listItems.nth(i)
-      const text = await item.textContent()
 
-      // Skip dividers
-      if (text?.includes('Szenenumbruch')) {
+      // Skip dividers (locale-agnostic check)
+      const segmentType = await item.getAttribute('data-segment-type')
+      if (segmentType === 'divider') {
         console.log(`[TTS] Position ${i}: Divider (skipped) ✓`)
         continue
       }
@@ -308,10 +300,10 @@ test.describe('07-TTS-Workflow', () => {
     let playButtonFound = false
     for (let i = 0; i < totalItems; i++) {
       const item = listItems.nth(i)
-      const text = await item.textContent()
 
-      // Skip dividers
-      if (text?.includes('Szenenumbruch')) continue
+      // Skip dividers (locale-agnostic check)
+      const segmentType = await item.getAttribute('data-segment-type')
+      if (segmentType === 'divider') continue
 
       // Try to find play button
       const playButton = item.getByTestId('play-button')

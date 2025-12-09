@@ -206,7 +206,7 @@ backend/settings.local.py
 *.db.bak
 
 # Planning, ToDo documents, and archived Versions 
-.ToDo/
+.aaa/
 .claude/
 target/*
 target/*/

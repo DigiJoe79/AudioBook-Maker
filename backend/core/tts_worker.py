@@ -43,6 +43,11 @@ from services.event_broadcaster import (
 T = TypeVar('T')
 
 
+class SpeakerSampleNotFoundError(Exception):
+    """Raised when speaker sample file is not found. Not retryable."""
+    pass
+
+
 def retry_on_db_lock(func: Callable[..., T], max_retries: int = None, initial_delay: float = None) -> T:
     """
     Retry a function if it fails with 'database is locked' error.
@@ -715,8 +720,19 @@ class TTSWorker:
                         if segment['tts_speaker_name']:
                             speaker = speaker_service.get_speaker_by_name(segment['tts_speaker_name'])
                             if speaker and speaker.get('samples'):
-                                # Get all sample file paths for XTTS
-                                speaker_wav = [sample['filePath'] for sample in speaker['samples']]
+                                # Reconstruct full paths from relative paths stored in DB
+                                from config import SPEAKER_SAMPLES_DIR
+                                speaker_samples_base = Path(SPEAKER_SAMPLES_DIR)
+                                speaker_wav = []
+                                for sample in speaker['samples']:
+                                    sample_path = speaker_samples_base / sample['filePath']
+                                    # Validate file exists before sending to TTS engine
+                                    if not sample_path.exists():
+                                        raise SpeakerSampleNotFoundError(
+                                            f"Speaker sample not found: {sample_path}. "
+                                            f"Speaker '{segment['tts_speaker_name']}' has invalid sample paths."
+                                        )
+                                    speaker_wav.append(str(sample_path))
                                 # If only one sample, use string instead of list
                                 if len(speaker_wav) == 1:
                                     speaker_wav = speaker_wav[0]
@@ -813,6 +829,32 @@ class TTSWorker:
                         logger.success(f"[TTSWorker] ✓ Segment completed segment_id={segment['id']}")
                         break  # Success - exit retry loop
 
+                    except SpeakerSampleNotFoundError as e:
+                        # Non-retryable error - speaker sample file missing
+                        logger.error(f"[TTSWorker] ✗ Speaker sample not found segment_id={segment['id']} error={e}")
+                        segment_repo.update(segment['id'], status='failed')
+                        job_repo.mark_segment_completed(job['id'], segment['id'])
+                        failed += 1
+
+                        try:
+                            retry_on_db_lock(
+                                lambda: job_repo.update_progress(
+                                    job['id'],
+                                    processed_segments=processed,
+                                    failed_segments=failed
+                                )
+                            )
+                        except Exception as progress_err:
+                            logger.error(f"Failed to update job progress for {job['id']}: {progress_err}")
+
+                        try:
+                            self._emit_event_sync(
+                                emit_segment_failed(segment['id'], job['chapter_id'], str(e))
+                            )
+                        except Exception as emit_err:
+                            logger.error(f"Failed to emit segment failed event: {emit_err}")
+                        break  # Exit retry loop - no point retrying
+
                     except Exception as e:
                         logger.error(f"[TTSWorker] ✗ Segment generation failed segment_id={segment['id']} attempt={attempt + 1}/3 error={e}")
 
@@ -844,9 +886,8 @@ class TTSWorker:
                                         failed_segments=failed
                                     )
                                 )
-                            except Exception as e:
-                                logger.error(f"Failed to update job progress for {job['id']}: {e}")
-                                # Continue anyway - progress update failure shouldn't stop processing
+                            except Exception as progress_err:
+                                logger.error(f"Failed to update job progress for {job['id']}: {progress_err}")
 
                             # Emit segment failed event
                             try:

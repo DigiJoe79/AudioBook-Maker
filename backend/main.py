@@ -5,7 +5,6 @@ FastAPI server for TTS generation and audio processing
 
 import os
 import sys
-import signal
 import argparse
 from pathlib import Path
 from version import __version__  # noqa: F401 - Exposed for API access
@@ -73,7 +72,19 @@ def configure_logging(log_level: str = "INFO") -> None:
 
     # Intercept standard logging (for libraries using logging instead of loguru)
     class InterceptHandler(logging.Handler):
+        # Suppress these messages during graceful shutdown (expected, not errors)
+        SHUTDOWN_NOISE = [
+            "timeout graceful shutdown exceeded",
+            "Exception in ASGI application",
+            "Cancel",  # "Cancel N running task(s)"
+        ]
+
         def emit(self, record):
+            # Filter out noisy shutdown messages
+            msg = record.getMessage()
+            if any(noise in msg for noise in self.SHUTDOWN_NOISE):
+                return  # Suppress this message
+
             # Get corresponding Loguru level if it exists
             try:
                 level = logger.level(record.levelname).name
@@ -558,31 +569,57 @@ def main() -> None:
     available_engines = tts_manager.list_available_engines()
     logger.debug(f"Available TTS engines: {', '.join(available_engines)}")
 
-    # Configure uvicorn server with custom signal handling for clean shutdown
+    # Configure uvicorn server with timeout for graceful shutdown
+    # timeout_graceful_shutdown: Max seconds to wait for connections to close on Ctrl+C
+    # Without this, SSE connections keep the server hanging indefinitely
     config = uvicorn.Config(
         app,
         host=args.host,
         port=args.port,
         log_config=None,  # Don't override our loguru configuration
-        access_log=False  # Disable access logs for cleaner output
+        access_log=False,  # Disable access logs for cleaner output
+        timeout_graceful_shutdown=3  # Force shutdown after 3 seconds if connections don't close
     )
     server = uvicorn.Server(config)
 
-    # Custom signal handler for clean shutdown without tracebacks
-    def handle_exit_signal(signum, frame):
-        """Handle SIGINT/SIGTERM for clean shutdown"""
-        logger.info(f"Received signal {signal.Signals(signum).name}, initiating shutdown...")
-        server.should_exit = True
+    # Custom exception handler to suppress harmless errors during shutdown
+    def asyncio_exception_handler(loop, context):
+        exception = context.get('exception')
+        # Suppress harmless "connection reset by remote host" errors on Windows
+        # These occur when client disconnects before server finishes
+        if isinstance(exception, ConnectionResetError):
+            return
+        # Suppress CancelledError during graceful shutdown (SSE connections being terminated)
+        if isinstance(exception, asyncio.CancelledError):
+            return
+        # For all other exceptions, use default handler
+        loop.default_exception_handler(context)
 
-    # Install signal handlers (Windows only supports SIGINT, SIGTERM)
-    signal.signal(signal.SIGINT, handle_exit_signal)
-    signal.signal(signal.SIGTERM, handle_exit_signal)
+    # Wrapper to install exception handler and log Ctrl+C immediately
+    async def serve_with_handler():
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(asyncio_exception_handler)
 
-    # Run the server
+        # Log immediately when Ctrl+C is pressed (before uvicorn's graceful shutdown)
+        import signal
+        original_handler = signal.getsignal(signal.SIGINT)
+
+        def sigint_handler(signum, frame):
+            logger.info("Received Ctrl+C, waiting for connections to close...")
+            # Call original handler (uvicorn's) to trigger graceful shutdown
+            if callable(original_handler):
+                original_handler(signum, frame)
+
+        signal.signal(signal.SIGINT, sigint_handler)
+
+        # Let uvicorn handle its own signals (built-in SIGINT/SIGTERM handling)
+        await server.serve()
+
+    # Run the server - let KeyboardInterrupt propagate naturally for clean Ctrl+C
     try:
-        asyncio.run(server.serve())
+        asyncio.run(serve_with_handler())
     except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
-        # Clean exit without traceback
+        # Clean exit - lifespan already logged "Shutdown complete"
         pass
 
 

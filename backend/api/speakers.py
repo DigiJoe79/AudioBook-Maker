@@ -444,8 +444,8 @@ async def get_sample_audio(
         if not sample:
             raise HTTPException(status_code=404, detail=f"[SPEAKER_SAMPLE_NOT_FOUND]sampleId:{sample_id}")
 
-        # Get file path
-        sample_path = Path(sample["filePath"])
+        # Reconstruct full path from relative path stored in DB
+        sample_path = Path(SPEAKER_SAMPLES_DIR) / sample["filePath"]
         if not sample_path.exists():
             logger.error(f"Sample file not found: {sample_path}")
             raise HTTPException(status_code=404, detail="[SPEAKER_SAMPLE_FILE_NOT_FOUND]")

@@ -61,10 +61,12 @@ export default function SpeakerPreviewPlayer({
     // Auto-play if requested and audio is loaded
     if (autoPlay || isPlaying) {
       const playWhenReady = () => {
-        audio.play().catch(err => {
-          logger.error('[SpeakerPreviewPlayer] Failed to play audio', { error: err })
-          setIsPlaying(false)
-        })
+        audio.play()
+          .then(() => setIsPlaying(true))
+          .catch(err => {
+            logger.error('[SpeakerPreviewPlayer] Failed to play audio', { error: err })
+            setIsPlaying(false)
+          })
       }
 
       if (audio.readyState >= 2) {

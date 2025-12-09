@@ -361,7 +361,10 @@ class SpeakerService:
                 logger.warning(f"Could not extract audio metadata from {file_name}: {e}")
                 logger.info(f"Continuing without metadata for sample {file_name}")
 
-        # Store in database
+        # Store relative path in database (relative to SPEAKER_SAMPLES_DIR)
+        # Format: {speaker_id}/{filename}.wav
+        relative_path = f"{speaker_id}/{file_path.name}"
+
         cursor = self.db.cursor()
         cursor.execute("""
             INSERT INTO speaker_samples
@@ -371,7 +374,7 @@ class SpeakerService:
             sample_id,
             speaker_id,
             file_name,
-            str(file_path),
+            relative_path,
             file_size,
             duration,
             sample_rate,
@@ -430,7 +433,8 @@ class SpeakerService:
         if not row:
             raise ValueError(f"Sample not found: {sample_id}")
 
-        file_path = Path(row[0])
+        # Reconstruct full path from relative path stored in DB
+        file_path = Path(SPEAKER_SAMPLES_DIR) / row[0]
 
         # Delete from database
         cursor.execute("DELETE FROM speaker_samples WHERE id = ?", (sample_id,))

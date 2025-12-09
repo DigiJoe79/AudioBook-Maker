@@ -1066,7 +1066,11 @@ class BaseEngineManager(ABC):
 
         if exit_code is not None:
             # Process has exited - cleanup stale entries
-            logger.warning(f"Engine {engine_name} process died (exit code: {exit_code}), cleaning up")
+            # Exit code 0 = clean shutdown (e.g., Ctrl+C), otherwise unexpected death
+            if exit_code == 0:
+                logger.debug(f"Engine {engine_name} exited cleanly, cleaning up")
+            else:
+                logger.warning(f"Engine {engine_name} process died (exit code: {exit_code}), cleaning up")
             del self.engine_processes[engine_name]
 
             if engine_name in self.engine_ports:

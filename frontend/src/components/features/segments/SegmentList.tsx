@@ -279,6 +279,7 @@ const SortableSegmentItem = React.memo(({
       ref={setNodeRef}
       style={style}
       data-testid={`segment-${segment.id}`}
+      data-segment-type="text"
       elevation={isSelected ? 2 : 0}
       sx={{
         mb: 1,

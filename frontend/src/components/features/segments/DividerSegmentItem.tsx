@@ -91,6 +91,8 @@ const DividerSegmentItem = React.memo(function DividerSegmentItem({
     <Paper
       elevation={isSelected ? 2 : 0}
       onClick={onSelect}
+      data-testid={`segment-${segment.id}`}
+      data-segment-type="divider"
       sx={{
         mb: 1,
         bgcolor: isSelected ? 'action.selected' : 'background.paper',

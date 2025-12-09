@@ -308,7 +308,10 @@ const SpeakersView: React.FC = () => {
   }, [])
 
   const handlePreview = useCallback((speaker: Speaker) => {
-    setPreviewSpeaker(speaker)
+    // Reset first to force re-mount if same speaker clicked again
+    setPreviewSpeaker(null)
+    // Use setTimeout to ensure state update is processed before setting new speaker
+    setTimeout(() => setPreviewSpeaker(speaker), 0)
   }, [])
 
   const handleClosePreview = useCallback(() => {

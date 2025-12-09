@@ -2,9 +2,11 @@
 
 > A modern desktop application for creating audiobooks with advanced text-to-speech and voice cloning capabilities
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/DigiJoe79/audiobook-maker/releases)
+[![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://github.com/DigiJoe79/audiobook-maker/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://tauri.app)
+
+> **v1.0.1** - Bug fix release: Speaker sample paths now use relative paths for portability. See [Release Notes](docs/releases/RELEASE_v1.0.1.md).
 
 ## Overview
 
@@ -388,7 +390,7 @@ Want to add your own TTS, STT, or analysis engine? See the **[Engine Development
 
 ## Roadmap
 
-### Current Version (1.0.0)
+### Current Version (1.0.1)
 - Core audiobook creation workflow
 - Multi-engine architecture (TTS, STT, Text, Audio)
 - XTTS and Chatterbox voice cloning

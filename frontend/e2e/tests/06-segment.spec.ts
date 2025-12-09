@@ -167,8 +167,9 @@ test.describe('06-Segment', () => {
     console.log('[Segment] SSE updated segment count ✓')
 
     // Verify first item in list is now a divider (via SSE update, no refetch)
-    const firstListItem = segmentList.locator('li').first()
-    await expect(firstListItem).toContainText('Szenenumbruch', { timeout: 5000 })
+    // Use [data-segment-type] selector on Paper elements (not li)
+    const firstSegment = segmentList.locator('[data-segment-type]').first()
+    await expect(firstSegment).toHaveAttribute('data-segment-type', 'divider', { timeout: 5000 })
     console.log('[Segment] Divider created at position 0 via SSE ✓')
   })
 
@@ -181,9 +182,9 @@ test.describe('06-Segment', () => {
     const segmentList = page.getByTestId('segment-list')
     await expect(segmentList).toBeVisible({ timeout: 5000 })
 
-    // Verify first item is the divider from previous test (loaded via refetch from navigation)
-    const firstListItem = segmentList.locator('li').first()
-    await expect(firstListItem).toContainText('Szenenumbruch')
+    // Verify first item is the divider from previous test (locale-agnostic check)
+    const firstSegment = segmentList.locator('[data-segment-type]').first()
+    await expect(firstSegment).toHaveAttribute('data-segment-type', 'divider')
     console.log('[Segment] First segment is divider (from previous test)')
 
     // Get the segment list's bounding box to find drop position
@@ -234,9 +235,10 @@ test.describe('06-Segment', () => {
     console.log('[Segment] SSE updated segment count ✓')
 
     // Verify order in UI via SSE update (no refetch)
-    const listItems = segmentList.locator('li')
-    await expect(listItems.first()).toContainText('Kapitel 1', { timeout: 5000 })
-    await expect(listItems.nth(1)).toContainText('Szenenumbruch')
+    // Use [data-segment-type] for segment elements (on Paper, not li)
+    const segments = segmentList.locator('[data-segment-type]')
+    await expect(segments.first()).toContainText('Kapitel 1', { timeout: 5000 })
+    await expect(segments.nth(1)).toHaveAttribute('data-segment-type', 'divider')
 
     console.log('[Segment] Title "Kapitel 1" at position 0, Divider at position 1 via SSE ✓')
   })
@@ -256,19 +258,19 @@ test.describe('06-Segment', () => {
     // Verify we have at least 3 segments (title, divider, and at least one from text-upload)
     expect(totalSegments).toBeGreaterThanOrEqual(3)
 
-    // Use list items for position verification
-    const listItems = segmentList.locator('li')
+    // Use [data-segment-type] selector for segment elements
+    const segments = segmentList.locator('[data-segment-type]')
 
     // Position 0: Title segment "Kapitel 1"
-    await expect(listItems.first()).toContainText('Kapitel 1')
+    await expect(segments.first()).toContainText('Kapitel 1')
     console.log('[Segment] Position 0: Title "Kapitel 1" ✓')
 
     // Position 1: Divider
-    await expect(listItems.nth(1)).toContainText('Szenenumbruch')
+    await expect(segments.nth(1)).toHaveAttribute('data-segment-type', 'divider')
     console.log('[Segment] Position 1: Divider ✓')
 
     // Position 2+: Text segments from text-upload (should contain story text)
-    await expect(listItems.nth(2)).toContainText('Kunst des Geschichtenerzählens')
+    await expect(segments.nth(2)).toContainText('Kunst des Geschichtenerzählens')
     console.log('[Segment] Position 2+: Text segments present ✓')
   })
 
@@ -281,8 +283,8 @@ test.describe('06-Segment', () => {
     await expect(segmentList).toBeVisible({ timeout: 5000 })
 
     // First segment should be "Kapitel 1"
-    const firstListItem = segmentList.locator('li').first()
-    await expect(firstListItem).toContainText('Kapitel 1')
+    const firstSegment = segmentList.locator('[data-segment-type]').first()
+    await expect(firstSegment).toContainText('Kapitel 1')
 
     const segmentMenuButton = page.getByTestId('segment-menu-button').first()
     await expect(segmentMenuButton).toBeVisible({ timeout: 5000 })
@@ -318,7 +320,7 @@ test.describe('06-Segment', () => {
 
     // NO navigation - wait for SSE to update the UI
     await expect(async () => {
-      const firstItem = segmentList.locator('li').first()
+      const firstItem = segmentList.locator('[data-segment-type]').first()
       await expect(firstItem).toContainText('Kapitel 1 - Einleitung')
     }).toPass({ timeout: 5000 })
     console.log('[Segment] Text updated via SSE ✓')
@@ -333,8 +335,8 @@ test.describe('06-Segment', () => {
     await expect(segmentList).toBeVisible({ timeout: 5000 })
 
     // First segment should be "Kapitel 1 - Einleitung" from previous test
-    const firstListItem = segmentList.locator('li').first()
-    await expect(firstListItem).toContainText('Kapitel 1 - Einleitung')
+    const firstSegment = segmentList.locator('[data-segment-type]').first()
+    await expect(firstSegment).toContainText('Kapitel 1 - Einleitung')
     console.log('[Segment] Found target segment: Kapitel 1 - Einleitung')
 
     // Open menu on first segment
@@ -400,8 +402,8 @@ test.describe('06-Segment', () => {
     console.log(`[Segment] Segment count before: ${segmentCountBefore}`)
 
     // Get the text of the last segment
-    const lastListItem = segmentList.locator('li').last()
-    const lastSegmentText = await lastListItem.textContent()
+    const lastSegment = segmentList.locator('[data-segment-type]').last()
+    const lastSegmentText = await lastSegment.textContent()
     console.log(`[Segment] Last segment text: ${lastSegmentText?.substring(0, 50)}...`)
 
     // We'll delete the LAST segment (to avoid affecting our title/divider structure)
@@ -452,14 +454,14 @@ test.describe('06-Segment', () => {
       if (segmentCount === 0) return false
 
       // 2. First segment contains "Kapitel 1 - Einleitung" (after edit)
-      const firstListItem = segmentList.locator('li').first()
-      const firstSegmentText = await firstListItem.textContent()
+      const firstSegment = segmentList.locator('[data-segment-type]').first()
+      const firstSegmentText = await firstSegment.textContent()
       if (!firstSegmentText?.includes('Kapitel 1 - Einleitung')) return false
 
-      // 3. Second segment is a divider
-      const secondListItem = segmentList.locator('li').nth(1)
-      const secondSegmentText = await secondListItem.textContent()
-      if (!secondSegmentText?.includes('Szenenumbruch')) return false
+      // 3. Second segment is a divider (locale-agnostic check via attribute)
+      const secondSegment = segmentList.locator('[data-segment-type]').nth(1)
+      const segmentType = await secondSegment.getAttribute('data-segment-type')
+      if (segmentType !== 'divider') return false
 
       return true
     })
