@@ -714,10 +714,10 @@ class SettingsService:
             logger.error(f"Settings for '{settings_key}' not found")
             return False
 
-        # Get or create engines dict
-        engines = self.get_setting(f'{settings_key}.engines') or {}
+        # Get or create engines dict - use settings['engines'] directly to avoid reference issues
         if 'engines' not in settings:
-            settings['engines'] = engines
+            settings['engines'] = {}
+        engines = settings['engines']
 
         # Create engine entry if it doesn't exist
         if engine_name not in engines:

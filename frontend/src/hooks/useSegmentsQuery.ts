@@ -13,21 +13,9 @@ import {
   type UseMutationResult,
 } from '@tanstack/react-query'
 import { produce } from 'immer'
-import { segmentApi, type ApiSegment } from '@services/api'
-import { type Segment, type Chapter } from '@types'
+import { segmentApi } from '@services/api'
+import { type Segment, type Chapter, transformSegment, type ApiSegment } from '@types'
 import { queryKeys } from '@services/queryKeys'
-
-// Transform API segment to app segment
-// Backend now returns camelCase via Pydantic Response Models
-const transformSegment = (apiSegment: ApiSegment): Segment => {
-  return {
-    ...apiSegment,
-    audioPath: apiSegment.audioPath || undefined,
-    createdAt: new Date(apiSegment.createdAt),
-    updatedAt: new Date(apiSegment.updatedAt),
-    isFrozen: apiSegment.isFrozen ?? false, // Default to false if not present
-  }
-}
 
 /**
  * Update a segment
@@ -85,7 +73,7 @@ export function useUpdateSegment(): UseMutationResult<
         speakerName?: string | null
       }
     }) => {
-      const updated = await segmentApi.update(segmentId, data)
+      const updated = await segmentApi.update(segmentId, data) as ApiSegment
       return transformSegment(updated)
     },
     onMutate: async (variables) => {
@@ -241,7 +229,7 @@ export function useFreezeSegment(): UseMutationResult<
 
   return useMutation({
     mutationFn: async ({ segmentId, chapterId }: { segmentId: string; chapterId: string }) => {
-      const response = await segmentApi.freeze(segmentId, true)
+      const response = await segmentApi.freeze(segmentId, true) as ApiSegment
       return transformSegment(response)
     },
     onMutate: async ({ segmentId, chapterId }) => {
@@ -310,7 +298,7 @@ export function useUnfreezeSegment(): UseMutationResult<
 
   return useMutation({
     mutationFn: async ({ segmentId, chapterId }: { segmentId: string; chapterId: string }) => {
-      const response = await segmentApi.freeze(segmentId, false)
+      const response = await segmentApi.freeze(segmentId, false) as ApiSegment
       return transformSegment(response)
     },
     onMutate: async ({ segmentId, chapterId }) => {

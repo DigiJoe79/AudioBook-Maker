@@ -7,20 +7,10 @@ import type {
   PronunciationRuleUpdate,
   PronunciationBulkOperation
 } from '@types'
-import type { ApiPronunciationRule } from '@/types/api'
-
-// ============================================================================
-// Transform Functions (API → App Types)
-// ============================================================================
-
-/**
- * Transform API Pronunciation Rule response to app type with Date objects
- */
-const transformPronunciationRule = (apiRule: ApiPronunciationRule): PronunciationRule => ({
-  ...apiRule,
-  createdAt: new Date(apiRule.createdAt),
-  updatedAt: new Date(apiRule.updatedAt),
-})
+import {
+  transformPronunciationRule,
+  type ApiPronunciationRule,
+} from '@types'
 
 // Query hooks
 export const usePronunciationRules = (filters?: {

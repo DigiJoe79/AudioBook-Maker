@@ -63,6 +63,16 @@
         "repetitionPenaltyDesc": "Verhindert Wiederholungen. Höhere Werte = weniger Wiederholungen (Standard: 1.2)",
         "speakerId": "Sprecher-Stimme",
         "speakerIdDesc": "Wählen Sie eine der eingebauten Stimmen: Bert oder Thorsten"
+      },
+      "vibevoice": {
+        "cfgScale": "CFG-Skala",
+        "cfgScaleDesc": "Classifier-Free Guidance Skala. Steuert Stimm-Treue. 1.3 empfohlen, höhere Werte können instabil sein (Standard: 1.3)",
+        "doSample": "Sampling aktivieren",
+        "doSampleDesc": "Aktiviert stochastisches Sampling für variierte Ausgabe. Deaktivieren für stabile, deterministische Sprache (Standard: aus)",
+        "temperature": "Temperature",
+        "temperatureDesc": "Sampling-Temperatur. Nur aktiv wenn Sampling aktiviert ist. Höher = variierter (Standard: 0.95)",
+        "topP": "Top P",
+        "topPDesc": "Nucleus-Sampling-Schwellenwert. Nur aktiv wenn Sampling aktiviert ist (Standard: 0.95)"
       }
     },
     "audio": {
@@ -1050,7 +1060,7 @@
       "supportedFormats": "Unterstützte Formate",
       "textLanguage": "Sprache für Textsegmentierung",
       "noTextModels": "Keine Textverarbeitungsmodelle verfügbar. Bitte aktivieren Sie eine Text-Engine.",
-      "errorInvalidType": "Ungültiger Dateityp. Nur .md und .markdown Dateien sind erlaubt.",
+      "errorInvalidType": "Ungültiger Dateityp. Nur .md-, .markdown- und .epub-Dateien sind erlaubt.",
       "errorTooLarge": "Datei zu groß. Maximale Größe ist 10 MB."
     },
     "mapping": {
@@ -1132,7 +1142,18 @@
       "projectNotFound": "Ziel-Projekt nicht gefunden: {{projectId}}. Kapitel können nicht in ein nicht existierendes Projekt eingefügt werden.",
       "segmentationFailed": "Text-Segmentierung fehlgeschlagen: {{error}}. Bitte prüfen Sie, ob spaCy-Modelle für diese Sprache installiert sind.",
       "previewFailed": "Markdown-Vorschau fehlgeschlagen: {{error}}",
-      "failed": "Markdown-Import fehlgeschlagen: {{error}}"
+      "failed": "Markdown-Import fehlgeschlagen: {{error}}",
+      "epubFileEmpty": "Die EPUB-Datei ist leer. Bitte geben Sie eine gültige EPUB-Datei an.",
+      "epubNoChapters": "Keine Kapitel in der EPUB-Datei gefunden. Die Datei enthält möglicherweise nur Titelseiten oder sehr kurze Inhalte.",
+      "epubParseFailed": "EPUB-Datei konnte nicht gelesen werden: {{error}}",
+      "epubSegmentationFailed": "Text-Segmentierung für EPUB fehlgeschlagen: {{error}}",
+      "epubInvalidMappingJson": "Ungültige Mapping-Regeln JSON: {{error}}",
+      "epubInvalidChaptersJson": "Ungültige Kapitelauswahl JSON: {{error}}",
+      "epubInvalidRenamedJson": "Ungültige umbenannte Kapitel JSON: {{error}}",
+      "epubInvalidMode": "Ungültiger Import-Modus: {{mode}}. Verwenden Sie 'new' oder 'merge'.",
+      "epubMissingTargetId": "Ziel-Projekt-ID ist für Merge-Modus erforderlich.",
+      "epubUnknownEngine": "Unbekannte TTS-Engine: {{engine}}",
+      "epubTargetNotFound": "Ziel-Projekt für Merge nicht gefunden."
     },
     "noTextEngine": {
       "title": "Textverarbeitungs-Engine erforderlich",

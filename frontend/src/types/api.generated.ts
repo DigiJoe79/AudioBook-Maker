@@ -2052,6 +2052,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/import/epub/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Get Epub Import Preview
+         * @description Parse an EPUB file and return the same preview structure as the markdown import.
+         *
+         *     Steps:
+         *     1. Read EPUB bytes and convert to markdown using EpubImporter.
+         *     2. Run MarkdownParser with segmentation using conservative engine limits.
+         *     3. Run ImportValidator to get warnings and stats.
+         */
+        post: operations["get_epub_import_preview_api_projects_import_epub_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/import/epub": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute Epub Import
+         * @description Execute an EPUB import by converting to markdown and running the same
+         *     import pipeline as markdown imports.
+         *
+         *     Args mirror the markdown /api/projects/import endpoint for consistency.
+         */
+        post: operations["execute_epub_import_api_projects_import_epub_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/quality/analyze/segment/{segment_id}": {
         parameters: {
             query?: never;
@@ -2219,6 +2267,43 @@ export interface components {
              */
             duration: number;
         };
+        /** Body_execute_epub_import_api_projects_import_epub_post */
+        Body_execute_epub_import_api_projects_import_epub_post: {
+            /**
+             * File
+             * Format: binary
+             */
+            file: string;
+            /** Mapping Rules */
+            mapping_rules: string;
+            /**
+             * Language
+             * @default en
+             */
+            language: string;
+            /** Mode */
+            mode: string;
+            /** Merge Target Id */
+            merge_target_id?: string | null;
+            /**
+             * Selected Chapters
+             * @default []
+             */
+            selected_chapters: string;
+            /**
+             * Renamed Chapters
+             * @default {}
+             */
+            renamed_chapters: string;
+            /** Tts Engine */
+            tts_engine: string;
+            /** Tts Model Name */
+            tts_model_name: string;
+            /** Tts Language */
+            tts_language: string;
+            /** Tts Speaker Name */
+            tts_speaker_name?: string | null;
+        };
         /** Body_execute_import_api_projects_import_post */
         Body_execute_import_api_projects_import_post: {
             /**
@@ -2255,6 +2340,21 @@ export interface components {
             tts_language: string;
             /** Tts Speaker Name */
             tts_speaker_name?: string | null;
+        };
+        /** Body_get_epub_import_preview_api_projects_import_epub_preview_post */
+        Body_get_epub_import_preview_api_projects_import_epub_preview_post: {
+            /**
+             * File
+             * Format: binary
+             */
+            file: string;
+            /** Mapping Rules */
+            mapping_rules: string;
+            /**
+             * Language
+             * @default en
+             */
+            language: string;
         };
         /** Body_get_import_preview_api_projects_import_preview_post */
         Body_get_import_preview_api_projects_import_preview_post: {
@@ -6905,6 +7005,72 @@ export interface operations {
         requestBody: {
             content: {
                 "multipart/form-data": components["schemas"]["Body_execute_import_api_projects_import_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportExecuteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_epub_import_preview_api_projects_import_epub_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_get_epub_import_preview_api_projects_import_epub_preview_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    execute_epub_import_api_projects_import_epub_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_execute_epub_import_api_projects_import_epub_post"];
             };
         };
         responses: {

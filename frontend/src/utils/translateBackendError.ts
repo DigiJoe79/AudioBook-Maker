@@ -84,6 +84,19 @@ export function translateBackendError(errorMessage: string, t: TFunction): strin
     IMPORT_PREVIEW_FAILED: 'import.errors.previewFailed',
     IMPORT_FAILED: 'import.errors.failed',
 
+    // EPUB Import errors
+    EPUB_IMPORT_FILE_EMPTY: 'import.errors.epubFileEmpty',
+    EPUB_IMPORT_NO_CHAPTERS: 'import.errors.epubNoChapters',
+    EPUB_IMPORT_PARSE_FAILED: 'import.errors.epubParseFailed',
+    EPUB_IMPORT_SEGMENTATION_FAILED: 'import.errors.epubSegmentationFailed',
+    EPUB_IMPORT_INVALID_MAPPING_JSON: 'import.errors.epubInvalidMappingJson',
+    EPUB_IMPORT_INVALID_CHAPTERS_JSON: 'import.errors.epubInvalidChaptersJson',
+    EPUB_IMPORT_INVALID_RENAMED_JSON: 'import.errors.epubInvalidRenamedJson',
+    EPUB_IMPORT_INVALID_MODE: 'import.errors.epubInvalidMode',
+    EPUB_IMPORT_MISSING_TARGET_ID: 'import.errors.epubMissingTargetId',
+    EPUB_IMPORT_UNKNOWN_ENGINE: 'import.errors.epubUnknownEngine',
+    EPUB_IMPORT_TARGET_NOT_FOUND: 'import.errors.epubTargetNotFound',
+
     // Speaker errors
     SPEAKER_NOT_FOUND: 'speakers.errors.notFound',
     SPEAKER_INVALID_GENDER: 'speakers.errors.invalidGender',

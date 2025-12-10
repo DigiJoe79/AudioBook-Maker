@@ -10,7 +10,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { produce } from 'immer'
 import { projectApi, chapterApi, segmentApi } from '@services/api'
 import { queryKeys } from '@services/queryKeys'
-import type { Project, Chapter, Segment } from '@services/api'
+import type { Project, Chapter, Segment } from '@types'
 
 // ============================================================================
 // Project Drag & Drop Hooks

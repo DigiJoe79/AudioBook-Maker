@@ -9,21 +9,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { qualityApi } from '@services/api'
 import { queryKeys } from '@services/queryKeys'
 import type { QualityJob, QualityJobsListResponse } from '@types'
-import type { ApiQualityJob, ApiQualityJobsListResponse } from '@/types/api'
-
-// ============================================================================
-// Transform Functions (API → App Types)
-// ============================================================================
-
-/**
- * Transform API Quality Job response to app type with Date objects
- */
-const transformQualityJob = (apiJob: ApiQualityJob): QualityJob => ({
-  ...apiJob,
-  createdAt: new Date(apiJob.createdAt),
-  startedAt: apiJob.startedAt ? new Date(apiJob.startedAt) : undefined,
-  completedAt: apiJob.completedAt ? new Date(apiJob.completedAt) : undefined,
-})
+import {
+  transformQualityJob,
+  type ApiQualityJob,
+  type ApiQualityJobsListResponse,
+} from '@types'
 
 // ==================== Query Hooks ====================
 
@@ -42,7 +32,7 @@ export function useQualityJobs(filters?: {
       const response = await qualityApi.getJobs(filters) as unknown as ApiQualityJobsListResponse
       return {
         ...response,
-        jobs: response.jobs.map(transformQualityJob)
+        jobs: (response.jobs ?? []).map(transformQualityJob)
       } as QualityJobsListResponse
     },
     staleTime: 5000,
@@ -60,7 +50,7 @@ export function useActiveQualityJobs() {
       const response = await qualityApi.getActiveJobs() as unknown as ApiQualityJobsListResponse
       return {
         ...response,
-        jobs: response.jobs.map(transformQualityJob)
+        jobs: (response.jobs ?? []).map(transformQualityJob)
       } as QualityJobsListResponse
     },
     refetchInterval: (query) => {

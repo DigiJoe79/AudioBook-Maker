@@ -27,7 +27,7 @@ Usage:
         'spacy',
         text='This is a long text to segment. It has multiple sentences.',
         language='en',
-        parameters={'max_segment_length': 500}
+        parameters={'max_length': 500}  # Flattened into payload root
     )
 
 Author: Multi-Engine Architecture Refactoring
@@ -139,10 +139,12 @@ class TextEngineManager(BaseEngineManager):
 
         url = f"http://127.0.0.1:{port}/segment"
 
+        # Build payload with parameters flattened into root level
+        # (SegmentRequest expects max_length, min_length etc. at root, not nested)
         payload = {
             "text": text,
             "language": language,
-            "parameters": parameters or {}
+            **(parameters or {})  # Flatten parameters into payload root
         }
 
         logger.debug(f"Segmenting text with {engine_name}: {text[:50]}...")

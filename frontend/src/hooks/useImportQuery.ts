@@ -1,8 +1,9 @@
 /**
- * React Query Hooks for Markdown Import
+ * React Query Hooks for Import (Markdown and EPUB)
  *
- * These hooks handle markdown import preview with proper error handling
- * and integration with the project queries.
+ * These hooks handle import preview and execution with proper error handling
+ * and integration with the project queries. Automatically detects file type
+ * and routes to the appropriate API endpoint.
  */
 
 import {
@@ -15,6 +16,14 @@ import {
 import { projectApi } from '@services/api'
 import { queryKeys } from '@services/queryKeys'
 import type { MappingRules, ImportPreviewResponse, ImportExecuteResponse } from '@types'
+
+/**
+ * Helper to detect if a file is an EPUB based on extension
+ */
+function isEpubFile(file: File): boolean {
+  const ext = '.' + (file.name.split('.').pop() || '').toLowerCase()
+  return ext === '.epub'
+}
 
 /**
  * Preview Markdown import
@@ -55,6 +64,10 @@ export function usePreviewImport(): UseMutationResult<
 > {
   return useMutation({
     mutationFn: async ({ file, mappingRules, language = 'en' }) => {
+      // Route to EPUB or Markdown API based on file extension
+      if (isEpubFile(file)) {
+        return await projectApi.previewEpubImport(file, mappingRules, language)
+      }
       return await projectApi.previewMarkdownImport(file, mappingRules, language)
     },
     // No cache invalidation needed - this is a read-only preview operation
@@ -125,6 +138,19 @@ export function useExecuteImport(): UseMutationResult<
       renamedChapters,
       ttsSettings,
     }) => {
+      // Route to EPUB or Markdown API based on file extension
+      if (isEpubFile(file)) {
+        return await projectApi.executeEpubImport(
+          file,
+          mappingRules,
+          language,
+          mode,
+          mergeTargetId,
+          selectedChapters,
+          renamedChapters,
+          ttsSettings
+        )
+      }
       return await projectApi.executeMarkdownImport(
         file,
         mappingRules,

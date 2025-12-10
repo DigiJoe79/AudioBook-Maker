@@ -291,6 +291,10 @@ class SegmentRepository:
             segment_type: 'standard' (default) or 'divider' (pause only)
             pause_duration: Milliseconds of pause (for divider segments)
         """
+        # Normalize text: remove newlines and collapse whitespace
+        # This ensures clean text for all TTS engines (some interpret \n as speaker boundaries)
+        text = ' '.join(text.split())
+
         segment_id = str(uuid.uuid4())
         now = datetime.now().isoformat()
 
@@ -1034,27 +1038,29 @@ class TTSJobRepository:
 
     def mark_completed(self, job_id: str):
         """Mark job as successfully completed"""
+        now = datetime.now().isoformat()
         cursor = self.conn.cursor()
         cursor.execute("""
             UPDATE tts_jobs
             SET status = 'completed',
-                completed_at = datetime('now'),
-                updated_at = datetime('now')
+                completed_at = ?,
+                updated_at = ?
             WHERE id = ?
-        """, (job_id,))
+        """, (now, now, job_id))
         self.conn.commit()
 
     def mark_failed(self, job_id: str, error_message: str):
         """Mark job as failed"""
+        now = datetime.now().isoformat()
         cursor = self.conn.cursor()
         cursor.execute("""
             UPDATE tts_jobs
             SET status = 'failed',
                 error_message = ?,
-                completed_at = datetime('now'),
-                updated_at = datetime('now')
+                completed_at = ?,
+                updated_at = ?
             WHERE id = ?
-        """, (error_message, job_id))
+        """, (error_message, now, now, job_id))
         self.conn.commit()
         from loguru import logger
         logger.error(f"Job {job_id} failed: {error_message}")
@@ -1207,14 +1213,15 @@ class TTSJobRepository:
         Args:
             job_id: Job identifier
         """
+        now = datetime.now().isoformat()
         cursor = self.conn.cursor()
         cursor.execute("""
             UPDATE tts_jobs
             SET status = 'cancelled',
-                completed_at = datetime('now'),
-                updated_at = datetime('now')
+                completed_at = ?,
+                updated_at = ?
             WHERE id = ?
-        """, (job_id,))
+        """, (now, now, job_id))
         self.conn.commit()
 
         from loguru import logger

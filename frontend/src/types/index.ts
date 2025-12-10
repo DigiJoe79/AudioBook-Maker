@@ -448,15 +448,16 @@ export type {
   EngineAvailability,
 } from './engines'
 
-// Re-export API response types for convenience
+// Re-export transform function from api.ts (for BackendProfile)
+export { transformBackendProfile } from './api'
+
+// Re-export API response types from transforms (generated from OpenAPI)
 export type {
   ApiSegment,
   ApiChapter,
   ApiChapterWithSegments,
   ApiProject,
   ApiProjectWithChapters,
-  ApiListResponse,
-  ApiMessageResponse,
   ApiTTSJob,
   ApiTTSJobsListResponse,
   ApiQualityJob,
@@ -464,7 +465,18 @@ export type {
   ApiSpeaker,
   ApiSpeakerSample,
   ApiPronunciationRule,
-} from './api'
+} from './transforms'
 
-// Re-export transform functions for convenience
-export { transformBackendProfile } from './api'
+// Re-export transform functions
+export {
+  transformSegment,
+  transformChapter,
+  transformChapterWithSegments,
+  transformProject,
+  transformProjectWithChapters,
+  transformSpeaker,
+  transformSpeakerSample,
+  transformTTSJob,
+  transformQualityJob,
+  transformPronunciationRule,
+} from './transforms'

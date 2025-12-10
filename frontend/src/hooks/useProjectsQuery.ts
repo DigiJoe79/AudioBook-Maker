@@ -11,29 +11,9 @@ import {
   type UseQueryResult,
   type UseMutationResult,
 } from '@tanstack/react-query'
-import { projectApi, type ApiProject } from '@services/api'
-import { type Project, type ApiChapterWithSegments, type ApiSegment } from '@types'
+import { projectApi } from '@services/api'
+import { type Project, transformProjectWithChapters, type ApiProjectWithChapters } from '@types'
 import { queryKeys } from '@services/queryKeys'
-
-// Backend now returns camelCase via Pydantic Response Models
-const transformProject = (apiProject: ApiProject): Project => {
-  return {
-    ...apiProject,
-    createdAt: new Date(apiProject.createdAt),
-    updatedAt: new Date(apiProject.updatedAt),
-    chapters: (apiProject.chapters || []).map((chapter: ApiChapterWithSegments) => ({
-      ...chapter,
-      createdAt: new Date(chapter.createdAt),
-      updatedAt: new Date(chapter.updatedAt),
-      segments: (chapter.segments || []).map((segment: ApiSegment) => ({
-        ...segment,
-        audioPath: segment.audioPath || undefined,
-        createdAt: new Date(segment.createdAt),
-        updatedAt: new Date(segment.updatedAt),
-      })),
-    })),
-  }
-}
 
 /**
  * Fetch all projects with their chapters and segments
@@ -47,8 +27,8 @@ export function useProjectsList(): UseQueryResult<Project[], Error> {
   return useQuery({
     queryKey: queryKeys.projects.lists(),
     queryFn: async () => {
-      const data = await projectApi.getAll()
-      return data.map(transformProject)
+      const data = await projectApi.getAll() as ApiProjectWithChapters[]
+      return data.map(transformProjectWithChapters)
     },
   })
 }
@@ -68,8 +48,8 @@ export function useProject(
     queryKey: queryKeys.projects.detail(projectId || ''),
     queryFn: async () => {
       if (!projectId) throw new Error('Project ID is required')
-      const data = await projectApi.getById(projectId)
-      return transformProject(data)
+      const data = await projectApi.getById(projectId) as ApiProjectWithChapters
+      return transformProjectWithChapters(data)
     },
     enabled: !!projectId,
   })
@@ -97,8 +77,8 @@ export function useCreateProject(): UseMutationResult<
 
   return useMutation({
     mutationFn: async (data: { title: string; description?: string }) => {
-      const created = await projectApi.create(data)
-      return transformProject(created)
+      const created = await projectApi.create(data) as ApiProjectWithChapters
+      return transformProjectWithChapters(created)
     },
     onSuccess: (newProject) => {
       // Invalidate to refetch projects list with the new project
@@ -138,8 +118,8 @@ export function useUpdateProject(): UseMutationResult<
       id: string
       data: { title?: string; description?: string }
     }) => {
-      const updated = await projectApi.update(id, data)
-      return transformProject(updated)
+      const updated = await projectApi.update(id, data) as ApiProjectWithChapters
+      return transformProjectWithChapters(updated)
     },
     onMutate: async ({ id, data }) => {
       // Cancel outgoing refetches

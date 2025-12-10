@@ -63,6 +63,16 @@
         "repetitionPenaltyDesc": "Prevents repetitions. Higher values = fewer repetitions (1.2 default)",
         "speakerId": "Speaker Voice",
         "speakerIdDesc": "Choose one of the built-in voices: Bert or Thorsten"
+      },
+      "vibevoice": {
+        "cfgScale": "CFG Scale",
+        "cfgScaleDesc": "Classifier-Free Guidance scale. Controls voice adherence. 1.3 recommended, higher values can be unstable (1.3 default)",
+        "doSample": "Enable Sampling",
+        "doSampleDesc": "Enable stochastic sampling for varied output. Disable for stable, deterministic speech (off by default)",
+        "temperature": "Temperature",
+        "temperatureDesc": "Sampling temperature. Only used when sampling is enabled. Higher = more varied (0.95 default)",
+        "topP": "Top P",
+        "topPDesc": "Nucleus sampling threshold. Only used when sampling is enabled (0.95 default)"
       }
     },
     "audio": {
@@ -1050,7 +1060,7 @@
       "supportedFormats": "Supported formats",
       "textLanguage": "Text Segmentation Language",
       "noTextModels": "No text processing models available. Please enable a text engine.",
-      "errorInvalidType": "Invalid file type. Only .md and .markdown files are allowed.",
+      "errorInvalidType": "Invalid file type. Only .md, .markdown and .epub files are allowed.",
       "errorTooLarge": "File too large. Maximum size is 10 MB."
     },
     "mapping": {
@@ -1132,7 +1142,18 @@
       "projectNotFound": "Target project not found: {{projectId}}. Cannot merge chapters into non-existent project.",
       "segmentationFailed": "Text segmentation failed: {{error}}. Please check if spaCy models are installed for this language.",
       "previewFailed": "Failed to preview markdown file: {{error}}",
-      "failed": "Failed to import markdown file: {{error}}"
+      "failed": "Failed to import markdown file: {{error}}",
+      "epubFileEmpty": "The EPUB file is empty. Please provide a valid EPUB file.",
+      "epubNoChapters": "No chapters found in the EPUB file. The file may contain only front matter or very short content.",
+      "epubParseFailed": "Failed to parse EPUB file: {{error}}",
+      "epubSegmentationFailed": "Text segmentation failed for EPUB: {{error}}",
+      "epubInvalidMappingJson": "Invalid mapping rules JSON: {{error}}",
+      "epubInvalidChaptersJson": "Invalid chapter selection JSON: {{error}}",
+      "epubInvalidRenamedJson": "Invalid renamed chapters JSON: {{error}}",
+      "epubInvalidMode": "Invalid import mode: {{mode}}. Use 'new' or 'merge'.",
+      "epubMissingTargetId": "Target project ID is required for merge mode.",
+      "epubUnknownEngine": "Unknown TTS engine: {{engine}}",
+      "epubTargetNotFound": "Target project not found for merge."
     },
     "noTextEngine": {
       "title": "Text Processing Engine Required",

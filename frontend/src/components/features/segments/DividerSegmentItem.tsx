@@ -23,7 +23,7 @@ import DragIndicatorIcon from '@mui/icons-material/DragIndicator'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
 import SegmentMenu from './SegmentMenu'
 import QuickCreateDividerDialog from '@components/dialogs/QuickCreateDividerDialog'
-import type { Segment } from '@services/api'
+import type { Segment } from '@types'
 import { useTranslation } from 'react-i18next'
 
 /**

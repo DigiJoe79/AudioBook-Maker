@@ -11,25 +11,10 @@ import {
   type UseQueryResult,
   type UseMutationResult,
 } from '@tanstack/react-query'
-import { chapterApi, type ApiChapter } from '@services/api'
-import { type Chapter, type Segment, type ApiSegment, type ApiProject, type Project } from '@types'
+import { chapterApi } from '@services/api'
+import { type Chapter, type Segment, type Project, transformChapterWithSegments, type ApiChapterWithSegments } from '@types'
 import { queryKeys } from '@services/queryKeys'
 import { useSSEConnection } from '@contexts/SSEContext'
-
-// Transform API chapter to app chapter
-const transformChapter = (apiChapter: ApiChapter): Chapter => {
-  return {
-    ...apiChapter,
-    createdAt: new Date(apiChapter.createdAt),
-    updatedAt: new Date(apiChapter.updatedAt),
-    segments: (apiChapter.segments || []).map((segment: ApiSegment) => ({
-      ...segment,
-      audioPath: segment.audioPath || undefined,
-      createdAt: new Date(segment.createdAt),
-      updatedAt: new Date(segment.updatedAt),
-    })),
-  }
-}
 
 /**
  * Fetch a single chapter by ID (SSE-driven updates, no polling)
@@ -64,8 +49,8 @@ export function useChapter(
     queryKey: queryKeys.chapters.detail(chapterId || ''),
     queryFn: async () => {
       if (!chapterId) throw new Error('Chapter ID is required')
-      const data = await chapterApi.getById(chapterId)
-      return transformChapter(data)
+      const data = await chapterApi.getById(chapterId) as ApiChapterWithSegments
+      return transformChapterWithSegments(data)
     },
     enabled: !!chapterId,
     // SSE-aware polling: Only poll as fallback when SSE is unavailable
@@ -101,8 +86,8 @@ export function useCreateChapter(): UseMutationResult<
       title: string
       orderIndex: number
     }) => {
-      const created = await chapterApi.create(data)
-      return transformChapter(created)
+      const created = await chapterApi.create(data) as ApiChapterWithSegments
+      return transformChapterWithSegments(created)
     },
     onSuccess: (newChapter, variables) => {
       // Invalidate to refetch project with the new chapter
@@ -145,8 +130,8 @@ export function useUpdateChapter(): UseMutationResult<
       id: string
       data: { title?: string; orderIndex?: number }
     }) => {
-      const updated = await chapterApi.update(id, data)
-      return transformChapter(updated)
+      const updated = await chapterApi.update(id, data) as ApiChapterWithSegments
+      return transformChapterWithSegments(updated)
     },
     onMutate: async ({ id }) => {
       // Cancel outgoing refetches to prevent race conditions

@@ -13,40 +13,21 @@ import {
   type UseQueryResult,
   type UseMutationResult,
 } from '@tanstack/react-query'
-import { ttsApi, type TTSOptions, type ApiSegment } from '@services/api'
+import { ttsApi, type TTSOptions } from '@services/api'
 import { queryKeys } from '@services/queryKeys'
-import type { Chapter, TTSJob, TTSJobsListResponse, Speaker } from '@types'
-import type { ApiTTSJob, ApiTTSJobsListResponse, ApiSpeaker } from '@/types/api'
+import type {
+  Chapter,
+  TTSJob,
+  TTSJobsListResponse,
+  Speaker,
+  ApiTTSJob,
+  ApiTTSJobsListResponse,
+  ApiSpeaker,
+  ApiSegment,
+} from '@types'
+import { transformTTSJob, transformSpeaker } from '@types'
 import { useSSEConnection } from '@contexts/SSEContext'
 import { logger } from '@utils/logger'
-
-// ============================================================================
-// Transform Functions (API → App Types)
-// ============================================================================
-
-/**
- * Transform API TTS Job response to app type with Date objects
- */
-const transformTTSJob = (apiJob: ApiTTSJob): TTSJob => ({
-  ...apiJob,
-  createdAt: new Date(apiJob.createdAt),
-  startedAt: apiJob.startedAt ? new Date(apiJob.startedAt) : null,
-  completedAt: apiJob.completedAt ? new Date(apiJob.completedAt) : null,
-  updatedAt: new Date(apiJob.updatedAt),
-})
-
-/**
- * Transform API Speaker response to app type with Date objects
- */
-const transformSpeaker = (apiSpeaker: ApiSpeaker): Speaker => ({
-  ...apiSpeaker,
-  createdAt: new Date(apiSpeaker.createdAt),
-  updatedAt: new Date(apiSpeaker.updatedAt),
-  samples: apiSpeaker.samples.map(sample => ({
-    ...sample,
-    createdAt: new Date(sample.createdAt),
-  })),
-})
 
 /**
  * Fetch list of available speakers from database
@@ -63,7 +44,7 @@ export function useSpeakers(): UseQueryResult<Speaker[], Error> {
   return useQuery({
     queryKey: queryKeys.speakers.lists(),
     queryFn: async () => {
-      const apiSpeakers = await ttsApi.getSpeakers()
+      const apiSpeakers = await ttsApi.getSpeakers() as ApiSpeaker[]
       return apiSpeakers.map(transformSpeaker)
     },
     // Speakers don't change often, cache for longer
@@ -301,7 +282,7 @@ export function useTTSJobs(
       const response = await ttsApi.listJobs(filters) as unknown as ApiTTSJobsListResponse
       return {
         ...response,
-        jobs: response.jobs.map(transformTTSJob)
+        jobs: (response.jobs ?? []).map(transformTTSJob)
       } as TTSJobsListResponse
     },
     enabled: options?.enabled ?? true,
@@ -357,7 +338,7 @@ export function useActiveTTSJobs(options?: {
       const response = await ttsApi.listActiveJobs() as unknown as ApiTTSJobsListResponse
       return {
         ...response,
-        jobs: response.jobs.map(transformTTSJob)
+        jobs: (response.jobs ?? []).map(transformTTSJob)
       } as TTSJobsListResponse
     },
     enabled,
