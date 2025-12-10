@@ -125,6 +125,19 @@ export function useExecuteImport(): UseMutationResult<
       renamedChapters,
       ttsSettings,
     }) => {
+      if (isEpubFile(file)) {
+        return await projectApi.executeEpubImport(
+          file,
+          mappingRules,
+          language,
+          mode,
+          mergeTargetId,
+          selectedChapters,
+          renamedChapters,
+          ttsSettings
+        )
+      }
+
       return await projectApi.executeMarkdownImport(
         file,
         mappingRules,
