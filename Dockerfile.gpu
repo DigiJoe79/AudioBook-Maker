@@ -1,0 +1,46 @@
+# backend/Dockerfile.gpu
+
+# Use a CUDA runtime image that already has PyTorch and Python installed
+# so XTTS and other engines can use the GPU easily.
+FROM pytorch/pytorch:2.2.2-cuda12.1-cudnn8-runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# System dependencies: ffmpeg and audio libs, plus build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    ffmpeg \
+    libsndfile1 \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy backend code into the image
+COPY backend/ /app/backend/
+
+WORKDIR /app/backend
+
+# Main backend venv
+RUN python -m venv venv && \
+    . venv/bin/activate && \
+    pip install --upgrade pip && \
+    pip install -r requirements.txt
+
+# Install engines in their own venvs inside backend/engines
+# These scripts come from the repo and already know what to install.
+# If one of them fails, feel free to comment it out while you debug.
+RUN set -e && \
+    cd engines/tts/xtts && ./setup.sh && cd - && \
+    cd engines/tts/chatterbox && ./setup.sh && cd - && \
+    cd engines/stt/whisper && ./setup.sh && cd - && \
+    cd engines/text/spacy && ./setup.sh && cd - && \
+    cd engines/audio/silero_vad && ./setup.sh && cd -
+
+# Expose FastAPI port (backend uses 8765 in the docs)
+EXPOSE 8765
+
+# By default, main.py already starts the FastAPI server
+# If it binds to 127.0.0.1 you may have to patch it to use host="0.0.0.0".
+CMD ["/bin/bash", "-lc", ". venv/bin/activate && python main.py"]
