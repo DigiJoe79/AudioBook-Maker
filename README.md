@@ -207,6 +207,27 @@ cd backend/engines/stt/whisper
 setup.bat   # Windows
 ./setup.sh  # Linux/Mac
 ```
+### Docker (backend only, experimental)
+
+You can run the Python FastAPI backend in a Docker container instead of installing a local venv.
+
+```bash
+git clone https://github.com/DigiJoe79/AudioBook-Maker.git
+cd AudioBook-Maker
+
+# Build image
+docker build -t audiobook-maker-backend .
+
+# Create local directories for persistent data
+mkdir -p backend/media database
+
+# Run backend
+docker run --rm \
+  -p 8765:8765 \
+  -v "$PWD/backend/media:/app/backend/media" \
+  -v "$PWD/database:/app/database" \
+  --name audiobook-maker-backend \
+  audiobook-maker-backend
 
 #### 4. Frontend Setup
 
