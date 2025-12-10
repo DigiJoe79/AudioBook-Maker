@@ -35,7 +35,7 @@ interface FileUploadAreaProps {
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
-const ACCEPTED_EXTENSIONS = ['.md', '.markdown']
+const ACCEPTED_EXTENSIONS = ['.md', '.markdown', '.epub']
 
 /**
  * Format file size to human-readable string (KB/MB)
