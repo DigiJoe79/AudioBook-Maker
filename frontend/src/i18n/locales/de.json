@@ -1050,7 +1050,7 @@
       "supportedFormats": "Unterstützte Formate",
       "textLanguage": "Sprache für Textsegmentierung",
       "noTextModels": "Keine Textverarbeitungsmodelle verfügbar. Bitte aktivieren Sie eine Text-Engine.",
-      "errorInvalidType": "Ungültiger Dateityp. Nur .md und .markdown Dateien sind erlaubt.",
+      "errorInvalidType": "Ungültiger Dateityp. Nur .md-, .markdown- und .epub-Dateien sind erlaubt."
       "errorTooLarge": "Datei zu groß. Maximale Größe ist 10 MB."
     },
     "mapping": {
