@@ -133,7 +133,7 @@ import uvicorn  # noqa: E402
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent))
 
-from api import health, tts, projects, chapters, segments, text_processing, audio, settings, speakers, events, pronunciation, import_routes, engines, quality, jobs  # noqa: E402
+from api import health, tts, projects, chapters, segments, text_processing, audio, settings, speakers, events, pronunciation, import_routes, epub_import_routes, engines, quality, jobs
 from db.database import init_database, get_db_connection_simple  # noqa: E402
 from db.repositories import TTSJobRepository  # noqa: E402
 from db.migration_runner import run_all_migrations  # noqa: E402
@@ -530,6 +530,7 @@ app.include_router(events.router, tags=["events"])
 app.include_router(pronunciation.router)
 app.include_router(import_routes.router)
 app.include_router(quality.router)  # Quality router has prefix in module
+app.include_router(epub_import_routes.router)
 
 # Audio files are now served via /api/audio/{file_path} endpoint
 # This ensures CORS middleware is applied correctly
