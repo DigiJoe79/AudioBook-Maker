@@ -204,7 +204,52 @@ export const projectApi = {
 
     return response.json();
   },
+  /**
+   * Preview EPUB import before creating project
+   *
+   * This mirrors previewMarkdownImport but uses the EPUB endpoint.
+   * The backend converts EPUB to markdown internally before parsing.
+   */
+  previewEpubImport: async (
+    file: File,
+    mappingRules?: MappingRules,
+    language: string = 'en'
+  ): Promise<ImportPreviewResponse> => {
+    const formData = new FormData()
+    formData.append('file', file)
 
+    // Add mapping rules as JSON string (if provided)
+    if (mappingRules) {
+      // Backend expects snake_case field names in FormData
+      const snakeCaseRules = {
+        project_heading: mappingRules.projectHeading,
+        chapter_heading: mappingRules.chapterHeading,
+        divider_pattern: mappingRules.dividerPattern,
+      }
+      formData.append('mapping_rules', JSON.stringify(snakeCaseRules))
+    }
+
+    // Add language
+    formData.append('language', language)
+
+    const response = await fetch(`${getApiBaseUrl()}/projects/import/epub/preview`, {
+      method: 'POST',
+      body: formData, // multipart/form-data (no Content-Type header)
+    })
+
+    if (!response.ok) {
+      // Connection errors etc
+      if (response.status === 0 || response.status >= 500) {
+        window.dispatchEvent(new CustomEvent('backend-connection-error'))
+      }
+
+      const error = await response.json().catch(() => ({ detail: response.statusText }))
+      throw new Error(error.detail || `EPUB import preview failed: ${response.status}`)
+    }
+
+    return response.json()
+  },
+  
   /**
    * Execute Markdown import (create or merge project)
    *
@@ -291,6 +336,80 @@ export const projectApi = {
     return response.json();
   },
 };
+
+  /**
+   * Execute EPUB import (create or merge project)
+   *
+   * Same semantics as executeMarkdownImport, but the backend starts from an EPUB
+   * file instead of raw markdown.
+   */
+  executeEpubImport: async (
+    file: File,
+    mappingRules: MappingRules,
+    language: string,
+    mode: 'new' | 'merge',
+    mergeTargetId: string | null,
+    selectedChapters: string[],
+    renamedChapters: Record<string, string>,
+    ttsSettings: {
+      ttsEngine: string
+      ttsModelName: string
+      language: string
+      ttsSpeakerName?: string
+    }
+  ): Promise<ImportExecuteResponse> => {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    // Add mapping rules as JSON string (snake_case for backend)
+    const snakeCaseRules = {
+      project_heading: mappingRules.projectHeading,
+      chapter_heading: mappingRules.chapterHeading,
+      divider_pattern: mappingRules.dividerPattern,
+    }
+    formData.append('mapping_rules', JSON.stringify(snakeCaseRules))
+
+    // Add language
+    formData.append('language', language)
+
+    // Add mode
+    formData.append('mode', mode)
+
+    // Add merge target ID (only if merge mode)
+    if (mode === 'merge' && mergeTargetId) {
+      formData.append('merge_target_id', mergeTargetId)
+    }
+
+    // Add selected chapters as JSON array
+    formData.append('selected_chapters', JSON.stringify(selectedChapters))
+
+    // Add renamed chapters as JSON object
+    formData.append('renamed_chapters', JSON.stringify(renamedChapters))
+
+    // Add TTS settings (snake_case)
+    formData.append('tts_engine', ttsSettings.ttsEngine)
+    formData.append('tts_model_name', ttsSettings.ttsModelName)
+    formData.append('tts_language', ttsSettings.language)
+    if (ttsSettings.ttsSpeakerName) {
+      formData.append('tts_speaker_name', ttsSettings.ttsSpeakerName)
+    }
+
+    const response = await fetch(`${getApiBaseUrl()}/projects/import/epub`, {
+      method: 'POST',
+      body: formData, // multipart/form-data (no Content-Type header)
+    })
+
+    if (!response.ok) {
+      if (response.status === 0 || response.status >= 500) {
+        window.dispatchEvent(new CustomEvent('backend-connection-error'))
+      }
+
+      const error = await response.json().catch(() => ({ detail: response.statusText }))
+      throw new Error(error.detail || `EPUB import failed: ${response.status}`)
+    }
+
+    return response.json()
+  },
 
 // Chapter API
 export const chapterApi = {
