@@ -1050,7 +1050,7 @@
       "supportedFormats": "Supported formats",
       "textLanguage": "Text Segmentation Language",
       "noTextModels": "No text processing models available. Please enable a text engine.",
-      "errorInvalidType": "Invalid file type. Only .md and .markdown files are allowed.",
+      "errorInvalidType": "Invalid file type. Only .md, .markdown and/or .epub files are allowed.",
       "errorTooLarge": "File too large. Maximum size is 10 MB."
     },
     "mapping": {
