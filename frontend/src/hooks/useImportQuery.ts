@@ -16,6 +16,11 @@ import { projectApi } from '@services/api'
 import { queryKeys } from '@services/queryKeys'
 import type { MappingRules, ImportPreviewResponse, ImportExecuteResponse } from '@types'
 
+function isEpubFile(file: File): boolean {
+  const ext = '.' + (file.name.split('.').pop() || '').toLowerCase()
+  return ext === '.epub'
+}
+
 /**
  * Preview Markdown import
  *
@@ -55,6 +60,9 @@ export function usePreviewImport(): UseMutationResult<
 > {
   return useMutation({
     mutationFn: async ({ file, mappingRules, language = 'en' }) => {
+      if (isEpubFile(file)) {
+        return await projectApi.previewEpubImport(file, mappingRules, language)
+      }
       return await projectApi.previewMarkdownImport(file, mappingRules, language)
     },
     // No cache invalidation needed - this is a read-only preview operation
