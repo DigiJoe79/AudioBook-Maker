@@ -33,6 +33,11 @@ aiohttp>=3.10.0,<4.0.0  # Async HTTP client
 loguru>=0.7.0,<1.0.0
 pyyaml>=6.0.1
 
+# epub parsing support
+ebooklib>=0.18
+beautifulsoup4>=4.12
+markdownify>=0.13
+
 # Testing - see requirements-dev.txt for test dependencies
 
 
