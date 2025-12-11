@@ -26,7 +26,7 @@
 - **Real-Time Updates** - Server-Sent Events for instant UI feedback (99.5% network reduction)
 - **Job Management** - Database-backed queue, resume cancelled jobs, track progress
 - **Engine Management** - Enable/disable engines, auto-stop after inactivity, monitoring UI
-- **Markdown Import** - Import entire projects from structured markdown files
+- **Markdown or EPUB Import** - Import entire projects from structured markdown files or EPUB files
 
 ## Screenshots
 
