@@ -1,0 +1,12 @@
+services:
+  backend:
+    image: audiobook-maker-backend
+    # If you want local development builds instead of a prebuilt image, use:
+    # build: .
+    container_name: audiobook-maker-backend
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./backend/media:/app/backend/media
+      - ./database:/app/database
+    restart: unless-stopped
