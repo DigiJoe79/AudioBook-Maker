@@ -25,6 +25,12 @@ from models.response_models import (
     MessageResponse
 )
 from services.event_broadcaster import broadcaster, EventType
+from pathlib import Path
+
+from core.tts_engine_manager import get_tts_engine_manager
+from db.repositories import SegmentRepository
+from services.speaker_service import SpeakerService
+from services.settings_service import SettingsService
 
 router = APIRouter(prefix="/api/pronunciation", tags=["pronunciation"])
 
@@ -495,7 +501,8 @@ async def generate_test_audio(
             )
 
         # Get segment
-        from db.repositories import SegmentRepository
+        # Isn't this imported at the top? Is this needed?
+        #from db.repositories import SegmentRepository
         segment_repo = SegmentRepository(db)
         segment = segment_repo.get_by_id(segment_id)
 
@@ -524,18 +531,112 @@ async def generate_test_audio(
             rules=[test_rule]
         )
 
-        # Generate audio with transformed text
-        # This would need to call the TTS engine directly
-        # For now, return the transformation info
+        # Generate audio with transformed text using the same engine and speaker
+        # configuration as the target segment.
 
-        # TODO: Integrate with engine manager to generate actual audio
+        # Segment metadata from DB
+        engine_name = segment.get('tts_engine')
+        model_name = segment.get('tts_model_name')
+        language = segment.get('language') or 'en'
+        speaker_name = segment.get('tts_speaker_name')
+
+        if not engine_name or not model_name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"[PRONUNCIATION_TEST_ENGINE_NOT_SET]segmentId:{segment_id}"
+            )
+
+        # Resolve speaker sample(s) based on the segment's tts_speaker_name
+        speaker_wav = ""
+        try:
+            speaker_service = SpeakerService(db)
+            if speaker_name:
+                speaker = speaker_service.get_speaker_by_name(speaker_name)
+                if not speaker or not speaker.get("samples"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"[PRONUNCIATION_TEST_SPEAKER_NOT_FOUND]speaker:{speaker_name}"
+                    )
+
+                from config import SPEAKER_SAMPLES_DIR
+                samples_base = Path(SPEAKER_SAMPLES_DIR)
+                sample_paths: List[str] = []
+
+                for sample in speaker["samples"]:
+                    sample_path = samples_base / sample["filePath"]
+                    if not sample_path.exists():
+                        raise HTTPException(
+                            status_code=500,
+                            detail=(
+                                f"[PRONUNCIATION_TEST_SAMPLE_MISSING]"
+                                f"speaker:{speaker_name};path:{sample_path}"
+                            )
+                        )
+                    sample_paths.append(str(sample_path))
+
+                # If there is only one sample, pass a single string
+                speaker_wav = sample_paths[0] if len(sample_paths) == 1 else sample_paths
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to resolve speaker for pronunciation test: {e}")
+            # Fall back to empty speaker reference so engines with default voices still work
+            speaker_wav = ""
+
+        # Load engine parameters from settings
+        settings_service = SettingsService(db)
+        engine_parameters = settings_service.get_engine_parameters(engine_name)
+
+        # Ensure TTS engine is ready
+        tts_manager = get_tts_engine_manager()
+        try:
+            await tts_manager.ensure_engine_ready(engine_name, model_name)
+        except Exception as e:
+            logger.error(f"Failed to start TTS engine for pronunciation test: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"[PRONUNCIATION_TEST_ENGINE_LOAD_FAILED]"
+                    f"engine:{engine_name};model:{model_name};error:{str(e)}"
+                )
+            )
+
+        # Actually generate the audio for the transformed text
+        try:
+            audio_bytes = await tts_manager.generate_with_engine(
+                engine_name=engine_name,
+                text=result.transformed_text,
+                language=language,
+                speaker_wav=speaker_wav or "",
+                parameters=engine_parameters,
+            )
+        except Exception as e:
+            logger.error(f"Failed to generate pronunciation test audio: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"[PRONUNCIATION_TEST_AUDIO_FAILED]error:{str(e)}"
+            )
+
+        # Persist short preview file under OUTPUT_DIR/previews
+        from config import OUTPUT_DIR
+        previews_dir = Path(OUTPUT_DIR) / "previews"
+        previews_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f"pron_test_{segment_id}.wav"
+        output_path = previews_dir / filename
+        with open(output_path, "wb") as f:
+            f.write(audio_bytes)
+
+        # This path is relative to OUTPUT_DIR and is used by /api/audio/{file_path}
+        relative_path = f"previews/{filename}"
 
         return PronunciationTestAudioResponse(
             original_text=segment['text'],
             transformed_text=result.transformed_text,
             rules_applied=result.rules_applied,
-            audio_path=None,
-            message="Test transformation complete (audio generation not yet implemented)"
+            audio_path=relative_path,
+            message="Test transformation complete"
         )
 
     except HTTPException:
