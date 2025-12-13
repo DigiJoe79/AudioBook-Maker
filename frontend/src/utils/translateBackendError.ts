@@ -233,7 +233,12 @@ export function translateBackendError(errorMessage: string, t: TFunction): strin
     PRONUNCIATION_BULK_OPERATION_FAILED: 'pronunciation.errors.bulkOperationFailed',
     PRONUNCIATION_RULES_EXPORT_FAILED: 'pronunciation.errors.exportFailed',
     PRONUNCIATION_RULES_IMPORT_FAILED: 'pronunciation.errors.importFailed',
+    PRONUNCIATION_TEST_ENGINE_NOT_SET: 'pronunciation.errors.testEngineNotSet',
+    PRONUNCIATION_TEST_SPEAKER_NOT_FOUND: 'pronunciation.errors.testSpeakerNotFound',
+    PRONUNCIATION_TEST_SAMPLE_MISSING: 'pronunciation.errors.testSampleMissing',
+    PRONUNCIATION_TEST_ENGINE_LOAD_FAILED: 'pronunciation.errors.testEngineLoadFailed',
     PRONUNCIATION_TEST_AUDIO_FAILED: 'pronunciation.errors.testAudioFailed',
+
 
     // Settings errors
     SETTINGS_KEY_NOT_FOUND: 'settings.errors.keyNotFound',

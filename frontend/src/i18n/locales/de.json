@@ -1109,6 +1109,9 @@
     "actions": {
       "import": "Importieren",
       "importing": "Importiere...",
+      "wizard": "Importieren + Hörbuch erzeugen",
+      "wizardRunning": "Assistent läuft...", 
+      "wizardRequiresNew": "Der Assistent unterstützt nur „Neues Projekt“. Modus wurde auf „Neu“ umgestellt.",
       "error": "Import fehlgeschlagen",
       "success": "Import abgeschlossen ({{chapters}} Kapitel, {{segments}} Segmente)",
       "invalidConfig": "Bitte füllen Sie alle erforderlichen Felder aus, bevor Sie importieren",
@@ -1385,5 +1388,14 @@
       "missingTargetId": "Zielprojekt-ID erforderlich für Merge-Modus",
       "unknownEngine": "Unbekannte TTS-Engine: {{engine}}"
     }
+  },
+  "wizard": {
+    "importingBook": "Buch wird importiert und Projekt wird erstellt...",
+    "importedNoChapters": "Import abgeschlossen, aber es wurden keine Kapitel erstellt.",
+    "generatingTts": "Text-zu-Sprache-Jobs für alle Kapitel werden gestartet...",
+    "generatingChapter": "Audio wird für Kapitel {{index}}/{{total}} erzeugt: {{title}}",
+    "chapterTtsFailed": "TTS konnte für das Kapitel \"{{title}}\" nicht gestartet werden. Siehe Logs für Details.",
+    "completed": "Buch importiert und TTS-Jobs für alle Kapitel gestartet. Fortschritt im Jobs-Bereich prüfen und exportieren, wenn alles fertig ist.",
+    "unknownError": "Beim Ausführen des Buch → Hörbuch-Assistenten ist ein Fehler aufgetreten."
   }
 }
