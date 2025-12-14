@@ -73,4 +73,4 @@ Added EPUB file support to the Import workflow. You can now import e-books direc
 
 ---
 
-**Full Changelog**: https://github.com/user/audiobook-maker/compare/v1.0.1...v1.0.2
+**Full Changelog**: https://github.com/DigiJoe79/audiobook-maker/compare/v1.0.1...v1.0.2
