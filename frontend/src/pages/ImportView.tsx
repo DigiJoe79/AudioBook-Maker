@@ -56,11 +56,13 @@ import { useNavigationStore } from '../store/navigationStore'
 import { useSnackbar } from '../hooks/useSnackbar'
 import { useDefaultSpeaker } from '../hooks/useSpeakersQuery'
 import { translateBackendError } from '../utils/translateBackendError'
+import { useFullBookWizard } from '../hooks/useFullBookWizard'
+
 
 const ImportView = memo(() => {
   const { t } = useTranslation()
   const navigateTo = useNavigationStore((state) => state.navigateTo)
-  const { showSnackbar, SnackbarComponent } = useSnackbar()
+  const { SnackbarComponent, showSnackbar } = useSnackbar()
   const [importError, setImportError] = useState<string | null>(null)
 
   // Check if import feature is available (requires text processing engine)
@@ -119,6 +121,66 @@ const ImportView = memo(() => {
   // Preview and execute mutation hooks
   const previewMutation = usePreviewImport()
   const executeImport = useExecuteImport()
+  const fullBookWizard = useFullBookWizard()
+
+  // Handle wizard: import + full audiobook
+  const handleImportAndGenerate = useCallback(async () => {
+    // Clear previous error
+    setImportError(null)
+
+    // Wizard only supports new project imports (UX: auto-switch)
+    if (importMode === 'merge') {
+      setImportMode('new')
+      setMergeTargetId(null)
+      setExpandedSection('mode')
+      showSnackbar(
+        t(
+          'import.actions.wizardRequiresNew',
+          'Wizard supports only Create New Project. Switched mode to New Project.',
+        ),
+        { severity: 'info' },
+      )
+      // DO NOT return, continue and run wizard now
+    }
+
+    // Reuse the same validations as handleImport
+    if (!selectedFile) {
+      setImportError(t('import.actions.noFileSelected'))
+      return
+    }
+
+    try {
+      const result = await fullBookWizard.runWizard(selectedFile)
+
+      // Store the imported project ID in sessionStorage for AppLayout to pick up
+      sessionStorage.setItem('selectedProjectId', result.project.id)
+
+      // Optional: show a success banner after navigation (same pattern as handleImport)
+      sessionStorage.setItem(
+        'importSuccessMessage',
+        t(
+          'wizard.completed',
+          'Book imported and TTS jobs started for all chapters. You can monitor progress in the Jobs view and export audio when ready.',
+        ),
+      )
+
+      // Navigate to Jobs (Monitoring)
+      navigateTo('monitoring')
+    } catch (err) {
+      const errorMessage = translateBackendError(
+        err instanceof Error ? err.message : t('import.actions.error'),
+        t
+      )
+      setImportError(errorMessage)
+    }
+  }, [
+    selectedFile,
+    importMode,
+    fullBookWizard,
+    t,
+    navigateTo,
+    showSnackbar,
+  ])
 
   const handleFileSelect = useCallback((file: File | null) => {
     setSelectedFile(file)
@@ -297,7 +359,7 @@ const ImportView = memo(() => {
     mergeTargetId,
     selectedChapters,
     mappingRules,
-    uiLanguage,
+    textLanguage,
     renamedChapters,
     ttsEngine,
     ttsModelName,
@@ -352,28 +414,42 @@ const ImportView = memo(() => {
       <ViewHeader
         title={t('import.title')}
         actions={
-          <Button
-            data-testid="import-execute-button"
-            variant="contained"
-            color="primary"
-            size="small"
-            disabled={!isImportEnabled}
-            onClick={handleImport}
-            startIcon={
-              executeImport.isPending ? (
-                <CircularProgress size={20} color="inherit" />
-              ) : (
-                <UploadIcon />
-              )
-            }
-          >
-            {executeImport.isPending
-              ? t('import.actions.importing')
-              : t('import.actions.import')}
-          </Button>
-        }
-      />
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              data-testid="import-execute-button"
+              variant="contained"
+              color="primary"
+              size="small"
+              disabled={!isImportEnabled}
+              onClick={handleImport}
+              startIcon={
+                executeImport.isPending ? (
+                  <CircularProgress size={20} color="inherit" />
+                ) : (
+                  <UploadIcon />
+                )
+              }
+            >
+              {executeImport.isPending
+                ? t('import.actions.importing')
+                : t('import.actions.import')}
+            </Button>
 
+            <Button
+              data-testid="import-wizard-button"
+              variant="outlined"
+              color="primary"
+              size="small"
+              disabled={!selectedFile || fullBookWizard.isRunning || executeImport.isPending}
+              onClick={handleImportAndGenerate}
+            >
+              {fullBookWizard.isRunning
+                ? t('import.actions.wizardRunning')
+                : t('import.actions.wizard')}
+            </Button>
+          </Box>
+        }
+      />          
       {/* Split-View Content */}
       <ViewContent
         noPadding
