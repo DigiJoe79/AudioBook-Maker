@@ -1,5 +1,5 @@
 /**
- * FileUploadArea - Drag & Drop Upload Zone for Markdown Files
+ * FileUploadArea - Drag & Drop Upload Zone for Markdown or EPUB Files
  *
  * Features:
  * - Drag & Drop support with visual feedback
