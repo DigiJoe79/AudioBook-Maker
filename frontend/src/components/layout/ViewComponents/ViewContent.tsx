@@ -13,7 +13,7 @@
 import React from 'react'
 import { Box, type SxProps, type Theme } from '@mui/material'
 
-export interface ViewContentProps {
+interface ViewContentProps {
   /** Content to display */
   children: React.ReactNode
 

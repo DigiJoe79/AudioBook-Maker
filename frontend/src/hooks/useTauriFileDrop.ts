@@ -38,7 +38,7 @@ const DEFAULT_MIME_TYPES: Record<string, string> = {
   default: 'application/octet-stream',
 }
 
-export interface UseTauriFileDropOptions {
+interface UseTauriFileDropOptions {
   /**
    * Callback when files are dropped
    * Receives an array of File objects converted from Tauri paths
@@ -68,7 +68,7 @@ export interface UseTauriFileDropOptions {
   singleFile?: boolean
 }
 
-export interface UseTauriFileDropResult {
+interface UseTauriFileDropResult {
   /**
    * Whether a file is currently being dragged over the window
    */

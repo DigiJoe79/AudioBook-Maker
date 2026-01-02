@@ -260,6 +260,7 @@ const MainView = memo(({
                     startIcon={<Download />}
                     onClick={handleExportClick}
                     disabled={!allSegmentsCompleted}
+                    data-testid="export-chapter-button"
                   >
                     {t('chapterView.exportChapter')}
                   </Button>

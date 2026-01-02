@@ -8,7 +8,7 @@ import sqlite3
 from loguru import logger
 
 from db.database import get_db
-from services.event_broadcaster import broadcaster, EventType
+from services.event_broadcaster import broadcaster, EventType, safe_broadcast
 from db.repositories import ChapterRepository, SegmentRepository
 from core.text_engine_manager import get_text_engine_manager
 from core.tts_engine_manager import get_tts_engine_manager
@@ -79,7 +79,6 @@ class SegmentTextRequest(BaseModel):
     tts_model_name: str  # Model name for TTS generation (required)
     tts_language: Optional[str] = None  # TTS language (optional, defaults to segmentation language if not provided)
     tts_speaker_name: Optional[str] = None  # Speaker for TTS generation (optional)
-    min_length: Optional[int] = None  # Optional override (auto-detected from engine if not provided)
     max_length: Optional[int] = None  # Optional override (auto-detected from engine if not provided)
 
 
@@ -103,18 +102,17 @@ async def create_chapter(
         )
 
         # Emit SSE event
-        try:
-            await broadcaster.broadcast_chapter_crud(
-                {
-                    "chapterId": new_chapter['id'],
-                    "projectId": new_chapter['project_id'],
-                    "title": new_chapter['title'],
-                    "orderIndex": new_chapter['order_index']
-                },
-                event_type=EventType.CHAPTER_CREATED
-            )
-        except Exception as sse_err:
-            logger.warning(f"Failed to broadcast chapter.created event: {sse_err}")
+        await safe_broadcast(
+            broadcaster.broadcast_chapter_crud,
+            {
+                "chapterId": new_chapter['id'],
+                "projectId": new_chapter['project_id'],
+                "title": new_chapter['title'],
+                "orderIndex": new_chapter['order_index']
+            },
+            event_type=EventType.CHAPTER_CREATED,
+            event_description="chapter.created"
+        )
 
         # Add empty segments list
         new_chapter['segments'] = []
@@ -180,18 +178,17 @@ async def update_chapter(
         updated['segments'] = segments
 
         # Emit SSE event
-        try:
-            await broadcaster.broadcast_chapter_crud(
-                {
-                    "chapterId": updated['id'],
-                    "projectId": updated['project_id'],
-                    "title": updated['title'],
-                    "orderIndex": updated.get('order_index')
-                },
-                event_type=EventType.CHAPTER_UPDATED
-            )
-        except Exception as sse_err:
-            logger.warning(f"Failed to broadcast chapter.updated event: {sse_err}")
+        await safe_broadcast(
+            broadcaster.broadcast_chapter_crud,
+            {
+                "chapterId": updated['id'],
+                "projectId": updated['project_id'],
+                "title": updated['title'],
+                "orderIndex": updated.get('order_index')
+            },
+            event_type=EventType.CHAPTER_UPDATED,
+            event_description="chapter.updated"
+        )
 
         return updated
     except HTTPException:
@@ -235,12 +232,11 @@ async def segment_chapter_text(
                 detail=f"[CHAPTER_UNKNOWN_ENGINE]engine:{request.tts_engine};available:{','.join(tts_manager.list_available_engines())}"
             )
 
-        # Get engine constraints from metadata
-        metadata = tts_manager._engine_metadata[request.tts_engine]
-        constraints = metadata.get('constraints', {})
+        # Get engine constraints from metadata (Single Source of Truth)
+        metadata = tts_manager.get_engine_metadata(request.tts_engine)
+        constraints = (metadata.get('constraints') or {}) if metadata else {}
 
         engine_max = constraints.get('max_text_length', 500)
-        engine_min = constraints.get('min_text_length', 10)
 
         # Get user preference from settings
         from services.settings_service import SettingsService
@@ -249,7 +245,6 @@ async def segment_chapter_text(
 
         # Use the minimum of user preference and engine max (unless explicitly overridden)
         max_length = request.max_length if request.max_length is not None else min(user_pref, engine_max)
-        min_length = request.min_length if request.min_length is not None else engine_min
 
         logger.info(f"Segmentation limits - User pref: {user_pref}, Engine max: {engine_max}, Using: {max_length}")
 
@@ -265,10 +260,12 @@ async def segment_chapter_text(
     text_manager = get_text_engine_manager()
 
     # Resolve text engine: settings > first available
-    text_engine_name = settings_service.get_setting('text.defaultTextEngine') or ""
+    text_engine_name = settings_service.get_default_engine('text') or ""
 
-    if not text_engine_name and text_manager._engine_metadata:
-        text_engine_name = next(iter(text_manager._engine_metadata.keys()))
+    if not text_engine_name:
+        installed = text_manager.list_installed_engines()
+        if installed:
+            text_engine_name = installed[0]
 
     if not text_engine_name:
         raise HTTPException(status_code=400, detail="[TEXT_NO_ENGINE_AVAILABLE]")
@@ -386,12 +383,11 @@ async def segment_chapter_text(
 
     return TextSegmentationResponse(
         success=True,
-        message=f"Created {len(created_segments)} segments using {request.tts_engine} constraints (min={min_length}, max={max_length})",
+        message=f"Created {len(created_segments)} segments using {request.tts_engine} constraints (max={max_length})",
         segments=created_segments,
         segment_count=len(created_segments),
         engine=request.tts_engine,
         constraints={
-            "min_length": min_length,
             "max_length": max_length
         }
     )
@@ -440,17 +436,16 @@ async def delete_chapter(chapter_id: str, conn: sqlite3.Connection = Depends(get
             raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
 
         # Emit SSE event
-        try:
-            await broadcaster.broadcast_chapter_crud(
-                {
-                    "chapterId": chapter_id,
-                    "projectId": chapter['project_id'],
-                    "title": chapter['title']
-                },
-                event_type=EventType.CHAPTER_DELETED
-            )
-        except Exception as sse_err:
-            logger.warning(f"Failed to broadcast chapter.deleted event: {sse_err}")
+        await safe_broadcast(
+            broadcaster.broadcast_chapter_crud,
+            {
+                "chapterId": chapter_id,
+                "projectId": chapter['project_id'],
+                "title": chapter['title']
+            },
+            event_type=EventType.CHAPTER_DELETED,
+            event_description="chapter.deleted"
+        )
 
         return DeleteResponse(
             success=True,
@@ -491,20 +486,19 @@ async def reorder_chapters(
         chapter_repo.reorder_batch(data.chapter_ids, data.project_id)
 
         # Emit SSE event with updated chapter order
-        try:
-            chapters_order = [
-                {"chapterId": chapter_id, "orderIndex": idx}
-                for idx, chapter_id in enumerate(data.chapter_ids)
-            ]
-            await broadcaster.broadcast_chapter_crud(
-                {
-                    "projectId": data.project_id,
-                    "chapters": chapters_order
-                },
-                event_type=EventType.CHAPTER_REORDERED
-            )
-        except Exception as sse_err:
-            logger.warning(f"Failed to broadcast chapter.reordered event: {sse_err}")
+        chapters_order = [
+            {"chapterId": chapter_id, "orderIndex": idx}
+            for idx, chapter_id in enumerate(data.chapter_ids)
+        ]
+        await safe_broadcast(
+            broadcaster.broadcast_chapter_crud,
+            {
+                "projectId": data.project_id,
+                "chapters": chapters_order
+            },
+            event_type=EventType.CHAPTER_REORDERED,
+            event_description="chapter.reordered"
+        )
 
         return ReorderResponse(
             success=True,

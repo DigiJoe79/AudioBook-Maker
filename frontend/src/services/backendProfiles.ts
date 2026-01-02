@@ -111,38 +111,6 @@ export function deleteProfile(id: string): void {
 }
 
 /**
- * Set a profile as the default
- */
-export function setDefaultProfile(id: string): void {
-  updateProfile(id, { isDefault: true })
-}
-
-/**
- * Get the default profile (if any)
- */
-export function getDefaultProfile(): BackendProfile | null {
-  const profiles = loadProfiles()
-  return profiles.find((p) => p.isDefault) || null
-}
-
-/**
- * Get the most recently used profile
- */
-export function getLastUsedProfile(): BackendProfile | null {
-  const profiles = loadProfiles()
-  if (profiles.length === 0) return null
-
-  // Sort by lastConnected, most recent first
-  const sorted = [...profiles].sort((a, b) => {
-    if (!a.lastConnected) return 1
-    if (!b.lastConnected) return -1
-    return b.lastConnected.getTime() - a.lastConnected.getTime()
-  })
-
-  return sorted[0]
-}
-
-/**
  * Validate a backend URL
  */
 export function validateUrl(url: string): { valid: boolean; error?: string } {

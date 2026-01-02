@@ -79,7 +79,7 @@ LanguageCheckbox.displayName = 'LanguageCheckbox'
 // Main Component
 // =============================================================================
 
-export interface GlobalEngineSettingsCardProps {
+interface GlobalEngineSettingsCardProps {
   /** Inactivity timeout in minutes */
   timeoutMinutes: number
   /** Callback when timeout changes */

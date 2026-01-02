@@ -50,6 +50,7 @@ import type { MappingRules, ImportPreviewResponse } from '../types/import'
 import { DEFAULT_MAPPING_RULES } from '../types/import'
 import { usePreviewImport, useExecuteImport } from '../hooks/useImportQuery'
 import { useTextEngineLanguages } from '../hooks/useTextEngineLanguages'
+import { useAllEnginesStatus } from '../hooks/useEnginesQuery'
 import { useUISettingsStore } from '../store/uiSettingsStore'
 import { useAppStore } from '../store/appStore'
 import { useNavigationStore } from '../store/navigationStore'
@@ -101,20 +102,33 @@ const ImportView = memo(() => {
     }
   }, [textLanguages, textLanguagesLoading, uiLanguage, textLanguage])
 
-  // Get default TTS settings from app store (DB)
-  const getDefaultTtsEngine = useAppStore((state) => state.getDefaultTtsEngine)
-  const getDefaultTtsModel = useAppStore((state) => state.getDefaultTtsModel)
-  const getDefaultLanguage = useAppStore((state) => state.getDefaultLanguage)
+  // Get default TTS engine from app store
+  const defaultEngine = useAppStore((state) => state.getDefaultTtsEngine())
+
+  // Get engine info from engines status (Single Source of Truth for default model/language)
+  const { data: enginesStatus } = useAllEnginesStatus()
+  const engineInfo = enginesStatus?.tts?.find((e) => e.variantId === defaultEngine)
 
   // Default speaker from speakers table (single source of truth)
   const { data: defaultSpeakerData } = useDefaultSpeaker()
 
-  // TTS settings state (initialized from DB defaults)
-  const defaultEngine = getDefaultTtsEngine()
+  // TTS settings state (initialized from engine info - Single Source of Truth)
   const [ttsEngine, setTtsEngine] = useState<string>(defaultEngine)
-  const [ttsModelName, setTtsModelName] = useState<string>(getDefaultTtsModel(defaultEngine))
-  const [language, setLanguage] = useState<string>(getDefaultLanguage())
+  const [ttsModelName, setTtsModelName] = useState<string>('')
+  const [language, setLanguage] = useState<string>('de')
   const [ttsSpeakerName, setTtsSpeakerName] = useState<string>(defaultSpeakerData?.name || '')
+
+  // Update TTS settings when engine info loads (async data)
+  useEffect(() => {
+    if (engineInfo) {
+      if (engineInfo.defaultModelName && !ttsModelName) {
+        setTtsModelName(engineInfo.defaultModelName)
+      }
+      if (engineInfo.defaultLanguage && language === 'de') {
+        setLanguage(engineInfo.defaultLanguage)
+      }
+    }
+  }, [engineInfo, ttsModelName, language])
 
   // Preview and execute mutation hooks
   const previewMutation = usePreviewImport()
@@ -334,7 +348,7 @@ const ImportView = memo(() => {
             <Button
               variant="contained"
               color="primary"
-              onClick={() => navigateTo('monitoring')}
+              onClick={() => navigateTo('settings')}
               size="large"
             >
               {t('import.noTextEngine.goToEngines')}

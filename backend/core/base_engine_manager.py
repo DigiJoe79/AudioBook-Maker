@@ -19,14 +19,43 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Set
 from datetime import datetime, timezone
-import subprocess
 import socket
 import asyncio
-import os
 import httpx
 from loguru import logger
 
-from services.event_broadcaster import emit_engine_started, emit_engine_stopped, emit_engine_starting, emit_engine_stopping, emit_engine_error
+from services.event_broadcaster import emit_engine_started, emit_engine_stopped, emit_engine_starting, emit_engine_stopping, emit_engine_error, emit_engine_model_loaded, safe_broadcast
+from core.engine_runner import EngineEndpoint
+from core.engine_runner_registry import get_engine_runner_registry
+from core.engine_exceptions import EngineHostUnavailableError
+
+
+class EngineStartupCancelledError(Exception):
+    """Raised when engine startup is cancelled (e.g., user stopped engine during startup).
+
+    This is NOT an error condition - it signals intentional cancellation and
+    should not emit error events or error responses.
+    """
+    pass
+
+
+def parse_variant_id(variant_id: str) -> tuple[str, str]:
+    """
+    Parse a variant_id into engine_name and runner_id.
+
+    Args:
+        variant_id: e.g., 'xtts', 'xtts:local' or 'xtts:docker:local'
+
+    Returns:
+        Tuple of (engine_name, runner_id)
+        - Plain engine names (no ':') return (engine_name, 'local')
+        - Variant IDs return (base_engine_name, runner_id)
+    """
+    parts = variant_id.split(':', 1)
+    if len(parts) < 2:
+        # Plain engine name, assume local runner
+        return variant_id, 'local'
+    return parts[0], parts[1]
 
 
 # Global port registry shared by ALL engine managers to prevent port collisions
@@ -56,8 +85,7 @@ class BaseEngineManager(ABC):
     Attributes:
         engine_type: Type identifier ('tts', 'stt', 'text', 'audio')
         engines_base_path: Path to engines directory
-        _engine_metadata: Dictionary of discovered engine metadata
-        engine_processes: Running engine server processes
+        engine_endpoints: Running engine endpoints (subprocess and Docker)
         engine_ports: Assigned ports for each engine
         active_engine: Currently loaded engine name
         http_client: Async HTTP client for engine communication
@@ -73,61 +101,362 @@ class BaseEngineManager(ABC):
         """
         self.engine_type = engine_type
         self.engines_base_path = engines_base_path
-        self._engine_metadata: Dict[str, Any] = {}
 
-        # Process management
-        self.engine_processes: Dict[str, subprocess.Popen] = {}
-        self.engine_ports: Dict[str, int] = {}
-        self.active_engine: Optional[str] = None
+        # Engine tracking (all keyed by variant_id, e.g., 'xtts:local', 'xtts:docker:local')
+        self.engine_ports: Dict[str, int] = {}  # variant_id -> port
+        self.active_engine: Optional[str] = None  # Currently active variant_id
 
-        # Lifecycle status tracking
-        self._starting_engines: Set[str] = set()  # Engines that are currently starting
-        self._stopping_engines: Set[str] = set()  # Engines that are currently stopping
+        # Lifecycle status tracking (keyed by variant_id)
+        self._starting_engines: Set[str] = set()  # variant_ids currently starting
+        self._stopping_engines: Set[str] = set()  # variant_ids currently stopping
 
-        # Auto-stop configuration
-        self._last_activity: Dict[str, datetime] = {}  # Track last activity per engine
+        # Auto-stop configuration (keyed by variant_id)
+        self._last_activity: Dict[str, datetime] = {}  # variant_id -> last activity time
         self._inactivity_timeout: int = self._load_inactivity_timeout()  # Load from settings
-        self._exempt_from_auto_stop: Set[str] = set()  # Engines that should stay warm (from keepRunning settings)
-
-        # Discovery mode configuration
-        from config import ENGINE_DISCOVERY_TIMEOUT
-        self._discovery_timeout: int = ENGINE_DISCOVERY_TIMEOUT
-        self._discovery_mode_engines: Set[str] = set()  # Engines started for discovery only
-
-        # Model discovery cache (populated at startup or on enable)
-        self._discovered_models: Dict[str, List[Dict[str, Any]]] = {}  # engine_name → List[ModelInfo dict]
-        self._discovery_errors: Dict[str, str] = {}  # engine_name → error message
+        self._exempt_from_auto_stop: Set[str] = set()  # variant_ids exempt from auto-stop (keepRunning)
 
         # HTTP client (timeout for long operations)
         from config import ENGINE_HTTP_TIMEOUT
         self.http_client = httpx.AsyncClient(timeout=float(ENGINE_HTTP_TIMEOUT))
 
-        # Discover engines on init
-        self._discover_engines()
+        # Runner registry for pluggable engine execution (local subprocess, Docker, remote)
+        self.runner_registry = get_engine_runner_registry()
+        self.engine_endpoints: Dict[str, EngineEndpoint] = {}  # variant_id -> endpoint
 
-        # Load keep running settings after discovery
+        # Discovery happens in main.py during async startup
+        # discover_local_engines() is called there and results passed to _register_local_engines_in_db()
+
+        # Note: Engine registration moved to main.py for async model discovery
+        # _register_local_engines_in_db() and _sync_uninstalled_engines() are
+        # now called from register_engines_with_model_discovery() during startup
+
+        # Load keep running settings from DB
         self.sync_keep_running_from_settings()
 
-        logger.success(
-            f"{self.__class__.__name__} initialized with "
-            f"{len(self._engine_metadata)} available engines: "
-            f"{', '.join(self._engine_metadata.keys())}"
-        )
+        # Count installed engines from DB (single source of truth)
+        try:
+            from db.database import get_db_connection_simple
+            from db.engine_repository import EngineRepository
+            conn = get_db_connection_simple()
+            repo = EngineRepository(conn)
+            installed = repo.get_installed(self.engine_type)
+            conn.close()
+
+            subprocess_count = sum(1 for e in installed if e.get('host_id') == 'local')
+            docker_count = len(installed) - subprocess_count
+
+            logger.success(
+                f"{self.__class__.__name__} initialized with "
+                f"{len(installed)} installed engines "
+                f"({subprocess_count} subprocess, {docker_count} Docker): "
+                f"{', '.join(e['variant_id'] for e in installed)}"
+            )
+        except Exception as e:
+            logger.warning(f"Could not count installed engines: {e}")
 
     @abstractmethod
-    def _discover_engines(self) -> None:
+    def discover_local_engines(self) -> Dict[str, Dict[str, Any]]:
         """
         Discover engines from engines_base_path
 
         Must be implemented by subclass to use appropriate discovery class.
-        Should populate self._engine_metadata dictionary.
+        Returns discovered engine metadata directly (not stored in instance).
 
         Example (TTS):
             from core.tts_engine_discovery import TTSEngineDiscovery
             discovery = TTSEngineDiscovery(self.engines_base_path)
-            self._engine_metadata = discovery.discover_all()
+            return discovery.discover_all()
+
+        Returns:
+            Dictionary mapping engine_name -> engine_metadata
         """
         pass
+
+    def _register_local_engines_in_db(self, discovered_engines: Dict[str, Dict[str, Any]]) -> None:
+        """
+        Register newly installed local engines in the engines table.
+
+        Args:
+            discovered_engines: Dictionary from discover_local_engines()
+
+        Only creates/updates entries when installation status changes:
+        - New engine (not in DB) → INSERT with defaults
+        - Reinstalled engine (in DB but is_installed=false) → UPDATE is_installed=true
+        - Already installed (in DB and is_installed=true) → NO CHANGES
+
+        This preserves user settings (keepRunning, defaultModel, parameters, etc.)
+        across backend restarts.
+        """
+        try:
+            from db.database import get_db_connection_simple
+            from db.engine_repository import EngineRepository
+
+            conn = get_db_connection_simple()
+            engine_repo = EngineRepository(conn)
+
+            new_count = 0
+            reinstall_count = 0
+            updated_count = 0
+
+            # Check if there's already an enabled engine of this type
+            def has_enabled_engine() -> bool:
+                enabled = engine_repo.get_enabled(self.engine_type)
+                return len(enabled) > 0
+
+            for engine_name, metadata in discovered_engines.items():
+                variant_id = f"{engine_name}:local"
+
+                try:
+                    existing_engine = engine_repo.get_by_id(variant_id)
+
+                    # Extract common metadata
+                    # Use 'or' pattern to handle explicit None values
+                    config = metadata.get('config') or {}
+                    config_hash = metadata.get('config_hash')
+                    constraints = metadata.get('constraints') or {}
+                    capabilities = metadata.get('capabilities') or {}
+                    display_name = metadata.get('display_name') or engine_name
+                    supported_languages = metadata.get('supported_languages') or []
+
+                    # Extract default parameters from parameters section
+                    parameters_schema = config.get('parameters') or {}
+                    default_parameters = {}
+                    for param_name, param_config in parameters_schema.items():
+                        if 'default' in param_config:
+                            default_parameters[param_name] = param_config['default']
+
+                    if not existing_engine:
+                        # NEW ENGINE: Insert with all defaults
+                        is_installed = metadata.get('is_installed', True)
+
+                        # Auto-enable first installed engine of this type
+                        auto_enable = is_installed and not has_enabled_engine()
+
+                        engine_repo.upsert(
+                            variant_id=variant_id,
+                            base_engine_name=engine_name,
+                            engine_type=self.engine_type,
+                            host_id="local",
+                            source="local",
+                            is_installed=is_installed,
+                            is_default=auto_enable,
+                            enabled=auto_enable,
+                            display_name=display_name,
+                            supported_languages=supported_languages,
+                            requires_gpu=metadata.get('requires_gpu', False),
+                            venv_path=str(metadata.get('venv_path')) if metadata.get('venv_path') else None,
+                            server_script=str(metadata.get('server_script')) if metadata.get('server_script') else None,
+                            parameters=default_parameters if default_parameters else None,
+                            constraints=constraints if constraints else None,
+                            capabilities=capabilities if capabilities else None,
+                            config=config if config else None,
+                            config_hash=config_hash,
+                        )
+                        status = "installed" if is_installed else "available (not installed)"
+                        if auto_enable:
+                            status += ", auto-enabled as default"
+                        logger.info(f"Registered new engine {variant_id} in DB ({status})")
+                        new_count += 1
+
+                    elif not existing_engine.get('is_installed') and metadata.get('is_installed', True):
+                        # REINSTALLED ENGINE: VENV now exists, update all metadata
+                        engine_repo.set_installed(variant_id, True)
+                        engine_repo.update_system_metadata(
+                            variant_id=variant_id,
+                            display_name=display_name,
+                            supported_languages=supported_languages,
+                            constraints=constraints,
+                            capabilities=capabilities,
+                            config=config,
+                            config_hash=config_hash,
+                            parameters=default_parameters if default_parameters else None,
+                        )
+
+                        # Auto-enable if no other enabled engine exists
+                        if not has_enabled_engine():
+                            engine_repo.set_enabled(variant_id, True)
+                            engine_repo.set_default(variant_id)
+                            logger.info(f"Marked {variant_id} as reinstalled in DB (auto-enabled as default)")
+                        else:
+                            logger.info(f"Marked {variant_id} as reinstalled in DB (config updated)")
+                        reinstall_count += 1
+
+                    elif config_hash and existing_engine.get('config_hash') != config_hash:
+                        # CONFIG CHANGED: Update system metadata, reset parameters to new defaults
+                        engine_repo.update_system_metadata(
+                            variant_id=variant_id,
+                            display_name=display_name,
+                            supported_languages=supported_languages,
+                            constraints=constraints,
+                            capabilities=capabilities,
+                            config=config,
+                            config_hash=config_hash,
+                            parameters=default_parameters if default_parameters else None,
+                        )
+                        logger.info(f"Updated {variant_id} system metadata (config hash changed)")
+                        updated_count += 1
+
+                    # else: Already in correct state - no changes needed
+
+                except Exception as e:
+                    logger.error(f"Failed to register local engine {variant_id} in DB: {e}")
+
+            conn.close()
+
+            if new_count > 0 or reinstall_count > 0 or updated_count > 0:
+                logger.info(f"Engine registration: {new_count} new, {reinstall_count} reinstalled, {updated_count} updated ({self.engine_type})")
+
+        except Exception as e:
+            logger.error(f"Failed to register local engines in DB: {e}")
+            # Don't fail startup if DB registration fails
+
+    def _sync_uninstalled_engines(self) -> None:
+        """
+        Mark engines as uninstalled if VENV no longer exists.
+
+        Called during startup to detect user-deleted subprocess engines.
+        Only affects local subprocess engines (not Docker).
+        """
+        try:
+            from db.database import get_db_connection_simple
+            from db.engine_repository import EngineRepository
+
+            conn = get_db_connection_simple()
+            engine_repo = EngineRepository(conn)
+
+            # Get all installed local engines from DB (host_id="local")
+            installed_engines = engine_repo.get_installed(self.engine_type)
+            uninstalled_count = 0
+
+            for engine in installed_engines:
+                # Only check local subprocess engines
+                if engine.get('host_id') != 'local':
+                    continue
+
+                venv_path = engine.get('venv_path')
+                if not venv_path:
+                    continue
+
+                # Check if venv_path exists on filesystem
+                venv_path_obj = Path(venv_path)
+                if not venv_path_obj.exists():
+                    variant_id = engine['variant_id']
+                    engine_repo.set_installed(variant_id, False)
+                    logger.info(f"Marked {variant_id} as uninstalled (VENV no longer exists)")
+                    uninstalled_count += 1
+
+            conn.close()
+
+            if uninstalled_count > 0:
+                logger.info(f"Synced {uninstalled_count} uninstalled engines ({self.engine_type})")
+
+        except Exception as e:
+            logger.error(f"Failed to sync uninstalled engines: {e}")
+            # Don't fail startup if sync fails
+
+    def get_engine_metadata(self, variant_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get engine metadata from database.
+
+        Single source of truth for ALL engine lookups (subprocess and Docker).
+
+        Args:
+            variant_id: Full variant ID (e.g., 'xtts:local', 'debug-tts:docker:local')
+
+        Returns:
+            Metadata dict or None if not found. Dict contains:
+            - name: Base engine name
+            - display_name: Human-readable name
+            - supported_languages: List of language codes
+            - requires_gpu: Boolean
+            - constraints: Dict (e.g., {'max_text_length': 400})
+            - capabilities: Dict (e.g., {'voice_cloning': True})
+            - config: Full engine.yaml content (dict)
+            - models: List of model dicts (extracted from config)
+            - venv_path: Path (subprocess only)
+            - server_script: Path (subprocess only)
+            - docker_image: str (docker only)
+            - docker_tag: str (docker only)
+            - is_installed: bool
+            - enabled: bool
+        """
+        try:
+            from db.database import get_db_connection_simple
+            from db.engine_repository import EngineRepository
+
+            conn = get_db_connection_simple()
+            engine_repo = EngineRepository(conn)
+            engine_data = engine_repo.get_by_id(variant_id)
+            conn.close()
+
+            if not engine_data:
+                return None
+
+            # Build normalized metadata dict
+            # Use 'or {}' to handle both missing keys AND explicit None values from DB
+            config = engine_data.get('config') or {}
+            metadata = {
+                'name': engine_data.get('base_engine_name'),
+                'display_name': engine_data.get('display_name'),
+                'supported_languages': engine_data.get('supported_languages') or [],
+                'requires_gpu': engine_data.get('requires_gpu') or False,
+                'constraints': engine_data.get('constraints') or {},
+                'capabilities': engine_data.get('capabilities') or {},
+                'config': config,
+                'is_installed': engine_data.get('is_installed') or False,
+                'enabled': engine_data.get('enabled') or False,
+                'default_language': engine_data.get('default_language'),
+                # Note: default_model_name is now in engine_models table (Migration 012)
+                # Use EngineModelRepository.get_default_model() instead
+            }
+
+            # Add subprocess-specific fields if present
+            if engine_data.get('venv_path'):
+                metadata['venv_path'] = Path(engine_data['venv_path'])
+            if engine_data.get('server_script'):
+                metadata['server_script'] = Path(engine_data['server_script'])
+
+            # Add Docker-specific fields if present
+            if engine_data.get('docker_image'):
+                metadata['docker_image'] = engine_data['docker_image']
+            if engine_data.get('docker_tag'):
+                metadata['docker_tag'] = engine_data['docker_tag']
+
+            return metadata
+
+        except Exception as e:
+            logger.error(f"Failed to get engine metadata for {variant_id}: {e}")
+            return None
+
+    def list_installed_engines(self, enabled_only: bool = False) -> List[str]:
+        """
+        List all installed engine variant IDs from database.
+
+        Args:
+            enabled_only: If True, only return enabled engines
+
+        Returns:
+            List of variant IDs (e.g., ['xtts:local', 'chatterbox:local', 'debug-tts:docker:local'])
+        """
+        try:
+            from db.database import get_db_connection_simple
+            from db.engine_repository import EngineRepository
+
+            conn = get_db_connection_simple()
+            engine_repo = EngineRepository(conn)
+
+            if enabled_only:
+                engines = engine_repo.get_enabled(self.engine_type)
+            else:
+                engines = engine_repo.get_installed(self.engine_type)
+
+            conn.close()
+
+            return [engine['variant_id'] for engine in engines]
+
+        except Exception as e:
+            logger.error(f"Failed to list installed engines: {e}")
+            return []
 
     def _load_inactivity_timeout(self) -> int:
         """
@@ -184,11 +513,13 @@ class BaseEngineManager(ABC):
             old_exempt = self._exempt_from_auto_stop.copy()
             self._exempt_from_auto_stop.clear()
 
-            # Load keepRunning for all discovered engines
-            for engine_name in self._engine_metadata.keys():
-                keep_running = settings_service.get_engine_keep_running(engine_name, self.engine_type)
+            # Load keepRunning for all installed engines (subprocess + Docker)
+            for variant_id in self.list_installed_engines():
+                # Query DB with full variant_id (settings are stored per-variant)
+                keep_running = settings_service.get_engine_keep_running(variant_id, self.engine_type)
                 if keep_running:
-                    self._exempt_from_auto_stop.add(engine_name)
+                    # Track by variant_id directly
+                    self._exempt_from_auto_stop.add(variant_id)
 
             # Log changes
             added = self._exempt_from_auto_stop - old_exempt
@@ -202,7 +533,7 @@ class BaseEngineManager(ABC):
         except Exception as e:
             logger.warning(f"Could not sync keep running settings: {e}")
 
-    def sync_keep_running_state(self, engine_name: str, keep_running: bool):
+    def sync_keep_running_state(self, variant_id: str, keep_running: bool):
         """
         Synchronize keep_running state for a single engine (called from settings service)
 
@@ -211,59 +542,43 @@ class BaseEngineManager(ABC):
         without requiring a full settings reload.
 
         Args:
-            engine_name: Engine identifier
+            variant_id: Engine variant identifier (e.g., 'xtts:local', 'xtts:docker:local')
             keep_running: New keep_running state
         """
-        old_state = engine_name in self._exempt_from_auto_stop
+        old_state = variant_id in self._exempt_from_auto_stop
 
         if keep_running:
-            self._exempt_from_auto_stop.add(engine_name)
+            self._exempt_from_auto_stop.add(variant_id)
         else:
-            self._exempt_from_auto_stop.discard(engine_name)
+            self._exempt_from_auto_stop.discard(variant_id)
 
         # Only log if state actually changed
         if old_state != keep_running:
             action = "marked as keep running (will not auto-stop)" if keep_running else "no longer keep running (subject to auto-stop)"
-            logger.info(f"Engine {engine_name} {action} (engine_type={self.engine_type})")
+            logger.info(f"Engine {variant_id} {action} (engine_type={self.engine_type})")
 
     # ========== Common Methods (All Engine Types) ==========
 
     def list_available_engines(self) -> List[str]:
         """
-        Get list of all available engine names (only enabled engines)
+        Get list of enabled engine variant_ids (includes both subprocess and Docker)
 
         Filters by settings.{engine_type}.engines[engine].enabled flag.
         Engines are enabled by default if no settings exist.
 
         Returns:
-            List of enabled engine identifiers (e.g., ['xtts', 'chatterbox'])
+            List of enabled engine variant_ids (e.g., ['xtts:local', 'debug-tts:docker:local'])
         """
-        from services.settings_service import SettingsService
-        from db.database import get_db_connection_simple
-
-        # Get settings to check enabled status
-        try:
-            conn = get_db_connection_simple()
-            settings_service = SettingsService(conn)
-
-            # Check each discovered engine's enabled status individually
-            # This correctly handles the case where no settings exist (defaults to enabled)
-            return [
-                e for e in self._engine_metadata.keys()
-                if settings_service.is_engine_enabled(e, self.engine_type)
-            ]
-        except Exception as e:
-            logger.warning(f"Could not filter by enabled engines: {e}, returning all discovered engines")
-            return list(self._engine_metadata.keys())
+        return self.list_installed_engines(enabled_only=True)
 
     def list_all_engines(self) -> List[str]:
         """
-        Get list of ALL engine names (including disabled)
+        Get list of ALL engine variant_ids (including disabled, subprocess + Docker)
 
         Returns:
-            List of all discovered engine identifiers
+            List of all installed engine variant_ids
         """
-        return list(self._engine_metadata.keys())
+        return self.list_installed_engines(enabled_only=False)
 
     def is_engine_available(self, engine_name: str) -> bool:
         """
@@ -275,8 +590,9 @@ class BaseEngineManager(ABC):
         Returns:
             True if engine is discovered and enabled, False otherwise
         """
-        # First check if engine is discovered
-        if engine_name not in self._engine_metadata:
+        # Check if engine exists in DB (Single Source of Truth)
+        metadata = self.get_engine_metadata(engine_name)
+        if not metadata:
             return False
 
         # Then check if enabled
@@ -318,11 +634,14 @@ class BaseEngineManager(ABC):
 
         info_list = []
         for ename in engine_names:
-            if ename not in self._engine_metadata:
+            # Parse variant ID to get base engine name (e.g., 'xtts:local' -> 'xtts')
+            base_name, _ = parse_variant_id(ename)
+
+            # Get metadata from DB (Single Source of Truth)
+            metadata = self.get_engine_metadata(ename)
+            if not metadata:
                 logger.warning(f"Unknown engine: {ename}")
                 continue
-
-            metadata = self._engine_metadata[ename]
 
             # Check if engine is enabled
             is_enabled = True  # Default
@@ -333,13 +652,13 @@ class BaseEngineManager(ABC):
                     logger.warning(f"Could not check enabled status for {ename}: {e}")
 
             info_list.append({
-                'name': metadata.get('name', ename),
-                'display_name': metadata.get('display_name', ename),
-                'capabilities': metadata.get('capabilities', {}),
-                'constraints': metadata.get('constraints', {}),
-                'supported_languages': metadata.get('supported_languages', []),
+                'name': metadata.get('name') or base_name,
+                'display_name': metadata.get('display_name') or base_name,
+                'capabilities': metadata.get('capabilities') or {},
+                'constraints': metadata.get('constraints') or {},
+                'supported_languages': metadata.get('supported_languages') or [],
                 'is_enabled': is_enabled,
-                'is_running': ename in self.engine_processes,
+                'is_running': self.is_engine_running(ename),
                 'port': self.engine_ports.get(ename)
             })
 
@@ -350,7 +669,7 @@ class BaseEngineManager(ABC):
         Get list of available models for a specific engine
 
         Args:
-            engine_name: Engine identifier (e.g., 'xtts', 'whisper', 'spacy')
+            engine_name: Engine identifier (e.g., 'xtts', 'whisper', 'spacy' or 'xtts:local')
 
         Returns:
             List of model dictionaries with metadata:
@@ -362,14 +681,18 @@ class BaseEngineManager(ABC):
         Raises:
             ValueError: If engine_name is unknown
         """
-        if engine_name not in self._engine_metadata:
-            available = ', '.join(self._engine_metadata.keys())
+        # Parse variant ID to get base engine name (e.g., 'xtts:local' -> 'xtts')
+        base_name, _ = parse_variant_id(engine_name)
+
+        # Get metadata from DB (Single Source of Truth)
+        metadata = self.get_engine_metadata(engine_name)
+        if not metadata:
+            available = ', '.join(self.list_installed_engines())
             raise ValueError(
                 f"Unknown {self.engine_type} engine: '{engine_name}'. "
                 f"Available engines: {available}"
             )
 
-        metadata = self._engine_metadata[engine_name]
         return metadata.get('models', [])
 
     def find_free_port(self, start: int = None) -> int:
@@ -414,132 +737,150 @@ class BaseEngineManager(ABC):
 
     # ========== Model Discovery Methods ==========
 
-    async def start_engine_for_discovery(self, engine_name: str) -> int:
+    async def start_engine_for_discovery(self, variant_id: str) -> int:
         """
         Start engine server WITHOUT loading a model (fast, for /models endpoint)
 
-        Used for model discovery at startup or when enabling an engine.
-        Engine stays running for 30s auto-stop timeout in case it's needed for work.
+        Used for manual model discovery via /engines/{variant_id}/discover-models endpoint.
+        Engine will auto-stop after inactivity timeout if not used for work.
+
+        Supports both local subprocess engines and Docker engines.
 
         Args:
-            engine_name: Engine identifier (e.g., 'xtts', 'spacy')
+            variant_id: Variant identifier (e.g., 'xtts:local', 'debug-tts:docker:local')
 
         Returns:
             Port number the engine is listening on
 
         Raises:
-            ValueError: If engine is unknown
+            ValueError: If engine is unknown or disabled
             RuntimeError: If engine start fails or health check times out
         """
-        if engine_name not in self._engine_metadata:
-            raise ValueError(f"Unknown engine: {engine_name}")
+        # Parse variant_id to get base engine name and runner
+        base_engine_name, runner_id = parse_variant_id(variant_id)
+
+        # Get metadata from DB (Single Source of Truth)
+        metadata = self.get_engine_metadata(variant_id)
+        if not metadata:
+            raise ValueError(f"Unknown engine: {variant_id}")
 
         # If engine is currently starting by another task, wait for it
-        if engine_name in self._starting_engines:
-            logger.debug(f"Engine {engine_name} already starting, waiting...")
+        if variant_id in self._starting_engines:
+            logger.debug(f"Engine {variant_id} already starting, waiting...")
             for _ in range(35):  # Wait up to 35s for start to complete
                 await asyncio.sleep(1)
-                if engine_name not in self._starting_engines:
+                if variant_id not in self._starting_engines:
                     break
             # Check if it's now running
-            if engine_name in self.engine_processes:
-                return self.engine_ports[engine_name]
+            if variant_id in self.engine_ports:
+                return self.engine_ports[variant_id]
             # If still not running, fall through to start it ourselves
 
         # If engine is already running, just return its port
-        if engine_name in self.engine_processes:
-            return self.engine_ports[engine_name]
+        if variant_id in self.engine_ports:
+            return self.engine_ports[variant_id]
 
         # Mark engine as starting
-        self._starting_engines.add(engine_name)
-        logger.debug(f"Engine {engine_name} marked as 'starting' (discovery mode)")
+        self._starting_engines.add(variant_id)
+        logger.debug(f"Engine {variant_id} marked as 'starting' (discovery)")
 
         try:
-            metadata = self._engine_metadata[engine_name]
-
             # Find free port
             port = self.find_free_port()
-            self.engine_ports[engine_name] = port
+            self.engine_ports[variant_id] = port
 
-            # Build command
-            venv_path = metadata.get('venv_path')
-            server_script = metadata.get('server_script')
+            # Get the runner from variant_id
+            runner = self.runner_registry.get_runner_by_variant(variant_id)
 
-            if not venv_path or not server_script:
-                raise RuntimeError(f"Engine {engine_name} missing venv_path or server_script")
+            # Build config based on runner type (Docker vs subprocess)
+            docker_image = metadata.get('docker_image')
+            if docker_image:
+                # Docker runner config
+                from db.database import get_db_connection_simple
+                from db.engine_host_repository import EngineHostRepository
 
-            # Python executable in VENV
-            if os.name == 'nt':  # Windows
-                python_exe = venv_path / 'Scripts' / 'python.exe'
-            else:  # Linux/Mac
-                python_exe = venv_path / 'bin' / 'python'
+                requires_gpu = metadata.get('requires_gpu', False)
+                docker_tag = metadata.get('docker_tag', 'latest')
 
-            if not python_exe.exists():
-                raise RuntimeError(f"Python executable not found: {python_exe}")
+                # Load docker_volumes from engine_hosts table
+                docker_volumes = {}
+                try:
+                    host_conn = get_db_connection_simple()
+                    host_repo = EngineHostRepository(host_conn)
+                    host_docker_volumes = host_repo.get_docker_volumes(runner_id)
+                    host_conn.close()
+                    if host_docker_volumes:
+                        docker_volumes = host_docker_volumes
+                except Exception as e:
+                    logger.warning(f"Could not load docker_volumes for {runner_id}: {e}")
 
-            cmd = [str(python_exe), str(server_script), '--port', str(port)]
+                config = {
+                    'port': port,
+                    'gpu': requires_gpu,
+                    'docker_volumes': docker_volumes,
+                    'image_tag': docker_tag,
+                    'docker_image': docker_image,
+                }
+                logger.info(f"Starting {variant_id} for discovery via Docker (image: {docker_image}:{docker_tag})")
+            else:
+                # Local subprocess runner config
+                venv_path = metadata.get('venv_path')
+                server_script = metadata.get('server_script')
 
-            # Log with relative paths
-            try:
-                backend_dir = Path(__file__).parent.parent
-                script_rel = server_script.relative_to(backend_dir)
-                logger.info(f"Starting {engine_name} for discovery: {script_rel} --port {port}")
-            except ValueError:
-                logger.info(f"Starting {engine_name} for discovery: {' '.join(cmd)}")
+                if not venv_path or not server_script:
+                    raise RuntimeError(f"Engine {variant_id} missing venv_path or server_script")
 
-            # Start process
-            process = subprocess.Popen(
-                cmd,
-                stdout=None,
-                stderr=None,
-                cwd=server_script.parent
-            )
+                config = {
+                    'port': port,
+                    'venv_path': venv_path,
+                    'server_script': server_script,
+                }
+                logger.info(f"Starting {variant_id} for discovery via subprocess")
 
-            self.engine_processes[engine_name] = process
+            # Start engine via runner
+            endpoint = await runner.start(variant_id, self.engine_type, config)
+            self.engine_endpoints[variant_id] = endpoint
 
             # Wait for health check (max 30s)
-            logger.debug(f"Waiting for {engine_name} server (discovery mode)...")
+            logger.debug(f"Waiting for {variant_id} server (discovery)...")
             for attempt in range(30):
                 await asyncio.sleep(1)
 
                 try:
-                    health = await self.health_check(engine_name)
+                    health = await self.health_check(variant_id)
                     if health.get('status') in ['ready', 'loading']:
-                        logger.info(f"{engine_name} server ready for discovery on port {port}")
+                        logger.info(f"{variant_id} server ready for discovery on port {port}")
 
                         # NO model loading - that's the key difference from start_engine_server()
 
-                        # Mark as discovery mode engine (shorter auto-stop)
-                        self._discovery_mode_engines.add(engine_name)
-
                         # Record activity for auto-stop
-                        self.record_activity(engine_name)
+                        self.record_activity(variant_id)
 
                         # Remove from starting state
-                        self._starting_engines.discard(engine_name)
-                        logger.debug(f"Engine {engine_name} removed from 'starting' state (discovery)")
+                        self._starting_engines.discard(variant_id)
+                        logger.debug(f"Engine {variant_id} removed from 'starting' state (discovery)")
 
                         return port
                 except asyncio.TimeoutError:
-                    logger.debug(f"Health check timeout for {engine_name}")
+                    logger.debug(f"Health check timeout for {variant_id}")
                 except Exception as e:
-                    logger.debug(f"Health check failed for {engine_name}: {e}")
+                    logger.debug(f"Health check failed for {variant_id}: {e}")
 
             # Timeout - cleanup
-            self._starting_engines.discard(engine_name)
-            await self.stop_engine_server(engine_name)
-            raise RuntimeError(f"{engine_name} server failed to start within 30s")
+            self._starting_engines.discard(variant_id)
+            await self.stop_engine_server(variant_id)
+            raise RuntimeError(f"{variant_id} server failed to start within 30s")
 
         except Exception:
-            self._starting_engines.discard(engine_name)
+            self._starting_engines.discard(variant_id)
             raise
 
-    async def fetch_models_from_engine(self, engine_name: str) -> List[Dict[str, Any]]:
+    async def fetch_models_from_engine(self, variant_id: str) -> List[Dict[str, Any]]:
         """
         Fetch available models from a running engine via /models endpoint
 
         Args:
-            engine_name: Engine identifier
+            variant_id: Engine variant identifier (e.g., 'xtts:local')
 
         Returns:
             List of ModelInfo dictionaries from the engine
@@ -547,130 +888,71 @@ class BaseEngineManager(ABC):
         Raises:
             RuntimeError: If engine not running or request fails
         """
-        port = self.engine_ports.get(engine_name)
-        if not port:
-            raise RuntimeError(f"Engine {engine_name} not running")
-
-        url = f"http://127.0.0.1:{port}/models"
+        base_url = self.get_engine_base_url(variant_id)
+        url = f"{base_url}/models"
         try:
             response = await self.http_client.get(url)
             response.raise_for_status()
         except httpx.RequestError as e:
-            raise RuntimeError(f"HTTP request to {engine_name} failed: {e}")
+            raise RuntimeError(f"HTTP request to {variant_id} failed: {e}")
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Engine {engine_name} returned error {e.response.status_code}: {e.response.text[:200]}")
+            raise RuntimeError(f"Engine {variant_id} returned error {e.response.status_code}: {e.response.text[:200]}")
 
         try:
             data = response.json()
         except ValueError as e:
-            raise RuntimeError(f"Invalid JSON response from {engine_name}: {e}")
+            raise RuntimeError(f"Invalid JSON response from {variant_id}: {e}")
 
         return data.get('models', [])
 
-    async def discover_engine_models(self, engine_name: str) -> List[Dict[str, Any]]:
+    async def discover_engine_models(self, variant_id: str) -> List[Dict[str, Any]]:
         """
-        Discover models from an engine by starting it in discovery mode
+        Discover models from an engine by starting it without loading a model.
 
         Starts the engine (without loading a model), fetches model info via /models,
-        and marks engine for 30s auto-stop (unless work mode takes over).
+        and returns the results. Engine will auto-stop after inactivity timeout.
 
-        This method is robust: it catches all errors and returns empty list on failure.
-
-        Args:
-            engine_name: Engine identifier
-
-        Returns:
-            List of ModelInfo dictionaries, or empty list on failure
-        """
-        try:
-            logger.debug(f"Discovering models for {engine_name}...")
-
-            # Start engine in discovery mode (no model loaded)
-            await self.start_engine_for_discovery(engine_name)
-
-            # Fetch models via /models endpoint
-            models = await self.fetch_models_from_engine(engine_name)
-
-            # Cache the results
-            self._discovered_models[engine_name] = models
-            self._discovery_errors.pop(engine_name, None)  # Clear any previous error
-
-            logger.info(f"Discovered {len(models)} models for {engine_name}")
-            return models
-
-        except Exception as e:
-            logger.warning(f"Discovery failed for {engine_name}: {e}")
-            self._discovery_errors[engine_name] = str(e)
-            return []
-
-    def get_discovered_models(self, engine_name: str) -> List[Dict[str, Any]]:
-        """
-        Get cached model info from previous discovery
+        Note: Results are NOT cached in memory. The caller (API endpoint) is
+        responsible for storing results in the engine_models table.
 
         Args:
-            engine_name: Engine identifier
+            variant_id: Variant identifier (e.g., 'xtts:local', 'debug-tts:docker:local')
 
         Returns:
-            List of ModelInfo dictionaries, or empty list if not discovered
+            List of ModelInfo dictionaries
+
+        Raises:
+            RuntimeError: If discovery fails
         """
-        return self._discovered_models.get(engine_name, [])
+        logger.debug(f"Discovering models for {variant_id}...")
 
-    def get_supported_languages(self, engine_name: str) -> List[str]:
+        # Start engine without loading a model
+        await self.start_engine_for_discovery(variant_id)
+
+        # Fetch models via /models endpoint
+        models = await self.fetch_models_from_engine(variant_id)
+
+        logger.info(f"Discovered {len(models)} models for {variant_id}")
+        return models
+
+    async def start_engine_server(self, variant_id: str, model_name: str) -> int:
         """
-        Get aggregated languages from all discovered models of an engine
+        Start engine server and wait for health check
 
-        Args:
-            engine_name: Engine identifier
-
-        Returns:
-            List of unique ISO language codes supported by this engine
-        """
-        models = self.get_discovered_models(engine_name)
-        languages = set()
-        for model in models:
-            model_langs = model.get('languages', [])
-            languages.update(model_langs)
-        return sorted(languages)
-
-    def discovery_failed(self, engine_name: str) -> bool:
-        """
-        Check if model discovery failed for this engine
-
-        Args:
-            engine_name: Engine identifier
-
-        Returns:
-            True if discovery was attempted and failed
-        """
-        return engine_name in self._discovery_errors
-
-    def get_discovery_error(self, engine_name: str) -> Optional[str]:
-        """
-        Get the error message from a failed discovery attempt
-
-        Args:
-            engine_name: Engine identifier
-
-        Returns:
-            Error message string, or None if no error
-        """
-        return self._discovery_errors.get(engine_name)
-
-    async def start_engine_server(self, engine_name: str, model_name: str) -> int:
-        """
-        Start engine server process and wait for health check
+        Uses the runner specified in the variant_id (local subprocess or Docker container).
 
         Flow:
-        1. Check if engine is enabled
-        2. Mark as 'starting'
-        3. Find free port
-        4. Start engine process with VENV Python
-        5. Wait for health check (max 30s)
-        6. Load model
-        7. Mark as active, remove from 'starting'
+        1. Parse variant_id to get base_engine_name and runner_id
+        2. Check if engine is enabled
+        3. Mark as 'starting'
+        4. Find free port
+        5. Start engine via runner from variant_id
+        6. Wait for health check (max 30s)
+        7. Load model
+        8. Mark as active, remove from 'starting'
 
         Args:
-            engine_name: Engine identifier (e.g., 'xtts')
+            variant_id: Variant identifier (e.g., 'xtts:local', 'xtts:docker:local')
             model_name: Model to load (e.g., 'v2.0.3')
 
         Returns:
@@ -680,155 +962,225 @@ class BaseEngineManager(ABC):
             ValueError: If engine is unknown or disabled
             RuntimeError: If engine start fails or health check times out
         """
-        if engine_name not in self._engine_metadata:
-            raise ValueError(f"Unknown engine: {engine_name}")
+        # Parse variant_id to get base engine name and runner
+        base_engine_name, runner_id = parse_variant_id(variant_id)
 
-        # Check if engine is enabled
-        from services.settings_service import SettingsService
+        # Check if engine exists and is enabled
+        # Always use full variant_id for DB lookup (both local and Docker engines are stored with full variant_id)
         from db.database import get_db_connection_simple
+        from db.engine_repository import EngineRepository
 
         try:
             conn = get_db_connection_simple()
-            settings_service = SettingsService(conn)
-            if not settings_service.is_engine_enabled(engine_name, self.engine_type):
-                raise ValueError(f"Engine {engine_name} is disabled. Enable it in settings first.")
+            engine_repo = EngineRepository(conn)
+            db_engine_data = engine_repo.get_by_id(variant_id)
+
+            if db_engine_data:
+                # Engine found in DB - check installed and enabled status
+                if not db_engine_data.get('is_installed', True):
+                    raise ValueError(f"Engine {variant_id} is not installed. Run setup script to install.")
+                if not db_engine_data.get('enabled', True):
+                    raise ValueError(f"Engine {variant_id} is disabled. Enable it in settings first.")
+            else:
+                # Not in DB - engine is unknown
+                raise ValueError(f"Unknown engine: {variant_id}")
         except ValueError:
-            raise  # Re-raise disabled error
+            raise
         except Exception as e:
-            logger.warning(f"Could not check enabled status for {engine_name}: {e}, proceeding with start")
+            logger.warning(f"Could not check engine status for {variant_id}: {e}, proceeding with start")
+
+        # Check host availability for Docker runners (fail-early)
+        if runner_id != "local":
+            from db.engine_host_repository import EngineHostRepository
+            host_conn = get_db_connection_simple()
+            host_repo = EngineHostRepository(host_conn)
+            if not host_repo.is_host_available(runner_id):
+                host_conn.close()
+                self._starting_engines.discard(variant_id)
+                raise EngineHostUnavailableError(
+                    f"[ENGINE_HOST_UNAVAILABLE]host:{runner_id}"
+                )
+            host_conn.close()
 
         # Mark engine as starting
-        self._starting_engines.add(engine_name)
-        logger.debug(f"Engine {engine_name} marked as 'starting'")
+        self._starting_engines.add(variant_id)
+        logger.debug(f"Engine {variant_id} marked as 'starting'")
 
         # Emit SSE event for immediate UI feedback
         try:
-            asyncio.create_task(emit_engine_starting(self.engine_type, engine_name))
+            asyncio.create_task(emit_engine_starting(self.engine_type, base_engine_name, variant_id=variant_id))
         except Exception as e:
             logger.warning(f"Failed to emit engine.starting event: {e}")
 
         try:
-            metadata = self._engine_metadata[engine_name]
+            # Get metadata from DB (Single Source of Truth)
+            metadata = self.get_engine_metadata(variant_id)
+            if not metadata:
+                raise ValueError(f"Unknown engine: {variant_id}")
 
             # Find free port
             port = self.find_free_port()
-            self.engine_ports[engine_name] = port
+            self.engine_ports[variant_id] = port
 
-            # Build command
-            venv_path = metadata.get('venv_path')
-            server_script = metadata.get('server_script')
+            # Get the runner from variant_id
+            runner = self.runner_registry.get_runner_by_variant(variant_id)
 
-            if not venv_path or not server_script:
-                raise RuntimeError(f"Engine {engine_name} missing venv_path or server_script")
+            # Build config based on runner type (Docker vs subprocess)
+            docker_image = metadata.get('docker_image')
+            if docker_image:
+                # Docker runner config
+                from db.database import get_db_connection_simple
+                from db.engine_host_repository import EngineHostRepository
 
-            # Python executable in VENV
-            if os.name == 'nt':  # Windows
-                python_exe = venv_path / 'Scripts' / 'python.exe'
-            else:  # Linux/Mac
-                python_exe = venv_path / 'bin' / 'python'
+                requires_gpu = metadata.get('requires_gpu', False)
+                docker_tag = metadata.get('docker_tag', 'latest')
 
-            if not python_exe.exists():
-                raise RuntimeError(f"Python executable not found: {python_exe}")
+                # Load docker_volumes from engine_hosts table
+                # This allows configurable sample/model paths per Docker host
+                docker_volumes = {}
+                try:
+                    host_conn = get_db_connection_simple()
+                    host_repo = EngineHostRepository(host_conn)
+                    host_docker_volumes = host_repo.get_docker_volumes(runner_id)
+                    host_conn.close()
 
-            cmd = [str(python_exe), str(server_script), '--port', str(port)]
+                    if host_docker_volumes:
+                        docker_volumes = host_docker_volumes
+                        logger.debug(f"Loaded docker_volumes for {runner_id}: {docker_volumes}")
+                except Exception as e:
+                    logger.warning(f"Could not load docker_volumes for {runner_id}: {e}")
 
-            # Log with relative paths for readability
-            try:
-                backend_dir = Path(__file__).parent.parent
-                script_rel = server_script.relative_to(backend_dir)
-                logger.info(f"Starting {engine_name} server: {script_rel} --port {port}")
-            except ValueError:
-                # Fallback if paths are not relative to backend
-                logger.info(f"Starting {engine_name} server: {' '.join(cmd)}")
+                config = {
+                    'port': port,
+                    'gpu': requires_gpu,
+                    'docker_volumes': docker_volumes,  # Configurable mounts from engine_hosts
+                    'image_tag': docker_tag,
+                    'docker_image': docker_image,  # Full image name from DB (e.g., ghcr.io/.../debug-tts)
+                }
+                logger.info(f"Starting {variant_id} via Docker (runner: {runner_id}, gpu: {requires_gpu}, image: {docker_image}:{docker_tag})")
+            else:
+                # Local subprocess runner config
+                venv_path = metadata.get('venv_path')
+                server_script = metadata.get('server_script')
 
-            # Start process (inherit stdout/stderr to see engine logs in backend console)
-            process = subprocess.Popen(
-                cmd,
-                stdout=None,  # Inherit from parent (backend logs)
-                stderr=None,  # Inherit from parent (backend logs)
-                cwd=server_script.parent
-            )
+                if not venv_path or not server_script:
+                    raise RuntimeError(f"Engine {variant_id} missing venv_path or server_script")
 
-            self.engine_processes[engine_name] = process
+                config = {
+                    'port': port,
+                    'venv_path': venv_path,
+                    'server_script': server_script,
+                }
+                logger.info(f"Starting {variant_id} via subprocess (runner: {runner_id})")
+
+            # Start engine via runner
+            endpoint = await runner.start(variant_id, self.engine_type, config)
+            self.engine_endpoints[variant_id] = endpoint
 
             # Wait for health check (max 30s)
-            logger.debug(f"Waiting for {engine_name} server to be ready...")
+            logger.debug(f"Waiting for {variant_id} server to be ready...")
             for attempt in range(30):
+                # Check if engine was stopped during startup (race condition protection)
+                if variant_id in self._stopping_engines or variant_id not in self.engine_endpoints:
+                    self._starting_engines.discard(variant_id)
+                    logger.info(f"Engine {variant_id} was stopped during startup - aborting health check")
+                    raise EngineStartupCancelledError(f"Engine {variant_id} was stopped during startup")
+
                 await asyncio.sleep(1)
 
                 try:
-                    health = await self.health_check(engine_name)
+                    health = await self.health_check(variant_id)
                     if health.get('status') in ['ready', 'loading']:
-                        logger.info(f"{engine_name} server ready on port {port}")
+                        logger.info(f"{variant_id} server ready on port {port}")
 
                         # Load model
-                        await self._load_model(engine_name, model_name)
+                        await self._load_model(variant_id, model_name)
 
                         # Record activity (engine just started)
-                        self.record_activity(engine_name)
+                        self.record_activity(variant_id)
 
-                        self.active_engine = engine_name
+                        self.active_engine = variant_id
 
                         # Remove from starting state
-                        self._starting_engines.discard(engine_name)
-                        logger.debug(f"Engine {engine_name} removed from 'starting' state")
+                        self._starting_engines.discard(variant_id)
+                        logger.debug(f"Engine {variant_id} removed from 'starting' state")
 
                         # Get package version from health check for SSE event
                         package_version = health.get('packageVersion')
 
                         # Emit engine started event
-                        try:
-                            await emit_engine_started(self.engine_type, engine_name, port, version=package_version)
-                        except Exception as e:
-                            logger.warning(f"Failed to broadcast engine start event: {e}")
+                        await safe_broadcast(
+                            emit_engine_started,
+                            self.engine_type,
+                            base_engine_name,
+                            port,
+                            version=package_version,
+                            variant_id=variant_id,
+                            event_description="engine.started"
+                        )
 
                         return port
                 except asyncio.TimeoutError:
-                    logger.debug(f"Health check timeout for {engine_name}")
+                    logger.debug(f"Health check timeout for {variant_id}")
                 except Exception as e:
-                    logger.debug(f"Health check failed for {engine_name}: {e}")
+                    logger.debug(f"Health check failed for {variant_id}: {e}")
 
             # Timeout - cleanup starting state before stopping
-            self._starting_engines.discard(engine_name)
-            logger.debug(f"Engine {engine_name} removed from 'starting' state (timeout)")
-            await self.stop_engine_server(engine_name)
-            error_msg = f"{engine_name} server failed to start within 30s"
+            self._starting_engines.discard(variant_id)
+            logger.debug(f"Engine {variant_id} removed from 'starting' state (timeout)")
+            await self.stop_engine_server(variant_id)
+            error_msg = f"{variant_id} server failed to start within 30s"
             # Emit engine error event
-            try:
-                asyncio.create_task(emit_engine_error(self.engine_type, engine_name, error_msg, "Startup timeout"))
-            except Exception as e:
-                logger.warning(f"Failed to broadcast engine error event: {e}")
+            asyncio.create_task(safe_broadcast(
+                emit_engine_error,
+                self.engine_type,
+                base_engine_name,
+                error_msg,
+                "Startup timeout",
+                variant_id=variant_id,
+                event_description="engine.error"
+            ))
             raise RuntimeError(error_msg)
+
+        except EngineStartupCancelledError:
+            # Engine was stopped during startup - this is NOT an error
+            # The stop_engine_server already emitted engine.stopped event
+            # Just cleanup and re-raise (API will return error, but UI already shows stopped)
+            self._starting_engines.discard(variant_id)
+            logger.debug(f"Engine {variant_id} startup cancelled (user stopped during startup)")
+            raise
 
         except Exception as e:
             # Any error during startup - cleanup starting state
-            self._starting_engines.discard(engine_name)
-            logger.debug(f"Engine {engine_name} removed from 'starting' state (error)")
+            self._starting_engines.discard(variant_id)
+            logger.debug(f"Engine {variant_id} removed from 'starting' state (error)")
             # Emit engine error event
-            try:
-                asyncio.create_task(emit_engine_error(self.engine_type, engine_name, str(e), "Startup error"))
-            except Exception as emit_err:
-                logger.warning(f"Failed to broadcast engine error event: {emit_err}")
+            asyncio.create_task(safe_broadcast(
+                emit_engine_error,
+                self.engine_type,
+                base_engine_name,
+                str(e),
+                "Startup error",
+                variant_id=variant_id,
+                event_description="engine.error"
+            ))
             raise
 
-    async def _load_model(self, engine_name: str, model_name: str):
+    async def _load_model(self, variant_id: str, model_name: str):
         """
         Call engine's /load endpoint to load model
 
         Args:
-            engine_name: Engine identifier
+            variant_id: Variant identifier (e.g., 'xtts:local')
             model_name: Model to load
 
         Raises:
             RuntimeError: If engine not running or model loading fails
         """
-        port = self.engine_ports.get(engine_name)
-        if not port:
-            raise RuntimeError(f"Engine {engine_name} not running")
+        base_url = self.get_engine_base_url(variant_id)
+        url = f"{base_url}/load"
 
-        url = f"http://127.0.0.1:{port}/load"
-
-        logger.debug(f"Loading model {model_name} on {engine_name}...")
+        logger.debug(f"Loading model {model_name} on {variant_id}...")
 
         # Note: CamelCaseModel accepts both snake_case and camelCase (populate_by_name=True)
         # Using camelCase here for consistency with JSON API convention
@@ -836,110 +1188,126 @@ class BaseEngineManager(ABC):
             response = await self.http_client.post(url, json={"engineModelName": model_name})
             response.raise_for_status()
         except httpx.RequestError as e:
-            raise RuntimeError(f"HTTP request to {engine_name} failed: {e}")
+            raise RuntimeError(f"HTTP request to {variant_id} failed: {e}")
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Engine {engine_name} returned error {e.response.status_code}: {e.response.text[:200]}")
+            raise RuntimeError(f"Engine {variant_id} returned error {e.response.status_code}: {e.response.text[:200]}")
 
         try:
             result = response.json()
         except ValueError as e:
-            raise RuntimeError(f"Invalid JSON response from {engine_name}: {e}")
+            raise RuntimeError(f"Invalid JSON response from {variant_id}: {e}")
 
         if result.get('status') != 'loaded':
             raise RuntimeError(f"Model loading failed: {result.get('error')}")
 
-        # Transition from discovery mode to work mode (if was in discovery)
-        if engine_name in self._discovery_mode_engines:
-            self._discovery_mode_engines.discard(engine_name)
-            logger.debug(f"Engine {engine_name} transitioned from discovery to work mode")
+        logger.success(f"Model {model_name} loaded successfully on {variant_id}")
 
-        logger.success(f"Model {model_name} loaded successfully on {engine_name}")
+        # Emit model loaded event
+        base_engine_name, _ = parse_variant_id(variant_id)
+        await safe_broadcast(
+            emit_engine_model_loaded,
+            self.engine_type,
+            base_engine_name,
+            model_name,
+            variant_id=variant_id,
+            event_description="engine.model_loaded"
+        )
 
-    async def stop_engine_server(self, engine_name: str, timeout: int = 30):
+    async def stop_engine_server(self, variant_id: str, timeout: int = 30):
         """
-        Gracefully stop engine via /shutdown, then kill if timeout
+        Gracefully stop engine via runner (subprocess or Docker container)
 
         Flow:
-        1. Mark as 'stopping'
-        2. Send /shutdown request to engine
-        3. Wait for process to exit (max timeout seconds)
-        4. Force-kill if timeout exceeded
-        5. Cleanup process/port tracking, remove from 'stopping'
+        1. Parse variant_id to get base_engine_name and runner_id
+        2. Mark as 'stopping'
+        3. Send /shutdown request to engine (graceful)
+        4. Stop via runner (handles subprocess termination or container stop)
+        5. Cleanup port tracking, remove from 'stopping'
 
         Args:
-            engine_name: Engine to stop
+            variant_id: Variant identifier (e.g., 'xtts:local', 'xtts:docker:local')
             timeout: Seconds to wait before force-kill (default: 30)
         """
-        if engine_name not in self.engine_processes:
-            logger.warning(f"Engine {engine_name} not running")
+        # Parse variant_id to get base engine name and runner
+        base_engine_name, runner_id = parse_variant_id(variant_id)
+
+        # Check if engine is running via runner or engine_endpoints
+        # This supports both manager-started engines and discovered containers
+        runner = self.runner_registry.get_runner_by_variant(variant_id)
+        is_running_via_runner = runner and runner.is_running(variant_id)
+        is_running_via_endpoints = variant_id in self.engine_endpoints
+
+        if not is_running_via_runner and not is_running_via_endpoints:
+            logger.warning(f"Engine {variant_id} not running")
             return
 
+        # If running via runner but not in endpoints (discovered container),
+        # get the endpoint from the runner
+        if is_running_via_runner and not is_running_via_endpoints:
+            endpoint = runner.get_endpoint(variant_id)
+            if endpoint:
+                self.engine_endpoints[variant_id] = endpoint
+                logger.debug(f"Synced discovered endpoint for {variant_id}")
+
         # Mark engine as stopping
-        self._stopping_engines.add(engine_name)
-        logger.debug(f"Engine {engine_name} marked as 'stopping'")
+        self._stopping_engines.add(variant_id)
+        logger.debug(f"Engine {variant_id} marked as 'stopping'")
 
         # Emit SSE event for immediate UI feedback
         try:
-            asyncio.create_task(emit_engine_stopping(self.engine_type, engine_name, "manual"))
+            asyncio.create_task(emit_engine_stopping(self.engine_type, base_engine_name, "manual", variant_id=variant_id))
         except Exception as e:
             logger.warning(f"Failed to emit engine.stopping event: {e}")
 
         try:
-            # Try graceful shutdown
+            # Try graceful shutdown via HTTP /shutdown endpoint
             try:
-                port = self.engine_ports.get(engine_name)
-                if port:
+                base_url = self.get_engine_base_url(variant_id)
+                if base_url:
                     from config import ENGINE_HEALTH_CHECK_TIMEOUT
-                    url = f"http://127.0.0.1:{port}/shutdown"
+                    url = f"{base_url}/shutdown"
                     await self.http_client.post(url, timeout=float(ENGINE_HEALTH_CHECK_TIMEOUT))
-                    logger.debug(f"Sent shutdown request to {engine_name}")
+                    logger.debug(f"Sent shutdown request to {variant_id}")
             except Exception as e:
                 # Expected if engine already stopped or shutting down
                 logger.debug(f"Graceful shutdown request failed (expected during app shutdown): {e}")
 
-            # Wait for process to exit (run in thread to avoid blocking event loop)
-            process = self.engine_processes[engine_name]
-            try:
-                # Use asyncio.to_thread to run blocking wait() in a thread pool
-                await asyncio.wait_for(
-                    asyncio.to_thread(process.wait),
-                    timeout=timeout
-                )
-                logger.info(f"{engine_name} server stopped gracefully")
-            except asyncio.TimeoutError:
-                logger.warning(f"{engine_name} server timeout, force killing...")
-                process.kill()
-                await asyncio.to_thread(process.wait)
-                logger.info(f"{engine_name} server force-killed")
+            if runner and runner.is_running(variant_id):
+                logger.debug(f"Stopping {variant_id} via runner ({runner_id})...")
+                await runner.stop(variant_id)
+                logger.info(f"{variant_id} server stopped via {runner_id}")
 
-            # Cleanup
-            del self.engine_processes[engine_name]
-            if engine_name in self.engine_ports:
-                port = self.engine_ports[engine_name]
-                del self.engine_ports[engine_name]
+            # Cleanup endpoint
+            self.engine_endpoints.pop(variant_id, None)
+
+            # Cleanup port
+            if variant_id in self.engine_ports:
+                port = self.engine_ports[variant_id]
+                del self.engine_ports[variant_id]
                 # Release port from global registry
                 global _global_used_ports
                 _global_used_ports.discard(port)
-                logger.debug(f"Port {port} released from {engine_name} (global registry: {_global_used_ports})")
+                logger.debug(f"Port {port} released from {variant_id} (global registry: {_global_used_ports})")
 
-            if self.active_engine == engine_name:
+            if self.active_engine == variant_id:
                 self.active_engine = None
 
-            # Clear discovery mode flag
-            self._discovery_mode_engines.discard(engine_name)
-
             # Emit engine stopped event (manual stop)
-            try:
-                await emit_engine_stopped(self.engine_type, engine_name, reason="manual")
-            except Exception as e:
-                logger.warning(f"Failed to broadcast engine stop event: {e}")
+            await safe_broadcast(
+                emit_engine_stopped,
+                self.engine_type,
+                base_engine_name,
+                reason="manual",
+                variant_id=variant_id,
+                event_description="engine.stopped"
+            )
 
         finally:
             # Always remove from stopping state, even on error
-            self._stopping_engines.discard(engine_name)
-            logger.debug(f"Engine {engine_name} removed from 'stopping' state")
+            self._stopping_engines.discard(variant_id)
+            logger.debug(f"Engine {variant_id} removed from 'stopping' state")
 
-    async def ensure_engine_ready(self, engine_name: str, model_name: str):
+    async def ensure_engine_ready(self, variant_id: str, model_name: str):
         """
         Ensure engine is running and has correct model loaded
 
@@ -949,58 +1317,97 @@ class BaseEngineManager(ABC):
         - Hotswapping model if same engine but different model (if supported)
 
         Args:
-            engine_name: Engine identifier
+            variant_id: Variant identifier (e.g., 'xtts:local', 'xtts:docker:local')
             model_name: Model to load
         """
-        # Check if a different engine is running
-        running_engines = list(self.engine_processes.keys())
-        other_engines = [e for e in running_engines if e != engine_name]
+        # Parse variant_id to get base engine name
+        base_engine_name, runner_id = parse_variant_id(variant_id)
 
-        if other_engines:
-            logger.info(f"Switching engines: stopping {other_engines} to start {engine_name}")
-            for other_engine in other_engines:
-                await self.stop_engine_server(other_engine)
+        # For single-engine types (STT, Audio, Text): stop other running engines
+        # For TTS (multi-engine): allow multiple engines to run in parallel
+        # This matches the pattern in settings_service.py and api/engines.py
+        if self.engine_type in ('stt', 'audio', 'text'):
+            # Check if a different engine is running (check all installed engines)
+            # Keep track of variant_id for proper stopping
+            running_variants = []
+            for installed_variant_id in self.list_installed_engines():
+                installed_base_name, _ = parse_variant_id(installed_variant_id)
+                if self.is_engine_running(installed_variant_id):
+                    running_variants.append((installed_base_name, installed_variant_id))
+
+            other_variants = [(base, vid) for base, vid in running_variants if base != base_engine_name]
+
+            if other_variants:
+                variant_ids_to_stop = [vid for _, vid in other_variants]
+                logger.info(f"Switching engines: stopping {variant_ids_to_stop} to start {variant_id}")
+                for _, other_variant_id in other_variants:
+                    # Stop using the actual variant_id (could be local or docker)
+                    await self.stop_engine_server(other_variant_id)
 
         # Engine not running - start it
-        if engine_name not in self.engine_processes:
-            logger.debug(f"Engine {engine_name} not running, starting...")
-            await self.start_engine_server(engine_name, model_name)
+        if not self.is_engine_running(variant_id):
+            logger.debug(f"Engine {variant_id} not running, starting...")
+            await self.start_engine_server(variant_id, model_name)
             return
 
         # Check current model
-        health = await self.health_check(engine_name)
+        health = await self.health_check(variant_id)
         current_model = health.get('currentEngineModel')
+        status = health.get('status')
 
-        # Same engine, same model - nothing to do
+        # Engine is currently loading a model - wait for it to complete
+        if status == 'loading':
+            logger.debug(f"Engine {variant_id} is loading model, waiting for completion...")
+            for _ in range(300):  # 5 min max (matches model loading timeout)
+                await asyncio.sleep(1)
+                health = await self.health_check(variant_id)
+                status = health.get('status')
+                if status == 'ready':
+                    current_model = health.get('currentEngineModel')
+                    logger.debug(f"Engine {variant_id} finished loading, model: {current_model}")
+                    break
+                elif status == 'error':
+                    raise RuntimeError(f"Engine {variant_id} model loading failed")
+            else:
+                raise RuntimeError(f"Engine {variant_id} model loading timeout (5min)")
+
+        # Same engine, same model - nothing to do, but record activity for auto-stop timer
         if current_model == model_name:
-            logger.debug(f"Engine {engine_name} already has {model_name} loaded")
+            logger.debug(f"Engine {variant_id} already has {model_name} loaded")
+            self.record_activity(variant_id)
             return
 
         # No model loaded yet (e.g., from discovery mode) - just load it
         if not current_model:
-            logger.debug(f"Engine {engine_name} has no model loaded, loading {model_name}...")
-            await self._load_model(engine_name, model_name)
+            logger.debug(f"Engine {variant_id} has no model loaded, loading {model_name}...")
+            await self._load_model(variant_id, model_name)
+            self.record_activity(variant_id)
             return
 
         # Same engine, different model - check if hotswap supported
-        metadata = self._engine_metadata[engine_name]
-        supports_hotswap = metadata.get('capabilities', {}).get('supports_model_hotswap', False)
+        # Get metadata from DB (Single Source of Truth)
+        metadata = self.get_engine_metadata(variant_id)
+        if not metadata:
+            raise ValueError(f"Unknown engine: {variant_id}")
+        capabilities = metadata.get('capabilities') or {}
+        supports_hotswap = capabilities.get('supports_model_hotswap', False)
 
         if supports_hotswap:
-            logger.debug(f"Hotswapping model on {engine_name}: {current_model} → {model_name}")
-            await self._load_model(engine_name, model_name)
+            logger.debug(f"Hotswapping model on {variant_id}: {current_model} → {model_name}")
+            await self._load_model(variant_id, model_name)
+            self.record_activity(variant_id)
         else:
             # No hotswap - restart engine
-            logger.debug(f"Engine {engine_name} doesn't support hotswap, restarting...")
-            await self.stop_engine_server(engine_name)
-            await self.start_engine_server(engine_name, model_name)
+            logger.debug(f"Engine {variant_id} doesn't support hotswap, restarting...")
+            await self.stop_engine_server(variant_id)
+            await self.start_engine_server(variant_id, model_name)
 
-    async def health_check(self, engine_name: str) -> Dict[str, Any]:
+    async def health_check(self, variant_id: str) -> Dict[str, Any]:
         """
         Call engine's /health endpoint
 
         Args:
-            engine_name: Engine to check
+            variant_id: Variant to check (e.g., 'xtts:local')
 
         Returns:
             Health status dictionary:
@@ -1012,116 +1419,254 @@ class BaseEngineManager(ABC):
             RuntimeError: If engine not running
             httpx.RequestError: If health check fails
         """
-        port = self.engine_ports.get(engine_name)
-        if not port:
-            raise RuntimeError(f"Engine {engine_name} not running")
-
-        url = f"http://127.0.0.1:{port}/health"
+        # Use get_engine_base_url to support discovered containers
+        base_url = self.get_engine_base_url(variant_id)
+        url = f"{base_url}/health"
 
         from config import ENGINE_HEALTH_CHECK_TIMEOUT
         try:
             response = await self.http_client.get(url, timeout=float(ENGINE_HEALTH_CHECK_TIMEOUT))
             response.raise_for_status()
         except httpx.RequestError as e:
-            raise RuntimeError(f"HTTP request to {engine_name} failed: {e}")
+            raise RuntimeError(f"HTTP request to {variant_id} failed: {e}")
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Engine {engine_name} returned error {e.response.status_code}: {e.response.text[:200]}")
+            raise RuntimeError(f"Engine {variant_id} returned error {e.response.status_code}: {e.response.text[:200]}")
 
         try:
             return response.json()
         except ValueError as e:
-            raise RuntimeError(f"Invalid JSON response from {engine_name}: {e}")
+            raise RuntimeError(f"Invalid JSON response from {variant_id}: {e}")
+
+    def get_engine_base_url(self, variant_id: str) -> str:
+        """
+        Get base URL for engine HTTP communication.
+
+        Checks multiple sources in order:
+        1. Manager's engine_endpoints (set during start_engine_server)
+        2. Runner's endpoints (for discovered containers)
+        3. Legacy port-based URL
+
+        Args:
+            variant_id: Variant identifier (e.g., 'xtts:local')
+
+        Returns:
+            Base URL for HTTP requests (e.g., "http://127.0.0.1:8766")
+
+        Raises:
+            RuntimeError: If engine is not running
+        """
+        # Check 1: Manager's engine_endpoints (keyed by variant_id)
+        endpoint = self.engine_endpoints.get(variant_id)
+        if endpoint:
+            return endpoint.base_url
+
+        # Check 2: Query runner's endpoints (for discovered containers)
+        for runner in self.runner_registry.runners.values():
+            runner_endpoint = runner.get_endpoint(variant_id)
+            if runner_endpoint:
+                return runner_endpoint.base_url
+
+        # Check 3: Fallback to legacy port-based URL (keyed by variant_id)
+        port = self.engine_ports.get(variant_id)
+        if port:
+            return f"http://127.0.0.1:{port}"
+
+        raise RuntimeError(f"Engine {variant_id} not running")
 
     async def shutdown_all_engines(self):
         """
         Stop all running engine servers (called on backend shutdown)
 
-        Stops all engines in parallel for faster shutdown.
+        Stops all engines (subprocess and Docker) via stop_engine_server().
         """
-        engine_names = list(self.engine_processes.keys())
+        # Use engine_endpoints which contains ALL running engines (subprocess + Docker)
+        variant_ids = list(self.engine_endpoints.keys())
 
-        for engine_name in engine_names:
-            logger.debug(f"Shutting down {engine_name}...")
-            await self.stop_engine_server(engine_name)
+        for variant_id in variant_ids:
+            logger.debug(f"Shutting down {variant_id}...")
+            await self.stop_engine_server(variant_id)
 
-        if engine_names:
-            logger.info(f"All {self.engine_type} engines shut down ({len(engine_names)} engines)")
+        if variant_ids:
+            logger.info(f"All {self.engine_type} engines shut down ({len(variant_ids)} engines)")
 
-    def is_engine_running(self, engine_name: str) -> bool:
+    def is_engine_running(self, variant_id: str) -> bool:
         """
-        Check if an engine server is running
+        Check if an engine server is running (subprocess or Docker container)
 
         Args:
-            engine_name: Engine to check
+            variant_id: Variant to check (e.g., 'xtts:local', 'xtts:docker:local')
 
         Returns:
             True if running, False otherwise
         """
-        if engine_name not in self.engine_processes:
-            return False
+        # Check via runner - works for both subprocess (LocalRunner) and Docker (DockerRunner)
+        for runner in self.runner_registry.runners.values():
+            if runner.is_running(variant_id):
+                return True
 
-        # Check if process is still alive (poll() returns None if running, exit code if dead)
-        process = self.engine_processes[engine_name]
-        exit_code = process.poll()
+        # Engine not running via any runner - cleanup stale tracking entries if present
+        if variant_id in self.engine_endpoints:
+            logger.debug(f"Engine {variant_id} no longer running, cleaning up stale endpoint")
+            del self.engine_endpoints[variant_id]
 
-        if exit_code is not None:
-            # Process has exited - cleanup stale entries
-            # Exit code 0 = clean shutdown (e.g., Ctrl+C), otherwise unexpected death
-            if exit_code == 0:
-                logger.debug(f"Engine {engine_name} exited cleanly, cleaning up")
-            else:
-                logger.warning(f"Engine {engine_name} process died (exit code: {exit_code}), cleaning up")
-            del self.engine_processes[engine_name]
+        if variant_id in self.engine_ports:
+            port = self.engine_ports[variant_id]
+            del self.engine_ports[variant_id]
+            # Release port from global registry
+            global _global_used_ports
+            _global_used_ports.discard(port)
+            logger.debug(f"Port {port} released from {variant_id} (stale cleanup)")
 
-            if engine_name in self.engine_ports:
-                port = self.engine_ports[engine_name]
-                del self.engine_ports[engine_name]
-                # Release port from global registry
-                global _global_used_ports
-                _global_used_ports.discard(port)
+        if self.active_engine == variant_id:
+            self.active_engine = None
 
-            if self.active_engine == engine_name:
-                self.active_engine = None
+        return False
 
-            # Clear discovery mode flag
-            self._discovery_mode_engines.discard(engine_name)
-
-            return False
-
-        return True
-
-    def is_engine_starting(self, engine_name: str) -> bool:
+    def is_engine_starting(self, variant_id: str) -> bool:
         """
         Check if an engine is currently being started
 
         Args:
-            engine_name: Engine to check
+            variant_id: Engine variant to check (e.g., 'xtts:local')
 
         Returns:
             True if engine is in the process of starting, False otherwise
         """
-        return engine_name in self._starting_engines
+        return variant_id in self._starting_engines
 
-    def is_engine_stopping(self, engine_name: str) -> bool:
+    def is_engine_stopping(self, variant_id: str) -> bool:
         """
         Check if an engine is currently being stopped
 
         Args:
-            engine_name: Engine to check
+            variant_id: Engine variant to check (e.g., 'xtts:local')
 
         Returns:
             True if engine is in the process of stopping, False otherwise
         """
-        return engine_name in self._stopping_engines
+        return variant_id in self._stopping_engines
 
     def get_running_engines(self) -> List[str]:
         """
-        Get list of currently running engine names
+        Get list of currently running engine variant IDs
 
         Returns:
-            List of engine names (e.g., ['xtts', 'chatterbox'])
+            List of variant IDs (e.g., ['xtts:local', 'chatterbox:docker:local'])
         """
-        return list(self.engine_processes.keys())
+        # Collect from both manager endpoints and runner endpoints (for discovered containers)
+        running = set(self.engine_endpoints.keys())
+
+        # Also check runners for discovered containers not yet in engine_endpoints
+        for runner in self.runner_registry.runners.values():
+            for variant_id in list(runner.endpoints.keys()):
+                if runner.is_running(variant_id):
+                    running.add(variant_id)
+
+        return list(running)
+
+    # ========== Variant ID Methods ==========
+
+    def get_engine_by_variant_id(self, variant_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get engine metadata by variant_id.
+
+        Returns metadata from database (Single Source of Truth).
+
+        Args:
+            variant_id: Full variant identifier
+
+        Returns:
+            Engine metadata dict or None
+        """
+        engine_name, runner_id = parse_variant_id(variant_id)
+
+        # Get metadata from DB (Single Source of Truth)
+        metadata = self.get_engine_metadata(variant_id)
+        if metadata:
+            # Add variant-specific fields
+            result = metadata.copy()
+            result['variant_id'] = variant_id
+            result['base_engine_name'] = engine_name
+            result['runner_id'] = runner_id
+            result['source'] = 'docker' if 'docker' in runner_id else 'local'
+            return result
+
+        return None
+
+    def get_all_variants(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all engine variants with variant metadata.
+
+        Returns dictionary of variant_id -> metadata from database.
+
+        Returns:
+            Dictionary of variant_id -> variant metadata
+        """
+        variants = {}
+
+        try:
+            from db.database import get_db_connection_simple
+            from db.engine_repository import EngineRepository
+
+            conn = get_db_connection_simple()
+            engine_repo = EngineRepository(conn)
+
+            # Get all engines of this type from DB
+            all_engines = engine_repo.get_by_type(self.engine_type)
+            conn.close()
+
+            for engine_data in all_engines:
+                variant_id = engine_data.get('variant_id')
+                if not variant_id:
+                    continue
+
+                engine_name, runner_id = parse_variant_id(variant_id)
+
+                variant_metadata = {
+                    'name': engine_data.get('base_engine_name'),
+                    'display_name': engine_data.get('display_name'),
+                    'variant_id': variant_id,
+                    'base_engine_name': engine_name,
+                    'runner_id': runner_id,
+                    'runner_type': 'docker' if 'docker' in runner_id else 'subprocess',
+                    'source': 'docker' if 'docker' in runner_id else 'local',
+                    'is_installed': engine_data.get('is_installed', False),
+                    'enabled': engine_data.get('enabled', False),
+                }
+
+                variants[variant_id] = variant_metadata
+
+        except Exception as e:
+            logger.error(f"Failed to get all variants: {e}")
+
+        return variants
+
+    async def start_by_variant(self, variant_id: str, config: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Start an engine by variant_id.
+
+        Convenience wrapper around ensure_engine_ready that passes variant_id directly.
+        The runner is determined from the variant_id (e.g., 'xtts:docker:local' uses docker:local runner).
+
+        Args:
+            variant_id: Variant identifier (e.g., 'xtts:local', 'xtts:docker:local')
+            config: Optional configuration dictionary with 'model_name' key
+        """
+        # Extract model_name from config if provided
+        model_name = config.get("model_name") if config else None
+
+        # Pass variant_id directly - ensure_engine_ready handles runner selection
+        await self.ensure_engine_ready(variant_id, model_name)
+
+    async def stop_by_variant(self, variant_id: str) -> None:
+        """
+        Stop an engine by variant_id.
+
+        Args:
+            variant_id: Variant identifier (e.g., 'xtts:local', 'xtts:docker:local')
+        """
+        # Pass variant_id directly - stop_engine_server handles runner selection
+        await self.stop_engine_server(variant_id)
 
     async def cleanup(self):
         """
@@ -1135,7 +1680,7 @@ class BaseEngineManager(ABC):
 
     # ========== Auto-Stop / Activity Tracking ==========
 
-    def record_activity(self, engine_name: str):
+    def record_activity(self, variant_id: str):
         """
         Record activity timestamp for engine
 
@@ -1143,52 +1688,46 @@ class BaseEngineManager(ABC):
         to reset the inactivity timer.
 
         Args:
-            engine_name: Engine identifier
+            variant_id: Engine variant identifier (e.g., 'xtts:local')
         """
-        self._last_activity[engine_name] = datetime.now(timezone.utc)
-        logger.debug(f"Activity recorded for {engine_name} at {datetime.now(timezone.utc).isoformat()}")
+        self._last_activity[variant_id] = datetime.now(timezone.utc)
+        logger.debug(f"Activity recorded for {variant_id} at {datetime.now(timezone.utc).isoformat()}")
 
-    def set_exempt_from_auto_stop(self, engine_name: str):
+    def set_exempt_from_auto_stop(self, variant_id: str):
         """
         Mark engine as exempt from auto-stop
 
         Exempt engines (e.g., default TTS engine) stay running indefinitely.
 
         Args:
-            engine_name: Engine identifier
+            variant_id: Engine variant identifier (e.g., 'xtts:local')
         """
-        self._exempt_from_auto_stop.add(engine_name)
-        logger.info(f"Engine {engine_name} marked as exempt from auto-stop (will stay warm)")
+        self._exempt_from_auto_stop.add(variant_id)
+        logger.info(f"Engine {variant_id} marked as exempt from auto-stop (will stay warm)")
 
-    def get_seconds_until_auto_stop(self, engine_name: str) -> Optional[int]:
+    def get_seconds_until_auto_stop(self, variant_id: str) -> Optional[int]:
         """
         Get seconds remaining until engine auto-stops due to inactivity
 
         Args:
-            engine_name: Engine identifier
+            variant_id: Engine variant identifier (e.g., 'xtts:local')
 
         Returns:
             Seconds until auto-stop, or None if:
             - Engine is not running
             - Engine is exempt from auto-stop
-            - Engine is in discovery mode (will be stopped immediately)
             - No activity recorded yet
         """
-        # Not running or exempt
-        if engine_name not in self.engine_processes or engine_name in self._exempt_from_auto_stop:
-            return None
-
-        # Discovery mode engines don't show countdown - they're stopped immediately
-        # after discovery completes (Phase 2 in startup), not via auto-stop timer
-        if engine_name in self._discovery_mode_engines:
+        # Not running or exempt (use engine_endpoints for all engine types)
+        if variant_id not in self.engine_endpoints or variant_id in self._exempt_from_auto_stop:
             return None
 
         # No activity recorded
-        if engine_name not in self._last_activity:
+        if variant_id not in self._last_activity:
             return None
 
         # Calculate remaining time
-        last_active = self._last_activity[engine_name]
+        last_active = self._last_activity[variant_id]
         elapsed = (datetime.now(timezone.utc) - last_active).total_seconds()
         remaining = self._inactivity_timeout - elapsed
 
@@ -1199,109 +1738,108 @@ class BaseEngineManager(ABC):
         Stop engines that have been idle for too long
 
         Called periodically by background task (every 60s).
-        Stops engines idle for > 5 minutes (except exempt engines).
+        Stops engines idle for > inactivity_timeout (except exempt engines).
+
+        Works for both subprocess and Docker engines by using the runner-based
+        stop mechanism via stop_engine_server().
         """
         now = datetime.now(timezone.utc)
 
-        for engine_name in list(self.engine_processes.keys()):
-            # Skip exempt engines (e.g., default TTS)
-            if engine_name in self._exempt_from_auto_stop:
+        # Iterate over engine_endpoints (contains ALL running engines: subprocess + Docker)
+        for variant_id in list(self.engine_endpoints.keys()):
+            # Skip exempt engines (e.g., keepRunning=true)
+            if variant_id in self._exempt_from_auto_stop:
                 continue
 
             # Skip if no activity recorded (just started)
-            if engine_name not in self._last_activity:
+            if variant_id not in self._last_activity:
                 continue
 
-            # Check idle time - use shorter timeout for discovery mode engines
-            last_active = self._last_activity[engine_name]
+            # Check idle time
+            last_active = self._last_activity[variant_id]
             idle_seconds = (now - last_active).total_seconds()
 
-            # Discovery mode engines have shorter auto-stop (30s vs 5min)
-            timeout = self._discovery_timeout if engine_name in self._discovery_mode_engines else self._inactivity_timeout
-
-            if idle_seconds > timeout:
-                mode = "discovery" if engine_name in self._discovery_mode_engines else "work"
+            if idle_seconds > self._inactivity_timeout:
                 logger.info(
-                    f"Stopping {engine_name} due to inactivity "
-                    f"({int(idle_seconds)}s > {timeout}s, mode={mode})"
+                    f"Stopping {variant_id} due to inactivity "
+                    f"({int(idle_seconds)}s > {self._inactivity_timeout}s)"
                 )
 
+                # Parse variant_id to get base engine name for SSE events
+                base_engine_name, _ = parse_variant_id(variant_id)
+
                 # Mark engine as stopping
-                self._stopping_engines.add(engine_name)
-                logger.debug(f"Engine {engine_name} marked as 'stopping' (inactivity)")
+                self._stopping_engines.add(variant_id)
+                logger.debug(f"Engine {variant_id} marked as 'stopping' (inactivity)")
 
                 # Emit SSE event for immediate UI feedback
                 try:
-                    asyncio.create_task(emit_engine_stopping(self.engine_type, engine_name, "auto_stop"))
+                    asyncio.create_task(emit_engine_stopping(self.engine_type, base_engine_name, "auto_stop", variant_id=variant_id))
                 except Exception as e:
                     logger.warning(f"Failed to emit engine.stopping event: {e}")
 
                 try:
-                    # Stop engine (this will emit "manual" reason, but we override below)
-                    # Note: We need to stop the engine first to clean up the process
-                    port = self.engine_ports.get(engine_name)
-
-                    # Try graceful shutdown
+                    # Try graceful shutdown via HTTP /shutdown endpoint
                     try:
-                        if port:
+                        base_url = self.get_engine_base_url(variant_id)
+                        if base_url:
                             from config import ENGINE_HEALTH_CHECK_TIMEOUT
-                            url = f"http://127.0.0.1:{port}/shutdown"
+                            url = f"{base_url}/shutdown"
                             await self.http_client.post(url, timeout=float(ENGINE_HEALTH_CHECK_TIMEOUT))
-                            logger.debug(f"Sent shutdown request to {engine_name}")
+                            logger.debug(f"Sent shutdown request to {variant_id}")
                     except Exception as e:
-                        logger.warning(f"Graceful shutdown failed: {e}")
+                        logger.debug(f"Graceful shutdown request failed: {e}")
 
-                    # Wait for process to exit (run in thread to avoid blocking event loop)
-                    from config import ENGINE_SHUTDOWN_TIMEOUT
-                    process = self.engine_processes[engine_name]
-                    try:
-                        await asyncio.wait_for(
-                            asyncio.to_thread(process.wait),
-                            timeout=ENGINE_SHUTDOWN_TIMEOUT
-                        )
-                        logger.info(f"{engine_name} server stopped gracefully (inactivity)")
-                    except asyncio.TimeoutError:
-                        logger.warning(f"{engine_name} server timeout, force killing...")
-                        process.kill()
-                        await asyncio.to_thread(process.wait)
-                        logger.info(f"{engine_name} server force-killed (inactivity)")
+                    # Stop via runner (handles both subprocess and Docker)
+                    runner = self.runner_registry.get_runner_by_variant(variant_id)
+                    if runner.is_running(variant_id):
+                        await runner.stop(variant_id)
+                        logger.info(f"{variant_id} stopped via runner (inactivity)")
 
-                    # Cleanup
-                    del self.engine_processes[engine_name]
-                    if engine_name in self.engine_ports:
-                        port = self.engine_ports[engine_name]
-                        del self.engine_ports[engine_name]
+                    # Cleanup endpoint
+                    self.engine_endpoints.pop(variant_id, None)
+
+                    # Cleanup port
+                    if variant_id in self.engine_ports:
+                        port = self.engine_ports[variant_id]
+                        del self.engine_ports[variant_id]
                         # Release port from global registry
                         global _global_used_ports
                         _global_used_ports.discard(port)
-                        logger.debug(f"Port {port} released from {engine_name} (inactivity)")
+                        logger.debug(f"Port {port} released from {variant_id} (inactivity)")
 
-                    if self.active_engine == engine_name:
+                    if self.active_engine == variant_id:
                         self.active_engine = None
 
                     # Remove from activity tracking
-                    del self._last_activity[engine_name]
+                    if variant_id in self._last_activity:
+                        del self._last_activity[variant_id]
 
                     # Emit engine stopped event with "inactivity" reason
-                    try:
-                        await emit_engine_stopped(self.engine_type, engine_name, reason="inactivity")
-                    except Exception as e:
-                        logger.warning(f"Failed to broadcast engine stop event: {e}")
+                    await safe_broadcast(
+                        emit_engine_stopped,
+                        self.engine_type,
+                        base_engine_name,
+                        reason="inactivity",
+                        variant_id=variant_id,
+                        event_description="engine.stopped"
+                    )
 
                 except Exception as e:
-                    logger.error(f"Failed to auto-stop {engine_name}: {e}")
+                    logger.error(f"Failed to auto-stop {variant_id}: {e}")
                 finally:
                     # Always remove from stopping state
-                    self._stopping_engines.discard(engine_name)
-                    logger.debug(f"Engine {engine_name} removed from 'stopping' state (inactivity)")
+                    self._stopping_engines.discard(variant_id)
+                    logger.debug(f"Engine {variant_id} removed from 'stopping' state (inactivity)")
 
     def __repr__(self) -> str:
         """String representation for debugging"""
-        running = ', '.join(self.engine_processes.keys()) or 'none'
+        running = ', '.join(self.engine_endpoints.keys()) or 'none'
+        installed_count = len(self.list_installed_engines())
         return (
             f"<{self.__class__.__name__} "
             f"type={self.engine_type} "
-            f"available={len(self._engine_metadata)} "
-            f"running={len(self.engine_processes)} ({running}) "
+            f"installed={installed_count} "
+            f"running={len(self.engine_endpoints)} ({running}) "
             f"active={self.active_engine}>"
         )

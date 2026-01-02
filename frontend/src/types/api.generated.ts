@@ -49,6 +49,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/shutdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Shutdown Backend
+         * @description Gracefully shutdown the backend server.
+         *
+         *     This endpoint:
+         *     1. Stops all running engine containers
+         *     2. Triggers graceful shutdown of the backend process
+         *
+         *     The response is sent before the actual shutdown begins.
+         */
+        post: operations["shutdown_backend_shutdown_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tts/generate-segment/{segment_id}": {
         parameters: {
             query?: never;
@@ -524,6 +550,182 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/engines/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Docker Image Catalog
+         * @description Get available Docker images from catalog.
+         *
+         *     Returns all known Docker images with their metadata for UI display.
+         *
+         *     Returns:
+         *         DockerCatalogResponse with available images
+         */
+        get: operations["get_docker_image_catalog_api_engines_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engines/catalog/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync Online Catalog
+         * @description Sync catalog from online source (GitHub Release).
+         *
+         *     Fetches catalog.yaml from audiobook-maker-engines releases and merges
+         *     with local database:
+         *     - source='builtin' or 'online': Replaced with online data
+         *     - source='custom': Kept unchanged
+         *
+         *     Returns:
+         *         CatalogSyncResponse with sync statistics
+         */
+        post: operations["sync_online_catalog_api_engines_catalog_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engines/docker/{variant_id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install Docker Image
+         * @description Install (pull) a Docker image for an engine variant.
+         *
+         *     Args:
+         *         variant_id: Variant identifier (e.g., 'xtts:docker:local')
+         *         tag: Docker image tag to install (e.g., 'latest', 'cpu'). If not provided, uses default_tag from catalog.
+         *         force: If True, pull image even if already installed (for updates).
+         *
+         *     Returns:
+         *         DockerInstallResponse with installation status
+         *
+         *     Raises:
+         *         400: If variant_id format is invalid
+         *         404: If engine not found in catalog
+         *         409: If image already installed (unless force=True)
+         */
+        post: operations["install_docker_image_api_engines_docker__variant_id__install_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engines/docker/{variant_id}/pull": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Cancel Docker Pull
+         * @description Cancel an active Docker image pull.
+         *
+         *     Args:
+         *         variant_id: Variant identifier (e.g., 'xtts:docker:local')
+         *
+         *     Returns:
+         *         MessageResponse indicating cancellation was requested
+         *
+         *     Raises:
+         *         404: If no active pull found for variant
+         */
+        delete: operations["cancel_docker_pull_api_engines_docker__variant_id__pull_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engines/docker/{variant_id}/uninstall": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Uninstall Docker Image
+         * @description Uninstall (remove) a Docker image for an engine variant.
+         *
+         *     Args:
+         *         variant_id: Variant identifier (e.g., 'xtts:docker:local')
+         *
+         *     Returns:
+         *         DockerInstallResponse with uninstallation status
+         *
+         *     Raises:
+         *         404: If variant not found or not installed
+         */
+        delete: operations["uninstall_docker_image_api_engines_docker__variant_id__uninstall_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engines/docker/{variant_id}/check-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Check Docker Image Update
+         * @description Check if a Docker image update is available.
+         *
+         *     Compares the local image digest with the registry without pulling.
+         *     This is a lightweight operation (~2-5 KB network traffic).
+         *
+         *     Args:
+         *         variant_id: Variant identifier (e.g., 'xtts:docker:local')
+         *
+         *     Returns:
+         *         ImageUpdateCheckResponse with update availability info
+         *
+         *     Raises:
+         *         404: If variant not found or not a Docker variant
+         */
+        get: operations["check_docker_image_update_api_engines_docker__variant_id__check_update_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/engines/{engine_type}/{engine_name}/enable": {
         parameters: {
             query?: never;
@@ -535,11 +737,11 @@ export interface paths {
         put?: never;
         /**
          * Enable Engine
-         * @description Enable an engine
+         * @description Enable an engine variant
          *
          *     Args:
          *         engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
-         *         engine_name: Engine identifier
+         *         engine_name: Variant ID (e.g., 'xtts:local', 'xtts:docker:local')
          *
          *     Returns:
          *         Success message
@@ -562,19 +764,20 @@ export interface paths {
         put?: never;
         /**
          * Disable Engine
-         * @description Disable an engine
+         * @description Disable an engine variant
          *
-         *     Validates that default TTS engine cannot be disabled.
+         *     Validates that default engine cannot be disabled.
+         *     If the engine is running, it will be stopped automatically.
          *
          *     Args:
          *         engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
-         *         engine_name: Engine identifier
+         *         engine_name: Variant ID (e.g., 'xtts:local', 'xtts:docker:local')
          *
          *     Returns:
          *         Success message
          *
          *     Raises:
-         *         400: If trying to disable default TTS engine
+         *         400: If trying to disable default engine
          */
         post: operations["disable_engine_api_engines__engine_type___engine_name__disable_post"];
         delete?: never;
@@ -598,7 +801,7 @@ export interface paths {
          *
          *     Args:
          *         engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
-         *         engine_name: Engine identifier
+         *         engine_name: Engine identifier or variant ID (e.g., 'xtts' or 'xtts:docker:local')
          *         request: Optional request body with model_name
          *
          *     Returns:
@@ -630,7 +833,7 @@ export interface paths {
          *
          *     Args:
          *         engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
-         *         engine_name: Engine identifier
+         *         engine_name: Engine identifier or variant ID (e.g., 'xtts' or 'xtts:docker:local')
          *
          *     Returns:
          *         Success message
@@ -659,9 +862,12 @@ export interface paths {
          * Set Default Engine
          * @description Set the default engine for a given type
          *
+         *     For single-engine types (STT, Audio, Text), this will automatically
+         *     disable and stop any previously running engine of the same type.
+         *
          *     Args:
          *         engine_type: Type of engine ('tts', 'stt', 'text')
-         *         engine_name: Engine identifier to set as default
+         *         engine_name: Engine identifier or variant_id (e.g., 'xtts' or 'xtts:local')
          *
          *     Returns:
          *         Success message
@@ -691,6 +897,7 @@ export interface paths {
          * @description Clear the default engine for a given type (set to none)
          *
          *     Note: TTS must always have a default engine, so this will fail for TTS.
+         *     All running engines of this type will be stopped.
          *
          *     Args:
          *         engine_type: Type of engine ('stt', 'text', 'audio')
@@ -718,13 +925,13 @@ export interface paths {
         put?: never;
         /**
          * Set Engine Keep Running
-         * @description Set keep-running flag for an engine
+         * @description Set keep-running flag for an engine variant
          *
          *     Engines with keepRunning=true will not be auto-stopped after inactivity.
          *
          *     Args:
          *         engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
-         *         engine_name: Engine identifier
+         *         engine_name: Variant ID (e.g., 'xtts:local', 'xtts:docker:local')
          *         request: Request body with keepRunning boolean
          *
          *     Returns:
@@ -735,6 +942,141 @@ export interface paths {
          *         500: If operation failed
          */
         post: operations["set_engine_keep_running_api_engines__engine_type___engine_name__keep_running_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engines/{engine_type}/{engine_name}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Engine Settings
+         * @description Update settings for an engine variant (model, language, parameters)
+         *
+         *     Updates are applied directly to the engines table (Single Source of Truth).
+         *     Only provided fields are updated; omitted fields remain unchanged.
+         *
+         *     Args:
+         *         engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
+         *         engine_name: Variant ID (e.g., 'xtts:local')
+         *         request: Settings to update
+         *
+         *     Returns:
+         *         Success message
+         *
+         *     Raises:
+         *         400: If engine type is invalid or engine not found
+         *         500: If operation failed
+         */
+        put: operations["update_engine_settings_api_engines__engine_type___engine_name__settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engines/docker/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discover Docker Engine
+         * @description Discover a custom Docker engine by probing its /info endpoint.
+         *
+         *     This endpoint attempts to pull and start a Docker container,
+         *     then queries its /info endpoint to retrieve engine metadata.
+         *
+         *     Args:
+         *         request: Docker image details (image name and tag)
+         *
+         *     Returns:
+         *         DockerDiscoverResponse with engine metadata or error
+         *
+         *     Raises:
+         *         500: If discovery failed (Docker unavailable, image pull failed, etc.)
+         */
+        post: operations["discover_docker_engine_api_engines_docker_discover_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engines/docker/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register Docker Engine
+         * @description Register a custom Docker engine in the engines table.
+         *
+         *     After discovering an engine via /docker/discover, the user can confirm
+         *     or edit the metadata and register it permanently. The engine will be
+         *     marked with source='custom' to prevent overwriting by catalog updates.
+         *
+         *     Args:
+         *         request: Registration details (image, tag, display name, engine type)
+         *
+         *     Returns:
+         *         DockerRegisterResponse with variant_id or error
+         *
+         *     Raises:
+         *         400: If engine with same variant_id already exists
+         *         500: If registration failed
+         */
+        post: operations["register_docker_engine_api_engines_docker_register_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engines/{variant_id}/discover-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discover Models
+         * @description Manually trigger model discovery for an engine variant.
+         *
+         *     Starts the engine if not running, queries /models endpoint,
+         *     stores results in engine_models table, and optionally stops the engine.
+         *
+         *     Args:
+         *         variant_id: Variant identifier (e.g., 'xtts:local', 'xtts:docker:local')
+         *
+         *     Returns:
+         *         DiscoverModelsResponse with discovered models
+         *
+         *     Raises:
+         *         400: If variant_id format is invalid
+         *         404: If engine not found
+         *         500: If discovery failed
+         */
+        post: operations["discover_models_api_engines__variant_id__discover_models_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1090,32 +1432,6 @@ export interface paths {
         patch: operations["toggle_freeze_segment_api_segments__segment_id__freeze_patch"];
         trace?: never;
     };
-    "/api/text/segment": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Segment Text
-         * @description Segment text using the configured text processing engine.
-         *
-         *     Args:
-         *         request: Segmentation parameters
-         *
-         *     Returns:
-         *         List of text segments
-         */
-        post: operations["segment_text_api_text_segment_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/audio/export": {
         parameters: {
             query?: never;
@@ -1410,7 +1726,7 @@ export interface paths {
          *     Combines user preference with engine constraints to determine the actual limit to use.
          *
          *     Args:
-         *         engine: Engine name
+         *         engine: Engine name or variant_id (e.g., 'xtts' or 'xtts:local')
          *
          *     Returns:
          *         {
@@ -1443,7 +1759,7 @@ export interface paths {
          *
          *     Args:
          *         engine_type: Type of engine ('tts', 'stt', 'text', 'audio')
-         *         engine: Engine name
+         *         engine: Engine name or variant_id (e.g., 'xtts' or 'xtts:local')
          *
          *     Returns:
          *         Parameter schema dictionary
@@ -1472,7 +1788,7 @@ export interface paths {
          *     DEPRECATED: Use /engine-schema/{engine_type}/{engine} instead.
          *
          *     Args:
-         *         engine: Engine name
+         *         engine: Engine name or variant_id (e.g., 'xtts' or 'xtts:local')
          *
          *     Returns:
          *         Parameter schema dictionary
@@ -2144,6 +2460,232 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/engine-hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Hosts
+         * @description Get all configured engine hosts.
+         *
+         *     Returns all hosts including local subprocess, local Docker, and remote Docker.
+         */
+        get: operations["list_hosts_api_engine_hosts_get"];
+        put?: never;
+        /**
+         * Create Host
+         * @description Create a new remote Docker host.
+         *
+         *     Only remote Docker hosts can be created via API.
+         *     Local subprocess and docker:local hosts are created automatically.
+         *
+         *     If host_id is provided (from /prepare endpoint), uses that ID and updates
+         *     the SSH config to use the managed key.
+         */
+        post: operations["create_host_api_engine_hosts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engine-hosts/{host_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Host
+         * @description Get a specific engine host.
+         */
+        get: operations["get_host_api_engine_hosts__host_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Host
+         * @description Delete an engine host.
+         *
+         *     Cannot delete the local subprocess host or hosts with installed engines.
+         */
+        delete: operations["delete_host_api_engine_hosts__host_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engine-hosts/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prepare Host
+         * @description Prepare a new remote Docker host by generating an SSH key pair.
+         *
+         *     This endpoint generates a dedicated SSH key for the host and returns
+         *     the install command to add the key to the remote host's authorized_keys.
+         *
+         *     The key is restricted to Docker operations only for security.
+         *
+         *     Returns:
+         *         PrepareHostResponse with host_id, public key, and install command
+         */
+        post: operations["prepare_host_api_engine_hosts_prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engine-hosts/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Host
+         * @description Test connection to a prepared remote Docker host.
+         *
+         *     Uses Docker SDK with paramiko for SSH connection, ensuring
+         *     cross-platform compatibility (Windows + Linux) and consistency
+         *     with the actual Docker connection method.
+         *
+         *     Verifies:
+         *     1. SSH connection with generated key
+         *     2. Docker daemon accessibility
+         *     3. GPU capability (nvidia runtime)
+         *
+         *     Returns:
+         *         TestHostResponse with connection details and GPU status
+         */
+        post: operations["test_host_api_engine_hosts_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engine-hosts/prepare/{host_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Cleanup Prepared Host
+         * @description Clean up a prepared host that was not saved.
+         *
+         *     Deletes the SSH key pair generated during prepare.
+         *     Called when user cancels the add host dialog.
+         */
+        delete: operations["cleanup_prepared_host_api_engine_hosts_prepare__host_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engine-hosts/ensure-docker-local": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ensure Docker Local
+         * @description Ensure docker:local host exists.
+         *
+         *     Creates the docker:local host entry if it doesn't exist.
+         *     Used when first enabling Docker support.
+         */
+        post: operations["ensure_docker_local_api_engine_hosts_ensure_docker_local_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engine-hosts/{host_id}/volumes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Docker Volumes
+         * @description Get Docker volume configuration for a host.
+         *
+         *     Returns the configured mount paths for samples and models directories.
+         *     Only applicable to Docker hosts (docker:local, docker:remote).
+         */
+        get: operations["get_docker_volumes_api_engine_hosts__host_id__volumes_get"];
+        /**
+         * Set Docker Volumes
+         * @description Set Docker volume configuration for a host.
+         *
+         *     Configures the mount paths for samples and models directories.
+         *     Only applicable to Docker hosts (docker:local, docker:remote).
+         *
+         *     For docker:local, paths are validated to exist on the host filesystem.
+         *     For remote hosts, no validation is performed.
+         *
+         *     Args:
+         *         samples_path: Host path for speaker samples (null = use upload mechanism)
+         *         models_path: Host path for external models (null = no external models)
+         */
+        put: operations["set_docker_volumes_api_engine_hosts__host_id__volumes_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/engine-hosts/{host_id}/public-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Host Public Key
+         * @description Get the SSH public key for a remote Docker host.
+         *
+         *     Returns the public key that was generated for this host, along with
+         *     the install command to add it to the remote host's authorized_keys.
+         *
+         *     Only applicable to remote Docker hosts (docker:remote).
+         */
+        get: operations["get_host_public_key_api_engine_hosts__host_id__public_key_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2195,6 +2737,13 @@ export interface components {
              * @description At least one enabled STT engine exists
              */
             hasSttEngine: boolean;
+            /**
+             * Variantgroups
+             * @description Engines grouped by runner type: {'subprocess': [...], 'docker:local': [...]}
+             */
+            variantGroups?: {
+                [key: string]: components["schemas"]["EngineStatusInfo"][];
+            } | null;
         };
         /**
          * AllSettingsResponse
@@ -2210,9 +2759,9 @@ export interface components {
             };
             /**
              * Tts
-             * @description TTS-related settings
+             * @description TTS-related settings (legacy, now in engines table)
              */
-            tts: {
+            tts?: {
                 [key: string]: unknown;
             };
             /**
@@ -2231,9 +2780,9 @@ export interface components {
             };
             /**
              * Stt
-             * @description STT (Speech-to-Text) settings
+             * @description STT settings (legacy, now in engines table)
              */
-            stt: {
+            stt?: {
                 [key: string]: unknown;
             };
             /**
@@ -2399,6 +2948,34 @@ export interface components {
             /**
              * Message
              * @description Human-readable status message
+             */
+            message: string;
+        };
+        /**
+         * CatalogSyncResponse
+         * @description Response from catalog sync operation
+         */
+        CatalogSyncResponse: {
+            /** Success */
+            success: boolean;
+            /**
+             * Added
+             * @default 0
+             */
+            added: number;
+            /**
+             * Updated
+             * @default 0
+             */
+            updated: number;
+            /**
+             * Skipped
+             * @default 0
+             */
+            skipped: number;
+            /**
+             * Message
+             * @default
              */
             message: string;
         };
@@ -2590,6 +3167,32 @@ export interface components {
             deleted: number;
         };
         /**
+         * CreateEngineHostRequest
+         * @description Request to create an engine host.
+         */
+        CreateEngineHostRequest: {
+            /**
+             * Name
+             * @description Human-readable name
+             */
+            name: string;
+            /**
+             * Sshurl
+             * @description SSH URL (e.g., ssh://user@192.168.1.100)
+             */
+            sshUrl: string;
+            /**
+             * Hostid
+             * @description Pre-generated host ID from /prepare endpoint
+             */
+            hostId?: string | null;
+            /**
+             * Hasgpu
+             * @description Whether host has GPU capability (from test)
+             */
+            hasGpu?: boolean | null;
+        };
+        /**
          * DeleteJobResponse
          * @description Response for single job deletion operations.
          */
@@ -2628,6 +3231,347 @@ export interface components {
             message: string;
         };
         /**
+         * DiscoverModelsResponse
+         * @description Response for model discovery.
+         */
+        DiscoverModelsResponse: {
+            /** Success */
+            success: boolean;
+            /** Variantid */
+            variantId: string;
+            /** Models */
+            models: string[];
+            /** Message */
+            message: string;
+        };
+        /**
+         * DockerCatalogResponse
+         * @description Response for GET /api/engines/catalog.
+         */
+        DockerCatalogResponse: {
+            /**
+             * Success
+             * @description Whether operation succeeded
+             */
+            success: boolean;
+            /**
+             * Images
+             * @description Available Docker images
+             */
+            images?: components["schemas"]["DockerImageInfo"][];
+        };
+        /**
+         * DockerDiscoverRequest
+         * @description Request to discover a custom Docker engine
+         */
+        DockerDiscoverRequest: {
+            /** Dockerimage */
+            dockerImage: string;
+            /**
+             * Dockertag
+             * @default latest
+             */
+            dockerTag: string;
+        };
+        /**
+         * DockerDiscoverResponse
+         * @description Response from Docker engine discovery
+         */
+        DockerDiscoverResponse: {
+            /** Success */
+            success: boolean;
+            /** Engineinfo */
+            engineInfo?: {
+                [key: string]: unknown;
+            } | null;
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * DockerImageInfo
+         * @description Docker image information from catalog.
+         */
+        DockerImageInfo: {
+            /**
+             * Enginename
+             * @description Base engine name (e.g., 'xtts')
+             */
+            engineName: string;
+            /**
+             * Image
+             * @description Docker image name
+             */
+            image: string;
+            /**
+             * Enginetype
+             * @description Engine type: 'tts', 'stt', 'text', 'audio'
+             */
+            engineType: string;
+            /**
+             * Displayname
+             * @description Human-readable name
+             */
+            displayName: string;
+            /**
+             * Description
+             * @description Engine description
+             * @default
+             */
+            description: string;
+            /**
+             * Requiresgpu
+             * @description Whether GPU is required (any variant)
+             * @default false
+             */
+            requiresGpu: boolean;
+            /**
+             * Tags
+             * @description Available image tags
+             */
+            tags?: string[];
+            /**
+             * Defaulttag
+             * @description Default tag to use
+             * @default latest
+             */
+            defaultTag: string;
+            /**
+             * Supportedlanguages
+             * @description Supported ISO language codes
+             */
+            supportedLanguages?: string[];
+            /**
+             * Models
+             * @description Available models
+             */
+            models?: string[];
+            /**
+             * Variants
+             * @description Variant-specific metadata (tag + GPU requirement)
+             */
+            variants?: components["schemas"]["DockerImageVariant"][];
+        };
+        /**
+         * DockerImageVariant
+         * @description Information about a specific Docker image variant (tag).
+         */
+        DockerImageVariant: {
+            /**
+             * Tag
+             * @description Docker image tag (e.g., 'latest', 'cpu')
+             */
+            tag: string;
+            /**
+             * Requiresgpu
+             * @description Whether this variant requires GPU
+             * @default false
+             */
+            requiresGpu: boolean;
+        };
+        /**
+         * DockerInstallResponse
+         * @description Response for Docker image install/uninstall.
+         */
+        DockerInstallResponse: {
+            /**
+             * Success
+             * @description Whether operation succeeded
+             */
+            success: boolean;
+            /**
+             * Variantid
+             * @description Variant ID that was modified
+             */
+            variantId: string;
+            /**
+             * Message
+             * @description Status message
+             */
+            message: string;
+            /**
+             * Isinstalled
+             * @description Current installation status
+             */
+            isInstalled: boolean;
+        };
+        /**
+         * DockerRegisterRequest
+         * @description Request to register a custom Docker engine
+         */
+        DockerRegisterRequest: {
+            /** Dockerimage */
+            dockerImage: string;
+            /** Dockertag */
+            dockerTag: string;
+            /** Displayname */
+            displayName: string;
+            /** Enginetype */
+            engineType: string;
+            /** Supportedlanguages */
+            supportedLanguages?: string[] | null;
+            /**
+             * Requiresgpu
+             * @default false
+             */
+            requiresGpu: boolean | null;
+            /** Models */
+            models?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            } | null;
+            /** Constraints */
+            constraints?: {
+                [key: string]: unknown;
+            } | null;
+            /** Capabilities */
+            capabilities?: {
+                [key: string]: unknown;
+            } | null;
+            /** Config */
+            config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Defaultlanguage */
+            defaultLanguage?: string | null;
+        };
+        /**
+         * DockerRegisterResponse
+         * @description Response from Docker engine registration
+         */
+        DockerRegisterResponse: {
+            /** Success */
+            success: boolean;
+            /** Variantid */
+            variantId?: string | null;
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * DockerVolumesRequest
+         * @description Request to configure Docker volume mounts.
+         */
+        DockerVolumesRequest: {
+            /**
+             * Samplespath
+             * @description Host path for speaker samples (null = use upload)
+             */
+            samplesPath?: string | null;
+            /**
+             * Modelspath
+             * @description Host path for external models (null = none)
+             */
+            modelsPath?: string | null;
+        };
+        /**
+         * DockerVolumesResponse
+         * @description Response for Docker volume configuration.
+         */
+        DockerVolumesResponse: {
+            /**
+             * Success
+             * @description Whether operation succeeded
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Hostid
+             * @description Host identifier
+             */
+            hostId: string;
+            /**
+             * Samplespath
+             * @description Host path for speaker samples
+             */
+            samplesPath?: string | null;
+            /**
+             * Modelspath
+             * @description Host path for external models
+             */
+            modelsPath?: string | null;
+            /**
+             * Validationerror
+             * @description Path validation error if any
+             */
+            validationError?: string | null;
+        };
+        /**
+         * EngineHostResponse
+         * @description Response model for an engine host.
+         */
+        EngineHostResponse: {
+            /**
+             * Hostid
+             * @description Unique host identifier
+             */
+            hostId: string;
+            /**
+             * Hosttype
+             * @description Host type: 'subprocess', 'docker:local', 'docker:remote'
+             */
+            hostType: string;
+            /**
+             * Displayname
+             * @description Human-readable name
+             */
+            displayName: string;
+            /**
+             * Sshurl
+             * @description SSH URL for remote Docker hosts
+             */
+            sshUrl?: string | null;
+            /**
+             * Isavailable
+             * @description Whether host is available
+             * @default true
+             */
+            isAvailable: boolean;
+            /**
+             * Hasgpu
+             * @description Whether host has NVIDIA GPU runtime (null if not tested)
+             */
+            hasGpu?: boolean | null;
+            /**
+             * Lastcheckedat
+             * @description Last availability check timestamp
+             */
+            lastCheckedAt?: string | null;
+            /**
+             * Createdat
+             * @description Creation timestamp
+             */
+            createdAt: string;
+            /**
+             * Enginecount
+             * @description Number of engines on this host
+             * @default 0
+             */
+            engineCount: number;
+        };
+        /**
+         * EngineHostsListResponse
+         * @description Response for listing engine hosts.
+         */
+        EngineHostsListResponse: {
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Hosts
+             * @description List of hosts
+             */
+            hosts: components["schemas"]["EngineHostResponse"][];
+            /**
+             * Count
+             * @description Number of hosts
+             */
+            count: number;
+        };
+        /**
          * EngineSchemaResponse
          * @description Response for engine parameter schema.
          */
@@ -2639,6 +3583,20 @@ export interface components {
             parameters: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * EngineSettingsRequest
+         * @description Request model for updating engine settings (model, language, parameters).
+         */
+        EngineSettingsRequest: {
+            /** Defaultmodelname */
+            defaultModelName?: string | null;
+            /** Defaultlanguage */
+            defaultLanguage?: string | null;
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * EngineStartRequest
@@ -2664,10 +3622,10 @@ export interface components {
          */
         EngineStatusInfo: {
             /**
-             * Name
-             * @description Unique engine identifier
+             * Variantid
+             * @description Unique engine variant identifier (e.g., 'xtts:local', 'xtts:docker:local')
              */
-            name: string;
+            variantId: string;
             /**
              * Displayname
              * @description Human-readable display name
@@ -2699,6 +3657,12 @@ export interface components {
              * @default false
              */
             isDefault: boolean;
+            /**
+             * Ispulling
+             * @description True when Docker image pull is in progress
+             * @default false
+             */
+            isPulling: boolean;
             /**
              * Status
              * @description Status: 'disabled', 'stopped', 'starting', 'running', 'stopping', 'error'
@@ -2747,6 +3711,16 @@ export interface components {
              */
             device: string;
             /**
+             * Gpumemoryusedmb
+             * @description GPU VRAM used by this engine (MB)
+             */
+            gpuMemoryUsedMb?: number | null;
+            /**
+             * Gpumemorytotalmb
+             * @description GPU VRAM total (MB)
+             */
+            gpuMemoryTotalMb?: number | null;
+            /**
              * Availablemodels
              * @description List of available model names
              */
@@ -2758,9 +3732,61 @@ export interface components {
             loadedModel?: string | null;
             /**
              * Defaultmodelname
-             * @description Default model name from settings (per-engine)
+             * @description Default model name (from engine_models.is_default)
              */
             defaultModelName?: string | null;
+            /**
+             * Defaultlanguage
+             * @description Default language from settings (per-engine, for TTS)
+             */
+            defaultLanguage?: string | null;
+            /**
+             * Baseenginename
+             * @description Base engine name without runner (e.g., 'xtts')
+             */
+            baseEngineName?: string | null;
+            /**
+             * Runnerid
+             * @description Runner identifier (e.g., 'local', 'docker:local')
+             */
+            runnerId?: string | null;
+            /**
+             * Runnertype
+             * @description 'subprocess' | 'docker:local' | 'docker:remote'
+             */
+            runnerType?: string | null;
+            /**
+             * Runnerhost
+             * @description Host name for Docker runners
+             */
+            runnerHost?: string | null;
+            /**
+             * Source
+             * @description 'local' | 'docker'
+             */
+            source?: string | null;
+            /**
+             * Dockerimage
+             * @description Docker image name (for docker variants)
+             */
+            dockerImage?: string | null;
+            /**
+             * Dockertag
+             * @description Installed Docker image tag (e.g., 'latest', 'cpu')
+             */
+            dockerTag?: string | null;
+            /**
+             * Isinstalled
+             * @description Whether Docker image is installed
+             */
+            isInstalled?: boolean | null;
+            /**
+             * Parameters
+             * @description Engine-specific parameters
+             */
+            parameters?: {
+                [key: string]: unknown;
+            } | null;
         };
         /**
          * ExportProgressResponse
@@ -2966,6 +3992,77 @@ export interface components {
             hasSttEngine?: boolean | null;
         };
         /**
+         * HostPublicKeyResponse
+         * @description Response for host public key retrieval.
+         */
+        HostPublicKeyResponse: {
+            /**
+             * Success
+             * @description Whether key was found
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Hostid
+             * @description Host identifier
+             */
+            hostId: string;
+            /**
+             * Publickey
+             * @description Public key for the host
+             */
+            publicKey?: string | null;
+            /**
+             * Installcommand
+             * @description Shell command to install the key
+             */
+            installCommand?: string | null;
+        };
+        /**
+         * ImageUpdateCheckResponse
+         * @description Response for Docker image update check.
+         *
+         *     Compares local image digest with registry to detect available updates
+         *     without downloading the full image.
+         */
+        ImageUpdateCheckResponse: {
+            /**
+             * Success
+             * @description Whether the check completed successfully
+             */
+            success: boolean;
+            /**
+             * Variantid
+             * @description Engine variant ID that was checked
+             */
+            variantId: string;
+            /**
+             * Isinstalled
+             * @description Whether image exists locally
+             */
+            isInstalled: boolean;
+            /**
+             * Updateavailable
+             * @description True if update available, None if unknown/not installed
+             */
+            updateAvailable?: boolean | null;
+            /**
+             * Localdigest
+             * @description Local image digest (truncated)
+             */
+            localDigest?: string | null;
+            /**
+             * Remotedigest
+             * @description Remote registry digest (truncated)
+             */
+            remoteDigest?: string | null;
+            /**
+             * Error
+             * @description Error message if check failed
+             */
+            error?: string | null;
+        };
+        /**
          * ImportExecuteResponse
          * @description Response for import execution (POST /api/projects/import)
          */
@@ -3100,6 +4197,54 @@ export interface components {
             newChapterId: string;
             /** Neworderindex */
             newOrderIndex: number;
+        };
+        /**
+         * PrepareHostRequest
+         * @description Request to prepare a new host (generate SSH key).
+         */
+        PrepareHostRequest: {
+            /**
+             * Name
+             * @description Human-readable name for the host
+             */
+            name: string;
+            /**
+             * Sshurl
+             * @description SSH URL (e.g., ssh://user@192.168.1.100)
+             */
+            sshUrl: string;
+        };
+        /**
+         * PrepareHostResponse
+         * @description Response for prepare host operation (SSH key generation).
+         */
+        PrepareHostResponse: {
+            /**
+             * Success
+             * @description Whether key generation succeeded
+             * @default true
+             */
+            success: boolean;
+            /**
+             * Hostid
+             * @description Generated host identifier
+             */
+            hostId: string;
+            /**
+             * Publickey
+             * @description Public key to add to remote authorized_keys
+             */
+            publicKey: string;
+            /**
+             * Installcommand
+             * @description Shell command to install the key on remote host
+             */
+            installCommand: string;
+            /**
+             * Authorizedkeysentry
+             * @description The authorized_keys entry with restrictions
+             */
+            authorizedKeysEntry: string;
         };
         /** ProjectCreate */
         ProjectCreate: {
@@ -3791,37 +4936,6 @@ export interface components {
              */
             message: string;
         };
-        /** SegmentRequest */
-        SegmentRequest: {
-            /** Text */
-            text: string;
-            /**
-             * Method
-             * @default smart
-             * @enum {string}
-             */
-            method: "sentences" | "paragraphs" | "smart" | "length";
-            /**
-             * Language
-             * @default de
-             */
-            language: string;
-            /**
-             * Engine Name
-             * @default
-             */
-            engine_name: string;
-            /**
-             * Min Length
-             * @default 50
-             */
-            min_length: number;
-            /**
-             * Max Length
-             * @default 500
-             */
-            max_length: number;
-        };
         /**
          * SegmentResponse
          * @description Response model for a single segment.
@@ -3958,26 +5072,8 @@ export interface components {
             ttsLanguage?: string | null;
             /** Ttsspeakername */
             ttsSpeakerName?: string | null;
-            /** Minlength */
-            minLength?: number | null;
             /** Maxlength */
             maxLength?: number | null;
-        };
-        /**
-         * SegmentTextResponse
-         * @description Response for text segmentation endpoint
-         */
-        SegmentTextResponse: {
-            /** Success */
-            success: boolean;
-            /** Method */
-            method: string;
-            /** Language */
-            language: string;
-            /** Segmentcount */
-            segmentCount: number;
-            /** Segments */
-            segments: string[];
         };
         /** SegmentUpdate */
         SegmentUpdate: {
@@ -4352,6 +5448,60 @@ export interface components {
             speed?: number | null;
         };
         /**
+         * TestHostRequest
+         * @description Request to test a prepared host connection.
+         */
+        TestHostRequest: {
+            /**
+             * Hostid
+             * @description Host ID from /prepare endpoint
+             */
+            hostId: string;
+            /**
+             * Sshurl
+             * @description SSH URL for the remote host
+             */
+            sshUrl: string;
+        };
+        /**
+         * TestHostResponse
+         * @description Response from testing a remote Docker host connection.
+         */
+        TestHostResponse: {
+            /**
+             * Success
+             * @description Whether connection test succeeded
+             */
+            success: boolean;
+            /**
+             * Dockerversion
+             * @description Docker version on remote host
+             */
+            dockerVersion?: string | null;
+            /**
+             * Hasgpu
+             * @description Whether host has NVIDIA GPU runtime
+             * @default false
+             */
+            hasGpu: boolean;
+            /**
+             * Hasdockerpermission
+             * @description Whether user can access Docker
+             * @default false
+             */
+            hasDockerPermission: boolean;
+            /**
+             * Error
+             * @description Error message if test failed
+             */
+            error?: string | null;
+            /**
+             * Errorcategory
+             * @description Error category for i18n
+             */
+            errorCategory?: string | null;
+        };
+        /**
          * TextSegmentationResponse
          * @description Response for text segmentation operations.
          */
@@ -4443,6 +5593,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RootResponse"];
+                };
+            };
+        };
+    };
+    shutdown_backend_shutdown_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
                 };
             };
         };
@@ -4927,6 +6097,173 @@ export interface operations {
             };
         };
     };
+    get_docker_image_catalog_api_engines_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DockerCatalogResponse"];
+                };
+            };
+        };
+    };
+    sync_online_catalog_api_engines_catalog_sync_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogSyncResponse"];
+                };
+            };
+        };
+    };
+    install_docker_image_api_engines_docker__variant_id__install_post: {
+        parameters: {
+            query?: {
+                tag?: string | null;
+                force?: boolean;
+            };
+            header?: never;
+            path: {
+                variant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DockerInstallResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_docker_pull_api_engines_docker__variant_id__pull_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                variant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    uninstall_docker_image_api_engines_docker__variant_id__uninstall_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                variant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DockerInstallResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_docker_image_update_api_engines_docker__variant_id__check_update_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                variant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageUpdateCheckResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     enable_engine_api_engines__engine_type___engine_name__enable_post: {
         parameters: {
             query?: never;
@@ -5145,6 +6482,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_engine_settings_api_engines__engine_type___engine_name__settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                engine_type: string;
+                engine_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EngineSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discover_docker_engine_api_engines_docker_discover_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DockerDiscoverRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DockerDiscoverResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    register_docker_engine_api_engines_docker_register_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DockerRegisterRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DockerRegisterResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discover_models_api_engines__variant_id__discover_models_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                variant_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscoverModelsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5794,39 +7264,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SegmentResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    segment_text_api_text_segment_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SegmentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SegmentTextResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7151,6 +8588,335 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QualityJobCreatedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_hosts_api_engine_hosts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineHostsListResponse"];
+                };
+            };
+        };
+    };
+    create_host_api_engine_hosts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateEngineHostRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineHostResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_host_api_engine_hosts__host_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineHostResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_host_api_engine_hosts__host_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prepare_host_api_engine_hosts_prepare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrepareHostRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrepareHostResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_host_api_engine_hosts_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestHostRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestHostResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cleanup_prepared_host_api_engine_hosts_prepare__host_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ensure_docker_local_api_engine_hosts_ensure_docker_local_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineHostResponse"];
+                };
+            };
+        };
+    };
+    get_docker_volumes_api_engine_hosts__host_id__volumes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DockerVolumesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_docker_volumes_api_engine_hosts__host_id__volumes_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DockerVolumesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DockerVolumesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_host_public_key_api_engine_hosts__host_id__public_key_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                host_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostPublicKeyResponse"];
                 };
             };
             /** @description Validation Error */

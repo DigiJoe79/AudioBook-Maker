@@ -523,11 +523,12 @@ export const ttsApi = {
   // Model information is included in the engine status response via availableModels field.
 
   // Enable or disable an engine
+  // Note: engineName may be a variant_id (e.g., 'xtts:local') - must be URL-encoded
   setEngineEnabled: (engineType: string, engineName: string, enabled: boolean) =>
     apiCall<{
       success: boolean;
       message: string;
-    }>(`/engines/${engineType}/${engineName}/${enabled ? 'enable' : 'disable'}`, {
+    }>(`/engines/${engineType}/${encodeURIComponent(engineName)}/${enabled ? 'enable' : 'disable'}`, {
       method: 'POST',
     }),
 
@@ -661,28 +662,6 @@ export const ttsApi = {
     }),
 };
 
-// Text Processing API
-export const textProcessingApi = {
-  // Segment text without creating database entries
-  segmentText: (data: {
-    text: string;
-    method?: 'sentences' | 'paragraphs' | 'smart' | 'length';
-    language?: string;
-    minLength?: number;
-    maxLength?: number;
-  }) =>
-    apiCall<{
-      success: boolean;
-      method: string;
-      language: string;
-      segmentCount: number;
-      segments: Array<{ text: string; orderIndex: number }>;
-    }>('/text/segment', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-};
-
 // Export API (camelCase to match backend)
 export interface ExportRequest {
   chapterId: string;
@@ -694,7 +673,7 @@ export interface ExportRequest {
   customFilename?: string;
 }
 
-export interface ExportResponse {
+interface ExportResponse {
   jobId: string;
   status: string;
   message: string;
@@ -1072,32 +1051,35 @@ export const engineApi = {
   },
 
   // Enable an engine
+  // Note: engineName may be a variant_id (e.g., 'xtts:local') - must be URL-encoded
   enableEngine: async (engineType: string, engineName: string) => {
     return apiCall<{
       success: boolean;
       message: string;
-    }>(`/engines/${engineType}/${engineName}/enable`, {
+    }>(`/engines/${engineType}/${encodeURIComponent(engineName)}/enable`, {
       method: 'POST',
     });
   },
 
   // Disable an engine
+  // Note: engineName may be a variant_id (e.g., 'xtts:local') - must be URL-encoded
   disableEngine: async (engineType: string, engineName: string) => {
     return apiCall<{
       success: boolean;
       message: string;
-    }>(`/engines/${engineType}/${engineName}/disable`, {
+    }>(`/engines/${engineType}/${encodeURIComponent(engineName)}/disable`, {
       method: 'POST',
     });
   },
 
   // Start an engine
+  // Note: engineName may be a variant_id (e.g., 'xtts:docker:local') - must be URL-encoded
   startEngine: async (engineType: string, engineName: string, modelName?: string) => {
     return apiCall<{
       success: boolean;
       message: string;
       port?: number;
-    }>(`/engines/${engineType}/${engineName}/start`, {
+    }>(`/engines/${engineType}/${encodeURIComponent(engineName)}/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: modelName ? JSON.stringify({ modelName }) : undefined,
@@ -1105,21 +1087,23 @@ export const engineApi = {
   },
 
   // Stop an engine
+  // Note: engineName may be a variant_id (e.g., 'xtts:local') - must be URL-encoded
   stopEngine: async (engineType: string, engineName: string) => {
     return apiCall<{
       success: boolean;
       message: string;
-    }>(`/engines/${engineType}/${engineName}/stop`, {
+    }>(`/engines/${engineType}/${encodeURIComponent(engineName)}/stop`, {
       method: 'POST',
     });
   },
 
   // Set default engine for a type
+  // Note: engineName may be a variant_id (e.g., 'xtts:local') - must be URL-encoded
   setDefaultEngine: async (engineType: string, engineName: string) => {
     return apiCall<{
       success: boolean;
       message: string;
-    }>(`/engines/${engineType}/default/${engineName}`, {
+    }>(`/engines/${engineType}/default/${encodeURIComponent(engineName)}`, {
       method: 'POST',
     });
   },
@@ -1135,14 +1119,273 @@ export const engineApi = {
   },
 
   // Set keep-running flag for an engine
+  // Note: engineName may be a variant_id (e.g., 'xtts:local') - must be URL-encoded
   setKeepRunning: async (engineType: string, engineName: string, keepRunning: boolean) => {
     return apiCall<{
       success: boolean;
       message: string;
-    }>(`/engines/${engineType}/${engineName}/keep-running`, {
+    }>(`/engines/${engineType}/${encodeURIComponent(engineName)}/keep-running`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ keepRunning }),
     });
+  },
+
+  // Update engine settings (model, language, parameters)
+  // Writes directly to engines table (Single Source of Truth)
+  updateSettings: async (
+    engineType: string,
+    engineName: string,
+    settings: {
+      defaultModelName?: string;
+      defaultLanguage?: string;
+      parameters?: Record<string, unknown>;
+    }
+  ) => {
+    return apiCall<{
+      success: boolean;
+      message: string;
+    }>(`/engines/${engineType}/${encodeURIComponent(engineName)}/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+  },
+
+  // Get Docker image catalog
+  getCatalog: async () => {
+    return apiCall<import('@/types/engines').DockerCatalogResponse>('/engines/catalog');
+  },
+
+  // Sync catalog from online source
+  syncCatalog: async () => {
+    return apiCall<{
+      success: boolean;
+      added: number;
+      updated: number;
+      skipped: number;
+      message: string;
+    }>('/engines/catalog/sync', { method: 'POST' });
+  },
+
+  // Install Docker image for variant (use force=true to pull updates for already installed images)
+  installDockerImage: async (variantId: string, options?: { tag?: string; force?: boolean }) => {
+    const params = new URLSearchParams();
+    if (options?.tag) {
+      params.append('tag', options.tag);
+    }
+    if (options?.force) {
+      params.append('force', 'true');
+    }
+    const queryString = params.toString();
+    const url = `/engines/docker/${encodeURIComponent(variantId)}/install${queryString ? `?${queryString}` : ''}`;
+    return apiCall<import('@/types/engines').DockerInstallResponse>(url, { method: 'POST' });
+  },
+
+  // Uninstall Docker image for variant
+  uninstallDockerImage: async (variantId: string) => {
+    return apiCall<import('@/types/engines').DockerInstallResponse>(
+      `/engines/docker/${encodeURIComponent(variantId)}/uninstall`,
+      { method: 'DELETE' }
+    );
+  },
+
+  // Cancel an active Docker image pull
+  cancelDockerPull: async (variantId: string) => {
+    return apiCall<{ message: string }>(
+      `/engines/docker/${encodeURIComponent(variantId)}/pull`,
+      { method: 'DELETE' }
+    );
+  },
+
+  // Discover models for an engine variant
+  discoverModels: async (variantId: string) => {
+    return apiCall<{
+      success: boolean;
+      variantId: string;
+      models: string[];
+      message: string;
+    }>(`/engines/${encodeURIComponent(variantId)}/discover-models`, {
+      method: 'POST',
+    });
+  },
+
+  // Discover a custom Docker engine by probing its /info endpoint
+  discoverDockerEngine: async (dockerImage: string, dockerTag: string) => {
+    return apiCall<import('@/types/engines').DockerDiscoverResponse>(
+      '/engines/docker/discover',
+      {
+        method: 'POST',
+        body: JSON.stringify({ dockerImage, dockerTag }),
+      }
+    );
+  },
+
+  // Register a discovered Docker engine in the database
+  registerDockerEngine: async (request: import('@/types/engines').DockerRegisterRequest) => {
+    return apiCall<import('@/types/engines').DockerRegisterResponse>(
+      '/engines/docker/register',
+      {
+        method: 'POST',
+        body: JSON.stringify(request),
+      }
+    );
+  },
+
+  // Check if a Docker image update is available
+  checkUpdate: (variantId: string) =>
+    apiCall<import('@/types/engines').ImageUpdateCheckResponse>(
+      `/engines/docker/${encodeURIComponent(variantId)}/check-update`
+    ),
+};
+
+// Engine Hosts API
+export interface EngineHost {
+  hostId: string;
+  hostType: 'subprocess' | 'docker:local' | 'docker:remote';
+  displayName: string;
+  sshUrl?: string;
+  isAvailable: boolean;
+  hasGpu?: boolean | null;
+  lastCheckedAt?: string;
+  createdAt: string;
+  engineCount: number;
+}
+
+export interface EngineHostsListResponse {
+  success: boolean;
+  hosts: EngineHost[];
+  count: number;
+}
+
+export interface DockerVolumesResponse {
+  success: boolean;
+  hostId: string;
+  samplesPath: string | null;
+  modelsPath: string | null;
+  validationError?: string | null;
+}
+
+export interface PrepareHostResponse {
+  success: boolean;
+  hostId: string;
+  publicKey: string;
+  installCommand: string;
+  authorizedKeysEntry: string;
+}
+
+export interface TestHostResponse {
+  success: boolean;
+  dockerVersion?: string | null;
+  hasGpu: boolean;
+  hasDockerPermission: boolean;
+  error?: string | null;
+  errorCategory?: string | null;
+}
+
+export interface HostPublicKeyResponse {
+  success: boolean;
+  hostId: string;
+  publicKey: string | null;
+  installCommand: string | null;
+}
+
+export const engineHostsApi = {
+  // Get all engine hosts (including local subprocess host)
+  getAll: async () => {
+    return apiCall<EngineHostsListResponse>('/engine-hosts');
+  },
+
+  // Get a specific host
+  getById: async (hostId: string) => {
+    return apiCall<EngineHost>(`/engine-hosts/${hostId}`);
+  },
+
+  // Prepare a new remote Docker host (generate SSH key)
+  prepare: async (host: { name: string; sshUrl: string }) => {
+    return apiCall<PrepareHostResponse>('/engine-hosts/prepare', {
+      method: 'POST',
+      body: JSON.stringify(host),
+    });
+  },
+
+  // Create a new remote Docker host
+  create: async (host: { name: string; sshUrl: string; hostId?: string; hasGpu?: boolean }) => {
+    return apiCall<EngineHost>('/engine-hosts', {
+      method: 'POST',
+      body: JSON.stringify(host),
+    });
+  },
+
+  // Delete a host
+  delete: async (hostId: string) => {
+    return apiCall<{ success: boolean; message: string }>(`/engine-hosts/${hostId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  // Ensure docker:local host exists
+  ensureDockerLocal: async () => {
+    return apiCall<EngineHost>('/engine-hosts/ensure-docker-local', {
+      method: 'POST',
+    });
+  },
+
+  // Get Docker volume configuration for a host
+  getDockerVolumes: async (hostId: string) => {
+    return apiCall<DockerVolumesResponse>(`/engine-hosts/${encodeURIComponent(hostId)}/volumes`);
+  },
+
+  // Set Docker volume configuration for a host
+  setDockerVolumes: async (hostId: string, samplesPath: string | null, modelsPath: string | null) => {
+    return apiCall<DockerVolumesResponse>(`/engine-hosts/${encodeURIComponent(hostId)}/volumes`, {
+      method: 'PUT',
+      body: JSON.stringify({ samplesPath, modelsPath }),
+    });
+  },
+
+  // Test connection to a prepared remote Docker host
+  test: async (hostId: string, sshUrl: string) => {
+    return apiCall<TestHostResponse>('/engine-hosts/test', {
+      method: 'POST',
+      body: JSON.stringify({ hostId, sshUrl }),
+    });
+  },
+
+  // Clean up a prepared host that was not saved (delete SSH keys)
+  cleanupPrepared: async (hostId: string) => {
+    return apiCall<{ success: boolean; message: string }>(
+      `/engine-hosts/prepare/${encodeURIComponent(hostId)}`,
+      { method: 'DELETE' }
+    );
+  },
+
+  // Get public key for a remote Docker host
+  getPublicKey: async (hostId: string) => {
+    return apiCall<HostPublicKeyResponse>(`/engine-hosts/${encodeURIComponent(hostId)}/public-key`);
+  },
+};
+
+// System API (health, shutdown)
+export const systemApi = {
+  /**
+   * Gracefully shutdown the backend server.
+   * Stops all running engine containers first, then terminates the backend.
+   */
+  shutdown: async () => {
+    const url = useAppStore.getState().connection.url
+    if (!url) {
+      throw new Error('Backend not connected')
+    }
+    // Note: /shutdown is at root level, not under /api
+    const response = await fetch(`${url}/shutdown`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: response.statusText }))
+      throw new Error(error.detail || `Shutdown failed: ${response.status}`)
+    }
+    return response.json() as Promise<{ success: boolean; message: string }>
   },
 };

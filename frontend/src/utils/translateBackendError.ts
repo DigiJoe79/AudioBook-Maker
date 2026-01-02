@@ -83,6 +83,7 @@ export function translateBackendError(errorMessage: string, t: TFunction): strin
     IMPORT_UNKNOWN_ENGINE: 'errors.import.unknownEngine',
     IMPORT_PREVIEW_FAILED: 'import.errors.previewFailed',
     IMPORT_FAILED: 'import.errors.failed',
+    IMPORT_VALIDATION_ERROR: 'import.errors.validationError',
 
     // EPUB Import errors
     EPUB_IMPORT_FILE_EMPTY: 'import.errors.epubFileEmpty',
@@ -96,6 +97,8 @@ export function translateBackendError(errorMessage: string, t: TFunction): strin
     EPUB_IMPORT_MISSING_TARGET_ID: 'import.errors.epubMissingTargetId',
     EPUB_IMPORT_UNKNOWN_ENGINE: 'import.errors.epubUnknownEngine',
     EPUB_IMPORT_TARGET_NOT_FOUND: 'import.errors.epubTargetNotFound',
+    EPUB_IMPORT_INVALID_EPUB: 'import.errors.epubInvalidEpub',
+    EPUB_IMPORT_VALIDATION_ERROR: 'import.errors.epubValidationError',
 
     // Speaker errors
     SPEAKER_NOT_FOUND: 'speakers.errors.notFound',
@@ -201,6 +204,7 @@ export function translateBackendError(errorMessage: string, t: TFunction): strin
     TTS_JOB_RESUME_FAILED: 'tts.errors.jobResumeFailed',
     TTS_GENERATION_FAILED: 'tts.errors.generationFailed',
     TTS_GPU_OOM: 'tts.errors.gpuOom',
+    TTS_JOB_PARTIAL_FAILURE: 'tts.errors.jobPartialFailure',
 
     // Quality Job errors
     QUALITY_JOB_LIST_FAILED: 'errors.quality.jobListFailed',
@@ -258,6 +262,45 @@ export function translateBackendError(errorMessage: string, t: TFunction): strin
     ENGINE_SET_DEFAULT_FAILED: 'errors.engine.setDefaultFailed',
     ENGINE_CLEAR_DEFAULT_FAILED: 'errors.engine.clearDefaultFailed',
     ENGINE_KEEP_RUNNING_FAILED: 'errors.engine.keepRunningFailed',
+
+    // Host errors
+    ENGINE_HOST_UNAVAILABLE: 'settings.engineHosts.hostUnavailable',
+    HOST_DELETE_FORBIDDEN: 'settings.engineHosts.deleteForbidden',
+    HOST_HAS_ENGINES: 'settings.engineHosts.hasEngines',
+    HOST_NOT_DOCKER: 'settings.engineHosts.notDocker',
+    SSH_KEY_GENERATION_FAILED: 'settings.engineHosts.sshKeyGenerationFailed',
+
+    // Engine management errors
+    ENGINE_ALREADY_EXISTS: 'engines.errors.alreadyExists',
+    ENGINE_NO_MODEL_DISCOVERED: 'engines.errors.noModelDiscovered',
+    ENGINE_TYPE_UNKNOWN: 'engines.errors.typeUnknown',
+    ENGINE_NOT_REGISTERED: 'engines.errors.notRegistered',
+    MODEL_NOT_FOUND: 'engines.errors.modelNotFound',
+    ENGINE_SETTINGS_UPDATE_FAILED: 'engines.errors.settingsUpdateFailed',
+    MODEL_DISCOVERY_FAILED: 'engines.errors.modelDiscoveryFailed',
+
+    // Engine variant errors
+    VARIANT_NOT_FOUND: 'engines.errors.variantNotFound',
+    IMAGE_ALREADY_INSTALLED: 'engines.errors.imageAlreadyInstalled',
+    IMAGE_NOT_INSTALLED: 'engines.errors.imageNotInstalled',
+    DOCKER_HOST_UNAVAILABLE: 'engines.errors.dockerHostUnavailable',
+    DOCKER_HOST_NOT_CONNECTED: 'engines.errors.dockerHostNotConnected',
+    DOCKER_NOT_AVAILABLE: 'engines.errors.dockerNotAvailable',
+    DOCKER_PULL_FAILED: 'engines.errors.dockerPullFailed',
+    DOCKER_IMAGE_NOT_FOUND: 'engines.errors.dockerImageNotFound',
+    DOCKER_REMOVE_FAILED: 'engines.errors.dockerRemoveFailed',
+    DOCKER_CLIENT_CREATION_FAILED: 'engines.errors.dockerClientCreationFailed',
+    DOCKER_PULL_CANCELLED: 'engines.errors.dockerPullCancelled',
+    CANCEL_FAILED: 'engines.errors.cancelFailed',
+    NO_ACTIVE_PULL: 'engines.errors.noActivePull',
+    IMAGE_PULL_FAILED: 'engines.errors.imagePullFailed',
+    IMAGE_INSTALL_FAILED: 'engines.errors.imageInstallFailed',
+    IMAGE_UNINSTALL_FAILED: 'engines.errors.imageUninstallFailed',
+    INVALID_VARIANT_ID: 'engines.errors.invalidVariantId',
+    NOT_DOCKER_VARIANT: 'engines.errors.notDockerVariant',
+    HOST_NOT_FOUND: 'engines.errors.hostNotFound',
+    CATALOG_LOAD_FAILED: 'engines.errors.catalogLoadFailed',
+    CATALOG_SYNC_FAILED: 'engines.errors.catalogSyncFailed',
 
     // Job errors (generic job management)
     JOB_NOT_CANCELLED: 'errors.job.notCancelled',

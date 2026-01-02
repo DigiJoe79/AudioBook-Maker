@@ -808,6 +808,8 @@ async def merge_segments(request: MergeSegmentsRequest) -> MergeResponse:
             duration=duration
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to merge segments: {e}")
         raise HTTPException(status_code=500, detail=f"[AUDIO_MERGE_FAILED]chapterId:{request.chapter_id};error:{str(e)}")

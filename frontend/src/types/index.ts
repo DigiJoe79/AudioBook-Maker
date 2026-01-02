@@ -109,26 +109,11 @@ export interface TTSEngine {
 
   /** Engine-specific generation constraints */
   constraints: {
-    /** Minimum text length for generation */
-    minTextLength: number
-
-    /** Default maximum text length */
+    /** Maximum text length per generation */
     maxTextLength: number
 
     /** Language-specific max text lengths (overrides default) */
     maxTextLengthByLang?: Record<string, number>
-
-    /** Audio sample rate (e.g., 24000 Hz) */
-    sampleRate: number
-
-    /** Output audio format (e.g., 'wav') */
-    audioFormat: string
-
-    /** Whether engine supports streaming */
-    supportsStreaming: boolean
-
-    /** Whether engine requires proper punctuation */
-    requiresPunctuation: boolean
   }
 
   /** Engine-specific default parameters */
@@ -424,8 +409,7 @@ export interface PlaybackWindow {
 export type { BackendProfile, ApiBackendProfile, SessionState, BackendHealthResponse } from './backend'
 
 // Re-export navigation types for convenience
-export type { ViewType, NavigationState, NavigationShortcut } from './navigation'
-export { NAVIGATION_SHORTCUTS } from './navigation'
+export type { ViewType, NavigationState } from './navigation'
 
 // Re-export import types for convenience
 export type {
@@ -465,6 +449,13 @@ export type {
   ApiSpeaker,
   ApiSpeakerSample,
   ApiPronunciationRule,
+  // Engine API types
+  ApiEngineStatusInfo,
+  ApiAllEnginesStatus,
+  ApiDockerImageInfo,
+  ApiDockerImageVariant,
+  ApiDockerCatalogResponse,
+  ApiDockerInstallResponse,
 } from './transforms'
 
 // Re-export transform functions
@@ -479,4 +470,11 @@ export {
   transformTTSJob,
   transformQualityJob,
   transformPronunciationRule,
+  // Engine transform functions
+  transformEngineStatusInfo,
+  transformAllEnginesStatus,
+  transformDockerImageInfo,
+  transformDockerImageVariant,
+  transformDockerCatalogResponse,
+  transformDockerInstallResponse,
 } from './transforms'

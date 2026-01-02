@@ -240,23 +240,3 @@ async def analyze_chapter(
     except Exception as e:
         logger.error(f"Failed to create quality job: {e}")
         raise HTTPException(status_code=500, detail=f"[QUALITY_JOB_CREATE_FAILED]error:{str(e)}")
-
-
-# ============================================================================
-# Quality Job Management Endpoints - MOVED TO /api/jobs/quality/* (jobs.py)
-# ============================================================================
-#
-# The following endpoints have been moved to the centralized jobs router:
-#
-# - GET /jobs → GET /api/jobs/quality/
-# - GET /jobs/active → GET /api/jobs/quality/active
-# - GET /jobs/{job_id} → GET /api/jobs/quality/{job_id}
-# - POST /jobs/{job_id}/cancel → POST /api/jobs/quality/{job_id}/cancel
-# - DELETE /jobs/{job_id} → DELETE /api/jobs/quality/{job_id}
-#
-# This consolidation provides:
-# - Unified job management across all job types (TTS, Quality, etc.)
-# - Consistent URL structure (/api/jobs/{type}/{action})
-# - Centralized job logic and error handling
-#
-# ============================================================================

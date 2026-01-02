@@ -41,6 +41,7 @@ from loguru import logger
 
 from core.base_engine_manager import BaseEngineManager
 from core.text_engine_discovery import TextEngineDiscovery
+from core.engine_exceptions import EngineClientError, EngineLoadingError, EngineServerError
 
 
 class TextEngineManager(BaseEngineManager):
@@ -62,8 +63,7 @@ class TextEngineManager(BaseEngineManager):
         Inherited from BaseEngineManager:
         - engine_type: 'text'
         - engines_base_path: Path to engines/text_processing/ subdirectory
-        - _engine_metadata: Discovered text engines
-        - engine_processes: Running engine processes
+        - engine_endpoints: Running engine endpoints (subprocess and Docker)
         - engine_ports: Assigned ports
         - active_engine: Currently loaded engine
         - http_client: Async HTTP client
@@ -82,30 +82,31 @@ class TextEngineManager(BaseEngineManager):
         engines_base_path = Path(BACKEND_ROOT) / 'engines' / 'text_processing'
         super().__init__(engines_base_path=engines_base_path, engine_type='text')
 
-    def _discover_engines(self) -> None:
+    def discover_local_engines(self) -> Dict[str, Dict[str, Any]]:
         """
         Discover text processing engines from engines/text_processing/ directory
 
         Uses TextEngineDiscovery to scan for engine servers.
-        Populates self._engine_metadata dictionary.
+        Returns discovered engine metadata directly.
+
+        Returns:
+            Dictionary mapping engine_name -> engine_metadata
         """
         try:
             discovery = TextEngineDiscovery(self.engines_base_path)
-            self._engine_metadata = discovery.discover_all()
+            discovered = discovery.discover_all()
 
-            if not self._engine_metadata:
-                logger.warning(
-                    "No text processing engines discovered! "
-                    "Check engines/text_processing/ directory."
-                )
+            if not discovered:
+                logger.info("No local text processing engines found (subprocess)")
             else:
-                logger.info(
-                    f"Auto-discovered {len(self._engine_metadata)} text processing engines: "
-                    f"{list(self._engine_metadata.keys())}"
+                logger.debug(
+                    f"Auto-discovered {len(discovered)} subprocess text processing engines: "
+                    f"{list(discovered.keys())}"
                 )
+            return discovered
         except Exception as e:
             logger.error(f"Text engine discovery failed: {e}")
-            self._engine_metadata = {}
+            return {}
 
     async def segment_with_engine(
         self,
@@ -133,11 +134,11 @@ class TextEngineManager(BaseEngineManager):
         Raises:
             RuntimeError: If engine not running or segmentation fails
         """
-        port = self.engine_ports.get(engine_name)
-        if not port:
+        base_url = self.get_engine_base_url(engine_name)
+        if not base_url:
             raise RuntimeError(f"Text engine {engine_name} not running")
 
-        url = f"http://127.0.0.1:{port}/segment"
+        url = f"{base_url}/segment"
 
         # Build payload with parameters flattened into root level
         # (SegmentRequest expects max_length, min_length etc. at root, not nested)
@@ -153,14 +154,22 @@ class TextEngineManager(BaseEngineManager):
             response = await self.http_client.post(url, json=payload)
             response.raise_for_status()
         except httpx.RequestError as e:
-            raise RuntimeError(f"HTTP request to {engine_name} failed: {e}")
+            raise EngineServerError(f"HTTP request to {engine_name} failed: {e}")
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Engine {engine_name} returned error {e.response.status_code}: {e.response.text[:200]}")
+            status_code = e.response.status_code
+            detail = e.response.text[:200]
+
+            if status_code in (400, 404):
+                raise EngineClientError(f"{engine_name} rejected request ({status_code}): {detail}")
+            elif status_code == 503:
+                raise EngineLoadingError(f"{engine_name} is loading: {detail}")
+            else:
+                raise EngineServerError(f"{engine_name} error ({status_code}): {detail}")
 
         try:
             segments = response.json()
         except ValueError as e:
-            raise RuntimeError(f"Invalid JSON response from {engine_name}: {e}")
+            raise EngineServerError(f"Invalid JSON response from {engine_name}: {e}")
 
         logger.debug(f"Generated {len(segments)} segments")
 

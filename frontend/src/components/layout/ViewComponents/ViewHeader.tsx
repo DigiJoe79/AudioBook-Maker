@@ -19,7 +19,7 @@ import React from 'react'
 import { Box, Typography, type SxProps, type Theme } from '@mui/material'
 import { getElevatedBackground } from '../../../theme'
 
-export interface ViewHeaderProps {
+interface ViewHeaderProps {
   /** View title (e.g., "Jobs", "Einstellungen") */
   title: string
 

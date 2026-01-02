@@ -17,7 +17,7 @@ import {
 import { Error as ErrorIcon } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 
-export interface ErrorDialogProps {
+interface ErrorDialogProps {
   /** Whether the dialog is open */
   open: boolean
 

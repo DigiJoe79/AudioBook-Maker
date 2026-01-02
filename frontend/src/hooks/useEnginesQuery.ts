@@ -33,66 +33,6 @@ export function useAllEnginesStatus() {
 }
 
 /**
- * Mutation: Enable an engine
- *
- * @example
- * ```tsx
- * const enableMutation = useEnableEngine()
- * await enableMutation.mutateAsync({
- *   engineType: 'text',
- *   engineName: 'spacy'
- * })
- * ```
- */
-export function useEnableEngine() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: ({ engineType, engineName }: { engineType: string; engineName: string }) =>
-      engineApi.enableEngine(engineType, engineName),
-    onSuccess: () => {
-      // Invalidate engines query to refetch
-      queryClient.invalidateQueries({ queryKey: queryKeys.engines.all() })
-      // Also invalidate health query (updates feature-gating)
-      queryClient.invalidateQueries({ queryKey: queryKeys.health() })
-    },
-    onError: (error: Error) => {
-      logger.error('[useEnableEngine] Failed to enable engine', { error: error.message })
-    },
-  })
-}
-
-/**
- * Mutation: Disable an engine
- *
- * @example
- * ```tsx
- * const disableMutation = useDisableEngine()
- * await disableMutation.mutateAsync({
- *   engineType: 'stt',
- *   engineName: 'whisper'
- * })
- * ```
- */
-export function useDisableEngine() {
-  const queryClient = useQueryClient()
-
-  return useMutation({
-    mutationFn: ({ engineType, engineName }: { engineType: string; engineName: string }) =>
-      engineApi.disableEngine(engineType, engineName),
-    onSuccess: () => {
-      // Invalidate engines query to refetch
-      queryClient.invalidateQueries({ queryKey: queryKeys.engines.all() })
-      // Also invalidate health query (updates feature-gating)
-      queryClient.invalidateQueries({ queryKey: queryKeys.health() })
-    },
-    onError: (error: Error) => {
-      logger.error('[useDisableEngine] Failed to disable engine', { error: error.message })
-    },
-  })
-}
-
-/**
  * Mutation: Start an engine
  *
  * @example
@@ -209,6 +149,81 @@ export function useClearDefaultEngine() {
     },
     onError: (error: Error) => {
       logger.error('[useClearDefaultEngine] Failed to clear default engine', { error: error.message })
+    },
+  })
+}
+
+/**
+ * Mutation: Install Docker image for a variant
+ *
+ * @example
+ * ```tsx
+ * const installMutation = useInstallDockerImage()
+ * await installMutation.mutateAsync({ variantId: 'xtts:docker:local' })
+ * // For updates (force pull):
+ * await installMutation.mutateAsync({ variantId: 'xtts:docker:local', force: true })
+ * ```
+ */
+export function useInstallDockerImage() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (params: { variantId: string; force?: boolean }) =>
+      engineApi.installDockerImage(params.variantId, { force: params.force }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.engines.all() })
+    },
+    onError: (error: Error) => {
+      logger.error('[useInstallDockerImage] Failed to install Docker image', { error: error.message })
+    },
+  })
+}
+
+/**
+ * Mutation: Uninstall Docker image for a variant
+ *
+ * @example
+ * ```tsx
+ * const uninstallMutation = useUninstallDockerImage()
+ * await uninstallMutation.mutateAsync('xtts:docker:local')
+ * ```
+ */
+export function useUninstallDockerImage() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (variantId: string) => engineApi.uninstallDockerImage(variantId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.engines.all() })
+    },
+    onError: (error: Error) => {
+      logger.error('[useUninstallDockerImage] Failed to uninstall Docker image', { error: error.message })
+    },
+  })
+}
+
+/**
+ * Mutation: Discover models for an engine variant
+ *
+ * Starts the engine temporarily, queries available models,
+ * stores them in the database, and stops the engine.
+ *
+ * @example
+ * ```tsx
+ * const discoverMutation = useDiscoverModels()
+ * await discoverMutation.mutateAsync('xtts:local')
+ * ```
+ */
+export function useDiscoverModels() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (variantId: string) => engineApi.discoverModels(variantId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.engines.all() })
+    },
+    onError: (error: Error) => {
+      logger.error('[useDiscoverModels] Failed to discover models', { error: error.message })
     },
   })
 }

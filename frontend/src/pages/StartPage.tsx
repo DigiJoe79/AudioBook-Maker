@@ -170,7 +170,8 @@ export default function StartPage() {
       '#4CAF50' // Green for success
     )
 
-    // Load global settings from backend
+    // Load global settings from backend (audio export, text segmentation, quality settings)
+    // Note: Default engines are managed via engines.is_default (Single Source of Truth)
     try {
       const settings = await fetchSettings()
       loadSettings(settings)
@@ -178,90 +179,16 @@ export default function StartPage() {
       logger.group(
         '⚙️ Settings Loaded',
         'Global settings fetched from backend',
-        {
-          'Default Engine': settings.tts.defaultTtsEngine ?? 'Not set',
-          'Source': 'Backend /api/settings'
-        },
+        { 'Source': 'Backend /api/settings' },
         '#607D8B' // Gray for settings
       )
-
-      // Validate default engine exists (engines only change on backend restart)
-      if (ttsEngines.length > 0 && settings.tts.defaultTtsEngine) {
-        const engineExists = ttsEngines.includes(settings.tts.defaultTtsEngine)
-
-        if (!engineExists) {
-          const firstEngine = ttsEngines[0]
-
-          logger.group(
-            '⚠️ Invalid Default Engine',
-            'Default engine not available, auto-fixing',
-            {
-              'Invalid Engine': settings.tts.defaultTtsEngine,
-              'Available Engines': ttsEngines.join(', '),
-              'Auto-Selected': firstEngine,
-              'Action': 'Updating settings + redirecting to Settings'
-            },
-            '#FF9800' // Orange for warning
-          )
-
-          try {
-            // Update settings with first available engine
-            // Use freshly fetched settings to avoid writing stale cached data
-            const updatedTtsSettings = {
-              ...settings.tts,  // Use the freshly fetched settings
-              defaultTtsEngine: firstEngine,
-              // Reset model name (will be set to first available model by Settings UI)
-              defaultTtsModelName: ''
-            }
-            await updateSettings('tts', updatedTtsSettings)
-            loadSettings({ ...settings, tts: updatedTtsSettings })
-
-            logger.group(
-              '✅ Engine Auto-Fixed',
-              'Default engine updated in database',
-              {
-                'New Engine': firstEngine,
-                'Action': 'Will redirect to Settings tab after navigation'
-              },
-              '#4CAF50' // Green for success
-            )
-
-            // Navigate to main app first, then to settings
-            navigate('/')
-            // Use setTimeout to ensure navigation completes before showing error dialog
-            setTimeout(() => {
-              showError(
-                t('startPage.invalidEngineAlert.title'),
-                `${t('startPage.invalidEngineAlert.engineUnavailable', { oldEngine: settings.tts.defaultTtsEngine })}\n\n` +
-                `${t('startPage.invalidEngineAlert.autoSwitched', { newEngine: firstEngine })}\n\n` +
-                `${t('startPage.invalidEngineAlert.checkSettings')}`
-              )
-              // Navigate to settings view (assuming navigation store method exists)
-              // This will be handled by the settings validation in the next screen
-            }, 500)
-            return // Exit early, don't navigate normally
-          } catch (error) {
-            logger.group(
-              '❌ Engine Auto-Fix Failed',
-              'Failed to update settings with valid engine',
-              {
-                'Error': error instanceof Error ? error.message : String(error),
-                'Action': 'Continuing with invalid engine',
-                'User Impact': 'May see errors in UI'
-              },
-              '#F44336' // Red for error
-            )
-          }
-        }
-      }
     } catch (error) {
       logger.group(
         '❌ Settings Load Failed',
         'Failed to load global settings from backend',
         {
           'Error': error instanceof Error ? error.message : String(error),
-          'Action': 'Continuing with defaults',
-          'User Impact': 'Will use hardcoded defaults'
+          'Action': 'Continuing with defaults'
         },
         '#F44336' // Red for error
       )

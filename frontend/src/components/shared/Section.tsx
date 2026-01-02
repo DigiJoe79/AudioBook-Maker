@@ -17,7 +17,7 @@ import { Box, Typography, IconButton, Collapse, type SxProps, type Theme, useThe
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 
-export interface SectionProps {
+interface SectionProps {
   /** Section title */
   title: string
 

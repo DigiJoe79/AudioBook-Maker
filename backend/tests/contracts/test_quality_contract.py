@@ -40,7 +40,7 @@ def test_chapter(test_project):
         "projectId": test_project["id"],
         "title": "Quality Contract Test Chapter",
         "orderIndex": 0,
-        "defaultTtsEngine": "xtts",
+        "defaultTtsEngine": "xtts:local",
         "defaultTtsModelName": "v2"
     })
     assert response.status_code == 200
@@ -54,7 +54,7 @@ def test_segment_without_audio(test_chapter):
         "chapterId": test_chapter["id"],
         "text": "Segment ohne Audio für Quality Testing.",
         "orderIndex": 0,
-        "ttsEngine": "xtts",
+        "ttsEngine": "xtts:local",
         "ttsModelName": "v2",
         "ttsSpeakerName": "test-speaker",
         "language": "de"
@@ -71,7 +71,7 @@ def test_frozen_segment(test_chapter):
         "chapterId": test_chapter["id"],
         "text": "Frozen Segment.",
         "orderIndex": 1,
-        "ttsEngine": "xtts",
+        "ttsEngine": "xtts:local",
         "ttsModelName": "v2",
         "ttsSpeakerName": "test-speaker",
         "language": "de"

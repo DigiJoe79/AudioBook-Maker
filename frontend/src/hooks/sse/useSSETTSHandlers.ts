@@ -9,6 +9,7 @@
  * - Segment Events: segment.started, segment.completed, segment.failed
  *
  * Performance Optimizations:
+ * - Uses updateTTSJobInCaches from jobCacheUpdater utility (consolidates duplicated cache update logic)
  * - Uses immer for O(1) cache updates instead of O(n) mapping
  * - Optimistic updates for instant UI feedback
  * - Minimal invalidation to avoid excessive refetches
@@ -33,6 +34,7 @@ import type {
   SegmentFailedData,
 } from '@/types/sseEvents'
 import { logger } from '@utils/logger'
+import { updateTTSJobInCaches } from '@utils/jobCacheUpdater'
 
 // ============================================================================
 // Local Extended Types
@@ -126,68 +128,6 @@ interface ExtendedSegmentFailedData extends SegmentFailedData {
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-/**
- * Helper: Update job in ALL job-related caches (optimistic only)
- *
- * IMPORTANT: Does NOT invalidate queries to avoid excessive refetches.
- * Only updates cache optimistically. Final invalidation happens at job.completed/failed.
- *
- * Optimized with immer: O(1) update instead of O(n) map for 95% performance gain
- */
-function updateJobInAllCaches(
-  queryClient: QueryClient,
-  jobId: string,
-  updates: Partial<TTSJob>
-) {
-  try {
-    // Helper function to update jobs array with immer
-    const updateJobsArray = produce((draft: { jobs?: TTSJob[] } | undefined) => {
-      if (!draft?.jobs) return
-      const job = draft.jobs.find((j: TTSJob) => j.id === jobId)
-      if (job) {
-        Object.assign(job, updates)
-      }
-    })
-
-    // 1. Update activeJobs cache (for badge)
-    queryClient.setQueryData(
-      queryKeys.tts.activeJobs(),
-      updateJobsArray
-    )
-
-    // 2. Update ALL general jobs queries (with any filters)
-    // This updates the JobsPanel dialog
-    queryClient.setQueryData(
-      queryKeys.tts.jobs({ limit: 50 }),
-      updateJobsArray
-    )
-
-    // 3. Update specific job query if it exists
-    queryClient.setQueryData(
-      queryKeys.tts.job(jobId),
-      produce((draft: TTSJob | undefined) => {
-        if (draft) {
-          Object.assign(draft, updates)
-        }
-      })
-    )
-
-    // NO invalidation here - that would cause refetch on every progress event!
-    // Final authoritative refetch happens at job.completed/failed events only
-  } catch (error) {
-    logger.error('[SSE] Failed to update job in all caches', {
-      jobId,
-      updates,
-      error: error instanceof Error ? error.message : String(error)
-    })
-    // Recovery: invalidate to force refetch
-    queryClient.invalidateQueries({
-      queryKey: queryKeys.tts.all,
-      exact: false
-    })
-  }
-}
 
 /**
  * Invalidate queries for a specific chapter
@@ -455,7 +395,7 @@ function handleJobStarted(data: ExtendedJobStartedData, queryClient: QueryClient
       ...(data.ttsEngine && { ttsEngine: data.ttsEngine }),
     }
 
-    updateJobInAllCaches(queryClient, data.jobId, updates)
+    updateTTSJobInCaches(queryClient, data.jobId, updates)
 
     // Invalidate projects list (for ChapterList to show job started)
     // Note: Only once per job (not per segment like segment.started)
@@ -491,7 +431,7 @@ function handleJobProgress(data: ExtendedJobProgressData, queryClient: QueryClie
       updatedAt: new Date(),
     }
 
-    updateJobInAllCaches(queryClient, data.jobId, updates)
+    updateTTSJobInCaches(queryClient, data.jobId, updates)
   } catch (error) {
     logger.error('[SSE] Failed to handle job.progress event:', error)
   }
@@ -527,7 +467,7 @@ function handleJobCompleted(
       updatedAt: new Date(),
     }
 
-    updateJobInAllCaches(queryClient, data.jobId, updates)
+    updateTTSJobInCaches(queryClient, data.jobId, updates)
 
     // Trigger user notification callback
     if (onJobStatusChange && data.chapterId) {
@@ -594,7 +534,7 @@ function handleJobFailed(
       updatedAt: new Date(),
     }
 
-    updateJobInAllCaches(queryClient, data.jobId, updates)
+    updateTTSJobInCaches(queryClient, data.jobId, updates)
 
     // Trigger user notification callback
     if (onJobStatusChange && data.chapterId) {
@@ -659,7 +599,7 @@ function handleJobCancelling(
       updatedAt: new Date(),
     }
 
-    updateJobInAllCaches(queryClient, data.jobId, updates)
+    updateTTSJobInCaches(queryClient, data.jobId, updates)
     // NO invalidation - optimistic update is sufficient
   } catch (error) {
     logger.error('[SSE] Failed to handle job.cancelling event:', error)
@@ -685,7 +625,7 @@ function handleJobCancelled(
       updatedAt: new Date(),
     }
 
-    updateJobInAllCaches(queryClient, data.jobId, updates)
+    updateTTSJobInCaches(queryClient, data.jobId, updates)
 
     // Trigger user notification callback
     if (onJobStatusChange && data.chapterId) {
@@ -750,7 +690,7 @@ function handleJobResumed(data: JobResumedData, queryClient: QueryClient) {
       errorMessage: null,
     }
 
-    updateJobInAllCaches(queryClient, data.jobId, updates)
+    updateTTSJobInCaches(queryClient, data.jobId, updates)
     // NOTE: No invalidateQueries here - optimistic update is sufficient
     // Refetch would overwrite createdAt with the old value from DB
   } catch (error) {

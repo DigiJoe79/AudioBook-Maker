@@ -21,6 +21,16 @@ import type {
   PronunciationRule,
 } from './index'
 import type { QualityJob } from './quality'
+import type {
+  EngineStatusInfo,
+  EngineType,
+  EngineStatus,
+  AllEnginesStatus,
+  DockerImageInfo,
+  DockerImageVariant,
+  DockerCatalogResponse,
+  DockerInstallResponse,
+} from './engines'
 
 // ============================================================================
 // Type Aliases (from OpenAPI-generated types)
@@ -61,6 +71,24 @@ export type ApiQualityJobsListResponse = components['schemas']['QualityJobsListR
 
 /** API response for a pronunciation rule */
 export type ApiPronunciationRule = components['schemas']['PronunciationRuleResponse']
+
+/** API response for engine status info */
+export type ApiEngineStatusInfo = components['schemas']['EngineStatusInfo']
+
+/** API response for all engines status */
+export type ApiAllEnginesStatus = components['schemas']['AllEnginesStatusResponse']
+
+/** API response for Docker image info */
+export type ApiDockerImageInfo = components['schemas']['DockerImageInfo']
+
+/** API response for Docker image variant */
+export type ApiDockerImageVariant = components['schemas']['DockerImageVariant']
+
+/** API response for Docker catalog */
+export type ApiDockerCatalogResponse = components['schemas']['DockerCatalogResponse']
+
+/** API response for Docker install/uninstall */
+export type ApiDockerInstallResponse = components['schemas']['DockerInstallResponse']
 
 // ============================================================================
 // Transform Functions (ISO strings → Date objects)
@@ -217,5 +245,116 @@ export function transformPronunciationRule(api: ApiPronunciationRule): Pronuncia
     projectId: api.projectId ?? undefined,
     createdAt: new Date(api.createdAt),
     updatedAt: new Date(api.updatedAt),
+  }
+}
+
+// ============================================================================
+// Engine Transform Functions (string → Union Types)
+// ============================================================================
+
+/**
+ * Transform API engine status to domain EngineStatusInfo
+ * Narrows loose string types to strict union types
+ */
+export function transformEngineStatusInfo(api: ApiEngineStatusInfo): EngineStatusInfo {
+  return {
+    ...api,
+    engineType: api.engineType as EngineType,
+    status: api.status as EngineStatus,
+    device: api.device as 'cpu' | 'cuda',
+    port: api.port ?? undefined,
+    errorMessage: api.errorMessage ?? undefined,
+    idleTimeoutSeconds: api.idleTimeoutSeconds ?? undefined,
+    secondsUntilAutoStop: api.secondsUntilAutoStop ?? undefined,
+    supportedLanguages: api.supportedLanguages ?? [],
+    allSupportedLanguages: api.allSupportedLanguages ?? undefined,
+    gpuMemoryUsedMb: api.gpuMemoryUsedMb ?? undefined,
+    gpuMemoryTotalMb: api.gpuMemoryTotalMb ?? undefined,
+    availableModels: api.availableModels ?? [],
+    loadedModel: api.loadedModel ?? undefined,
+    defaultModelName: api.defaultModelName ?? undefined,
+    defaultLanguage: api.defaultLanguage ?? undefined,
+    baseEngineName: api.baseEngineName ?? undefined,
+    runnerId: api.runnerId ?? undefined,
+    runnerType: api.runnerType as EngineStatusInfo['runnerType'],
+    runnerHost: api.runnerHost ?? undefined,
+    source: api.source as EngineStatusInfo['source'],
+    dockerImage: api.dockerImage ?? undefined,
+    dockerTag: api.dockerTag ?? undefined,
+    isInstalled: api.isInstalled ?? undefined,
+    parameters: api.parameters ?? undefined,
+  }
+}
+
+/**
+ * Transform API all engines status to domain AllEnginesStatus
+ * Recursively transforms all nested engine status objects
+ */
+export function transformAllEnginesStatus(api: ApiAllEnginesStatus): AllEnginesStatus {
+  return {
+    success: api.success,
+    tts: (api.tts ?? []).map(transformEngineStatusInfo),
+    text: (api.text ?? []).map(transformEngineStatusInfo),
+    stt: (api.stt ?? []).map(transformEngineStatusInfo),
+    audio: (api.audio ?? []).map(transformEngineStatusInfo),
+    hasTtsEngine: api.hasTtsEngine,
+    hasTextEngine: api.hasTextEngine,
+    hasSttEngine: api.hasSttEngine,
+    hasAudioEngine: api.variantGroups !== undefined, // Derive from presence
+    variantGroups: api.variantGroups
+      ? Object.fromEntries(
+          Object.entries(api.variantGroups).map(([key, engines]) => [
+            key,
+            engines.map(transformEngineStatusInfo),
+          ])
+        )
+      : undefined,
+  }
+}
+
+/**
+ * Transform API Docker image variant to domain DockerImageVariant
+ */
+export function transformDockerImageVariant(api: ApiDockerImageVariant): DockerImageVariant {
+  return {
+    tag: api.tag,
+    requiresGpu: api.requiresGpu,
+  }
+}
+
+/**
+ * Transform API Docker image info to domain DockerImageInfo
+ * Narrows engineType string to EngineType union
+ */
+export function transformDockerImageInfo(api: ApiDockerImageInfo): DockerImageInfo {
+  return {
+    ...api,
+    engineType: api.engineType as EngineType,
+    tags: api.tags ?? [],
+    supportedLanguages: api.supportedLanguages ?? [],
+    models: api.models ?? [],
+    variants: (api.variants ?? []).map(transformDockerImageVariant),
+  }
+}
+
+/**
+ * Transform API Docker catalog response to domain DockerCatalogResponse
+ */
+export function transformDockerCatalogResponse(api: ApiDockerCatalogResponse): DockerCatalogResponse {
+  return {
+    success: api.success,
+    images: (api.images ?? []).map(transformDockerImageInfo),
+  }
+}
+
+/**
+ * Transform API Docker install response to domain DockerInstallResponse
+ */
+export function transformDockerInstallResponse(api: ApiDockerInstallResponse): DockerInstallResponse {
+  return {
+    success: api.success,
+    variantId: api.variantId,
+    message: api.message,
+    isInstalled: api.isInstalled,
   }
 }

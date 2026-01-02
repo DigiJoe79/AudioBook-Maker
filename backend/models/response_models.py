@@ -46,6 +46,28 @@ def to_camel(string: str) -> str:
     return components[0] + ''.join(x.title() for x in components[1:])
 
 
+def convert_dict_keys_to_camel(data):
+    """
+    Recursively convert all dict keys from snake_case to camelCase.
+
+    Use this for Dict[str, Any] fields that will be consumed by the frontend.
+    Pydantic's CamelCaseModel only converts field names, not dict contents.
+
+    Following the Consumer-First Principle (see coding standards):
+    - Frontend-consumed dicts → camelCase keys
+    - Backend-consumed dicts → snake_case keys
+
+    Examples:
+        {"engine_type": "tts"} → {"engineType": "tts"}
+        {"supported_languages": ["en"]} → {"supportedLanguages": ["en"]}
+    """
+    if isinstance(data, dict):
+        return {to_camel(k): convert_dict_keys_to_camel(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [convert_dict_keys_to_camel(item) for item in data]
+    return data
+
+
 class CamelCaseModel(BaseModel):
     """
     Base model with automatic snake_case to camelCase conversion.
@@ -206,91 +228,12 @@ class SpeakerResponse(CamelCaseModel):
 # TTS Generation Response Models
 # ============================================================================
 
-class TTSOptionsResponse(CamelCaseModel):
-    """TTS generation options."""
-    temperature: float = Field(default=0.75, description="Generation creativity (0.0-1.0)")
-    length_penalty: float = Field(default=1.0, description="Audio length control")
-    repetition_penalty: float = Field(default=2.0, description="Repetition prevention")
-    top_k: int = Field(default=50, description="Top-K sampling parameter")
-    top_p: float = Field(default=0.85, description="Nucleus sampling parameter")
-    speed: float = Field(default=1.0, description="Playback speed multiplier")
-
-
-class GenerationConstraints(CamelCaseModel):
-    """TTS engine generation constraints."""
-    min_text_length: int = Field(description="Minimum text length for generation")
-    max_text_length: int = Field(description="Default maximum text length")
-    max_text_length_by_lang: Optional[Dict[str, int]] = Field(None, description="Language-specific max lengths")
-    sample_rate: int = Field(description="Audio sample rate in Hz")
-    audio_format: str = Field(description="Output audio format")
-    supports_streaming: bool = Field(description="Whether engine supports streaming")
-    requires_punctuation: bool = Field(description="Whether proper punctuation is required")
-
-
-class TTSEngineInfo(CamelCaseModel):
-    """Full TTS engine information with capabilities."""
-    name: str = Field(description="Unique engine identifier")
-    display_name: str = Field(description="Human-readable display name")
-    supported_languages: List[str] = Field(description="List of supported ISO language codes (filtered by settings)")
-    all_supported_languages: List[str] = Field(default_factory=list, description="All supported ISO language codes (unfiltered, for Settings UI)")
-    constraints: GenerationConstraints = Field(description="Engine-specific generation constraints")
-    default_parameters: Dict[str, Any] = Field(description="Engine-specific default parameters")
-    tts_model_loaded: bool = Field(description="Whether the TTS model is currently loaded in memory")
-    device: str = Field(default="cpu", description="Device being used (cpu/cuda)")
-    is_enabled: bool = Field(default=True, description="Whether engine is enabled in settings")
-    is_running: bool = Field(default=False, description="Whether engine server is currently running")
-    port: Optional[int] = Field(default=None, description="HTTP port if engine is running")
-
-
-class EnginesListResponse(CamelCaseModel):
-    """Response for listing available TTS engines."""
-    success: bool = Field(description="Whether operation succeeded")
-    engines: List[TTSEngineInfo] = Field(description="List of available TTS engines")
-    count: int = Field(description="Number of engines returned")
-
-
-class TTSModelInfo(CamelCaseModel):
-    """Information about a specific TTS model."""
-    tts_model_name: str = Field(description="Model identifier (e.g., 'v2.0.2', 'custom')")
-    display_name: str = Field(description="Human-readable display name")
-    path: str = Field(description="Full path to model directory")
-    version: str = Field(description="Version string")
-    size_mb: Optional[float] = Field(None, description="Model size in MB")
-
-
-class ModelsListResponse(CamelCaseModel):
-    """Response for listing available models for an engine."""
-    success: bool = Field(description="Whether operation succeeded")
-    engine: str = Field(description="Engine type identifier")
-    models: List[TTSModelInfo] = Field(description="List of available models")
-    count: int = Field(description="Number of models returned")
-
-
-class TTSGenerationResponse(CamelCaseModel):
-    """Response for TTS generation operations."""
-    success: bool = Field(description="Whether operation succeeded")
-    message: str = Field(description="Human-readable status message")
-    segment: Optional[SegmentResponse] = Field(None, description="Updated segment (if single generation)")
-    segments: Optional[List[SegmentResponse]] = Field(None, description="Updated segments (if batch generation)")
-
-
 class SegmentQueueResponse(CamelCaseModel):
     """Response for segment queued for TTS generation."""
     success: bool = Field(description="Whether segment was queued successfully")
     job_id: str = Field(description="ID of the created job")
     segment_id: str = Field(description="ID of the segment queued")
     message: str = Field(description="Human-readable status message")
-
-
-class TTSProgressResponse(CamelCaseModel):
-    """Progress tracking for chapter-wide TTS generation."""
-    chapter_id: str = Field(description="Chapter being generated")
-    status: str = Field(description="Status: pending, running, completed, failed")
-    progress: float = Field(description="Progress percentage (0.0-1.0)")
-    current_segment: int = Field(description="Current segment index")
-    total_segments: int = Field(description="Total segments to generate")
-    message: str = Field(description="Current status message")
-    error: Optional[str] = Field(None, description="Error message if failed")
 
 
 class ChapterGenerationStartResponse(CamelCaseModel):
@@ -300,13 +243,6 @@ class ChapterGenerationStartResponse(CamelCaseModel):
     engine: Optional[str] = Field(None, description="Engine being used")
     message: str = Field(description="Human-readable message")
     progress: Optional[float] = Field(None, description="Current progress if already running")
-
-
-class ChapterGenerationCancelResponse(CamelCaseModel):
-    """Response when cancelling chapter generation."""
-    success: bool = Field(description="Whether cancellation succeeded")
-    chapter_id: str = Field(description="Chapter identifier")
-    message: str = Field(description="Human-readable message")
 
 
 # ============================================================================
@@ -332,67 +268,6 @@ class ExportProgressResponse(CamelCaseModel):
     file_size: Optional[int] = Field(None, description="File size in bytes (when completed)")
     duration: Optional[float] = Field(None, description="Total audio duration in seconds (when completed)")
     error: Optional[str] = Field(None, description="Error message (when failed)")
-
-
-class ExportJobResponse(CamelCaseModel):
-    """Full export job details."""
-    id: str = Field(description="Unique job identifier")
-    chapter_id: str = Field(description="Chapter being exported")
-    status: str = Field(description="Job status")
-    output_format: str = Field(description="Target format: mp3, wav, m4a")
-    output_path: Optional[str] = Field(None, description="Final file path/URL")
-    bitrate: Optional[str] = Field(None, description="Audio bitrate (e.g., '192k')")
-    sample_rate: int = Field(default=24000, description="Audio sample rate in Hz")
-    pause_between_segments: int = Field(default=500, description="Pause between segments in ms")
-    total_segments: int = Field(description="Total segments to merge")
-    merged_segments: int = Field(default=0, description="Segments processed so far")
-    file_size: Optional[int] = Field(None, description="Output file size in bytes")
-    duration: Optional[float] = Field(None, description="Total duration in seconds")
-    error_message: Optional[str] = Field(None, description="Error details if failed")
-    created_at: str = Field(description="Job creation timestamp")
-    updated_at: str = Field(description="Last update timestamp")
-    started_at: Optional[str] = Field(None, description="Job start timestamp")
-    completed_at: Optional[str] = Field(None, description="Job completion timestamp")
-
-
-# ============================================================================
-# Settings Response Models
-# ============================================================================
-
-class SettingsResponse(CamelCaseModel):
-    """Application settings response."""
-    id: str = Field(default="default", description="Settings profile ID")
-
-    # General settings
-    theme: str = Field(default="system", description="UI theme: light, dark, system")
-    language: str = Field(default="de", description="UI language: de, en")
-
-    # TTS settings
-    default_engine: str = Field(default="", description="Default TTS engine")
-    default_model: str = Field(default="", description="Default TTS model")
-    default_language: str = Field(default="de", description="Default audio language")
-    default_speaker: Optional[str] = Field(None, description="Default speaker name")
-
-    # TTS parameters
-    temperature: float = Field(default=0.75, description="Default temperature")
-    speed: float = Field(default=1.0, description="Default speed")
-    length_penalty: float = Field(default=1.0, description="Default length penalty")
-    repetition_penalty: float = Field(default=2.0, description="Default repetition penalty")
-    top_k: int = Field(default=50, description="Default top-K")
-    top_p: float = Field(default=0.85, description="Default top-P")
-
-    # Text processing
-    max_segment_length: int = Field(default=500, description="Max segment length")
-    enable_text_splitting: bool = Field(default=True, description="Auto-split long texts")
-
-    # Audio export
-    export_format: str = Field(default="mp3", description="Default export format")
-    export_bitrate: str = Field(default="192k", description="Default export bitrate")
-    export_sample_rate: int = Field(default=24000, description="Default sample rate")
-
-    # Timestamps
-    created_at: str = Field(description="Settings creation timestamp")
-    updated_at: str = Field(description="Last update timestamp")
 
 
 # ============================================================================
@@ -540,10 +415,10 @@ class SettingValueResponse(CamelCaseModel):
 class AllSettingsResponse(CamelCaseModel):
     """Response for all global settings organized by category."""
     engines: Dict[str, Any] = Field(description="Global engine lifecycle settings")
-    tts: Dict[str, Any] = Field(description="TTS-related settings")
+    tts: Dict[str, Any] = Field(default_factory=dict, description="TTS-related settings (legacy, now in engines table)")
     audio: Dict[str, Any] = Field(description="Audio processing settings")
     text: Dict[str, Any] = Field(description="Text processing settings")
-    stt: Dict[str, Any] = Field(description="STT (Speech-to-Text) settings")
+    stt: Dict[str, Any] = Field(default_factory=dict, description="STT settings (legacy, now in engines table)")
     quality: Dict[str, Any] = Field(description="Quality analysis settings")
     languages: Dict[str, Any] = Field(description="Language-related settings")
 
@@ -796,10 +671,8 @@ class QualityJobCreatedResponse(CamelCaseModel):
 # Import System Models
 # ============================================================================
 
-class MappingRules(BaseModel):
+class MappingRules(CamelCaseModel):
     """Configurable markdown parsing rules"""
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
-
     project_heading: str = "#"  # Default: # Heading 1
     chapter_heading: str = "###"  # Default: ### Heading 3
     divider_pattern: str = "***"  # Default: ***
@@ -810,19 +683,6 @@ class ImportWarning(CamelCaseModel):
     type: str  # e.g., 'too_long', 'empty', 'no_project_title'
     message: str
     severity: Literal["critical", "warning", "info"]
-
-
-# Commented out for performance - Preview now shows only stats, not individual segments
-# Segments are still generated internally and used for stats calculation
-# Uncomment if detailed segment preview is needed in the future
-# class SegmentPreview(CamelCaseModel):
-#     """Preview of a single segment"""
-#     id: str  # Temporary ID for frontend
-#     type: Literal["text", "divider"]
-#     content: Optional[str] = None  # Only for text segments
-#     char_count: Optional[int] = None  # Only for text segments
-#     pause_duration: Optional[int] = None  # Only for dividers
-#     order_index: int
 
 
 class ChapterStats(CamelCaseModel):
@@ -861,10 +721,8 @@ class ImportPreviewResponse(CamelCaseModel):
     stats: ImportStats
 
 
-class ImportConfig(BaseModel):
+class ImportConfig(CamelCaseModel):
     """Configuration for final import"""
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
-
     mode: Literal["new", "merge"]
     merge_target_id: Optional[str] = None
     selected_chapters: List[Dict[str, Any]]  # [{original_title, new_title?, include}]
@@ -896,7 +754,7 @@ class EngineStatusInfo(CamelCaseModel):
         - 'stopping': Engine server is being stopped (shutdown in progress)
         - 'error': Engine encountered an error
     """
-    name: str = Field(description="Unique engine identifier")
+    variant_id: str = Field(description="Unique engine variant identifier (e.g., 'xtts:local', 'xtts:docker:local')")
     display_name: str = Field(description="Human-readable display name")
     version: str = Field(description="Engine version")
     engine_type: str = Field(description="Engine type: 'tts', 'text', 'stt', or 'audio'")
@@ -905,6 +763,7 @@ class EngineStatusInfo(CamelCaseModel):
     is_enabled: bool = Field(description="Whether engine is enabled in settings")
     is_running: bool = Field(description="Whether engine server is currently running")
     is_default: bool = Field(default=False, description="True for default engine of its type")
+    is_pulling: bool = Field(default=False, description="True when Docker image pull is in progress")
     status: str = Field(description="Status: 'disabled', 'stopped', 'starting', 'running', 'stopping', 'error'")
     port: Optional[int] = Field(None, description="HTTP port if engine is running")
     error_message: Optional[str] = Field(None, description="Error message if status='error'")
@@ -919,10 +778,30 @@ class EngineStatusInfo(CamelCaseModel):
     all_supported_languages: List[str] = Field(default_factory=list, description="All supported ISO language codes (unfiltered, for Settings UI)")
     device: str = Field(default="cpu", description="Device: 'cpu' or 'cuda'")
 
+    # GPU memory info (only populated when device='cuda' and engine is running)
+    gpu_memory_used_mb: Optional[int] = Field(None, description="GPU VRAM used by this engine (MB)")
+    gpu_memory_total_mb: Optional[int] = Field(None, description="GPU VRAM total (MB)")
+
     # Models (for engines that support multiple models)
     available_models: List[str] = Field(default_factory=list, description="List of available model names")
     loaded_model: Optional[str] = Field(None, description="Currently loaded model name")
-    default_model_name: Optional[str] = Field(None, description="Default model name from settings (per-engine)")
+    default_model_name: Optional[str] = Field(None, description="Default model name (from engine_models.is_default)")
+    default_language: Optional[str] = Field(None, description="Default language from settings (per-engine, for TTS)")
+
+    # Variant fields (for engine variants architecture)
+    base_engine_name: Optional[str] = Field(None, description="Base engine name without runner (e.g., 'xtts')")
+    runner_id: Optional[str] = Field(None, description="Runner identifier (e.g., 'local', 'docker:local')")
+    runner_type: Optional[str] = Field(None, description="'subprocess' | 'docker:local' | 'docker:remote'")
+    runner_host: Optional[str] = Field(None, description="Host name for Docker runners")
+    source: Optional[str] = Field(None, description="'local' | 'docker'")
+
+    # Docker-specific fields
+    docker_image: Optional[str] = Field(None, description="Docker image name (for docker variants)")
+    docker_tag: Optional[str] = Field(None, description="Installed Docker image tag (e.g., 'latest', 'cpu')")
+    is_installed: Optional[bool] = Field(None, description="Whether Docker image is installed")
+
+    # Engine parameters (user-configured values from engines table)
+    parameters: Optional[Dict[str, Any]] = Field(None, description="Engine-specific parameters")
 
 
 class AllEnginesStatusResponse(CamelCaseModel):
@@ -941,3 +820,169 @@ class AllEnginesStatusResponse(CamelCaseModel):
     has_tts_engine: bool = Field(description="At least one enabled TTS engine exists")
     has_text_engine: bool = Field(description="At least one enabled text engine exists")
     has_stt_engine: bool = Field(description="At least one enabled STT engine exists")
+
+    # Variant grouping for UI
+    variant_groups: Optional[Dict[str, List[EngineStatusInfo]]] = Field(
+        None,
+        description="Engines grouped by runner type: {'subprocess': [...], 'docker:local': [...]}"
+    )
+
+
+# ============================================================================
+# Docker Catalog Response Models
+# ============================================================================
+
+class DockerImageVariant(CamelCaseModel):
+    """Information about a specific Docker image variant (tag)."""
+    tag: str = Field(description="Docker image tag (e.g., 'latest', 'cpu')")
+    requires_gpu: bool = Field(default=False, description="Whether this variant requires GPU")
+
+
+class DockerImageInfo(CamelCaseModel):
+    """Docker image information from catalog."""
+    engine_name: str = Field(description="Base engine name (e.g., 'xtts')")
+    image: str = Field(description="Docker image name")
+    engine_type: str = Field(description="Engine type: 'tts', 'stt', 'text', 'audio'")
+    display_name: str = Field(description="Human-readable name")
+    description: str = Field(default="", description="Engine description")
+    requires_gpu: bool = Field(default=False, description="Whether GPU is required (any variant)")
+    tags: List[str] = Field(default_factory=list, description="Available image tags")
+    default_tag: str = Field(default="latest", description="Default tag to use")
+    supported_languages: List[str] = Field(default_factory=list, description="Supported ISO language codes")
+    models: List[str] = Field(default_factory=list, description="Available models")
+    variants: List[DockerImageVariant] = Field(default_factory=list, description="Variant-specific metadata (tag + GPU requirement)")
+
+
+class DockerCatalogResponse(CamelCaseModel):
+    """Response for GET /api/engines/catalog."""
+    success: bool = Field(description="Whether operation succeeded")
+    images: List[DockerImageInfo] = Field(default_factory=list, description="Available Docker images")
+
+
+class DockerInstallResponse(CamelCaseModel):
+    """Response for Docker image install/uninstall."""
+    success: bool = Field(description="Whether operation succeeded")
+    variant_id: str = Field(description="Variant ID that was modified")
+    message: str = Field(description="Status message")
+    is_installed: bool = Field(description="Current installation status")
+
+
+class ImageUpdateCheckResponse(CamelCaseModel):
+    """
+    Response for Docker image update check.
+
+    Compares local image digest with registry to detect available updates
+    without downloading the full image.
+    """
+    success: bool = Field(description="Whether the check completed successfully")
+    variant_id: str = Field(description="Engine variant ID that was checked")
+    is_installed: bool = Field(description="Whether image exists locally")
+    update_available: Optional[bool] = Field(None, description="True if update available, None if unknown/not installed")
+    local_digest: Optional[str] = Field(None, description="Local image digest (truncated)")
+    remote_digest: Optional[str] = Field(None, description="Remote registry digest (truncated)")
+    error: Optional[str] = Field(None, description="Error message if check failed")
+
+
+# ============================================================================
+# Engine Host Response Models
+# ============================================================================
+
+class EngineHostResponse(CamelCaseModel):
+    """Response model for an engine host."""
+    host_id: str = Field(description="Unique host identifier")
+    host_type: str = Field(description="Host type: 'subprocess', 'docker:local', 'docker:remote'")
+    display_name: str = Field(description="Human-readable name")
+    ssh_url: Optional[str] = Field(None, description="SSH URL for remote Docker hosts")
+    is_available: bool = Field(default=True, description="Whether host is available")
+    has_gpu: Optional[bool] = Field(None, description="Whether host has NVIDIA GPU runtime (null if not tested)")
+    last_checked_at: Optional[str] = Field(None, description="Last availability check timestamp")
+    created_at: str = Field(description="Creation timestamp")
+    engine_count: int = Field(default=0, description="Number of engines on this host")
+
+
+class EngineHostsListResponse(CamelCaseModel):
+    """Response for listing engine hosts."""
+    success: bool = Field(default=True)
+    hosts: List[EngineHostResponse] = Field(description="List of hosts")
+    count: int = Field(description="Number of hosts")
+
+
+class ConnectionTestResponse(CamelCaseModel):
+    """Response for connection test."""
+    success: bool = Field(description="Whether connection succeeded")
+    docker_version: Optional[str] = Field(None, description="Docker version")
+    os: Optional[str] = Field(None, description="Host OS")
+    error: Optional[str] = Field(None, description="Error message if failed")
+
+
+class DockerVolumesResponse(CamelCaseModel):
+    """Response for Docker volume configuration."""
+    success: bool = Field(default=True, description="Whether operation succeeded")
+    host_id: str = Field(description="Host identifier")
+    samples_path: Optional[str] = Field(None, description="Host path for speaker samples")
+    models_path: Optional[str] = Field(None, description="Host path for external models")
+    validation_error: Optional[str] = Field(None, description="Path validation error if any")
+
+
+class PrepareHostResponse(CamelCaseModel):
+    """Response for prepare host operation (SSH key generation)."""
+    success: bool = Field(default=True, description="Whether key generation succeeded")
+    host_id: str = Field(description="Generated host identifier")
+    public_key: str = Field(description="Public key to add to remote authorized_keys")
+    install_command: str = Field(description="Shell command to install the key on remote host")
+    authorized_keys_entry: str = Field(description="The authorized_keys entry with restrictions")
+
+
+class TestHostResponse(CamelCaseModel):
+    """Response from testing a remote Docker host connection."""
+    success: bool = Field(description="Whether connection test succeeded")
+    docker_version: Optional[str] = Field(None, description="Docker version on remote host")
+    has_gpu: bool = Field(default=False, description="Whether host has NVIDIA GPU runtime")
+    has_docker_permission: bool = Field(default=False, description="Whether user can access Docker")
+    error: Optional[str] = Field(None, description="Error message if test failed")
+    error_category: Optional[str] = Field(None, description="Error category for i18n")
+
+
+class HostPublicKeyResponse(CamelCaseModel):
+    """Response for host public key retrieval."""
+    success: bool = Field(default=True, description="Whether key was found")
+    host_id: str = Field(description="Host identifier")
+    public_key: Optional[str] = Field(None, description="Public key for the host")
+    install_command: Optional[str] = Field(None, description="Shell command to install the key")
+
+
+# ============================================================================
+# Docker/Catalog Response Models
+# ============================================================================
+
+class CatalogSyncResponse(CamelCaseModel):
+    """Response from catalog sync operation"""
+
+    success: bool
+    added: int = 0
+    updated: int = 0
+    skipped: int = 0
+    message: str = ""
+
+
+class DiscoverModelsResponse(CamelCaseModel):
+    """Response for model discovery."""
+
+    success: bool
+    variant_id: str
+    models: List[str]
+    message: str
+
+
+class DockerDiscoverResponse(CamelCaseModel):
+    """Response from Docker engine discovery"""
+    success: bool
+    engine_info: Optional[Dict[str, Any]] = None  # The /info Response
+    error: Optional[str] = None
+
+
+class DockerRegisterResponse(CamelCaseModel):
+    """Response from Docker engine registration"""
+    success: bool
+    variant_id: Optional[str] = None  # e.g. "my-tts:docker:local"
+    error: Optional[str] = None

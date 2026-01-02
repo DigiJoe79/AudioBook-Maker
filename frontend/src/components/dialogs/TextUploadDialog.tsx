@@ -71,10 +71,8 @@ export const TextUploadDialog: React.FC<TextUploadDialogProps> = ({
   const { t } = useTranslation();
   const { showError, ErrorDialog } = useError();
 
-  // Get default settings from store (DB)
+  // Get default engine from store (DB)
   const getDefaultTtsEngine = useAppStore((state) => state.getDefaultTtsEngine);
-  const getDefaultTtsModel = useAppStore((state) => state.getDefaultTtsModel);
-  const getDefaultLanguage = useAppStore((state) => state.getDefaultLanguage);
   const settings = useAppStore((state) => state.settings);
 
   // Default speaker from speakers table (single source of truth)
@@ -104,11 +102,11 @@ export const TextUploadDialog: React.FC<TextUploadDialogProps> = ({
   // State for segmentation
   const [textLanguage, setTextLanguage] = useState<string>('');
 
-  // State for TTS settings (initialized from DB defaults)
+  // State for TTS settings
   const defaultEngine = getDefaultTtsEngine();
   const [ttsEngine, setTtsEngine] = useState<string>(defaultEngine);
-  const [ttsModelName, setTtsModelName] = useState<string>(getDefaultTtsModel(defaultEngine));
-  const [language, setLanguage] = useState<string>(getDefaultLanguage());
+  const [ttsModelName, setTtsModelName] = useState<string>('');
+  const [language, setLanguage] = useState<string>('de');
   const [speaker, setSpeaker] = useState(defaultSpeakerData?.name || '');
 
   // State for accordion
@@ -118,16 +116,16 @@ export const TextUploadDialog: React.FC<TextUploadDialogProps> = ({
   const [uploading, setUploading] = useState(false);
 
   // Get engine info for selected engine
-  const engineInfo = engines.find((e) => e.name === ttsEngine);
+  const engineInfo = engines.find((e) => e.variantId === ttsEngine);
   const models = engineInfo?.availableModels ?? [];
 
-  // Calculate available languages: supportedLanguages + defaultLanguage from DB (if not already included)
+  // Calculate available languages: supportedLanguages + defaultLanguage from engine (if not already included)
   const availableLanguages = React.useMemo(() => {
     if (!engineInfo) return [];
 
     const supported = engineInfo.supportedLanguages || [];
-    const engineConfig = settings?.tts.engines[ttsEngine];
-    const dbDefaultLanguage = engineConfig?.defaultLanguage;
+    // Get default language directly from engine status (Single Source of Truth)
+    const dbDefaultLanguage = engineInfo.defaultLanguage;
 
     // Add DB default language if it's not already in supported languages
     if (dbDefaultLanguage && !supported.includes(dbDefaultLanguage)) {
@@ -135,7 +133,7 @@ export const TextUploadDialog: React.FC<TextUploadDialogProps> = ({
     }
 
     return supported;
-  }, [engineInfo, settings, ttsEngine]);
+  }, [engineInfo]);
 
   // Initialize text language when languages are loaded
   useEffect(() => {
@@ -145,16 +143,27 @@ export const TextUploadDialog: React.FC<TextUploadDialogProps> = ({
     }
   }, [textLanguages, textLanguagesLoading, textLanguage]);
 
-  // Update TTS settings when dialog opens or default settings change
+  // Update TTS settings when dialog opens
   useEffect(() => {
     if (open) {
       const engine = getDefaultTtsEngine();
       setTtsEngine(engine);
-      setTtsModelName(getDefaultTtsModel(engine));
-      setLanguage(getDefaultLanguage());
+      // Model and language will be set by engineInfo useEffect below
       setSpeaker(defaultSpeakerData?.name || '');
     }
-  }, [open, getDefaultTtsEngine, getDefaultTtsModel, getDefaultLanguage, defaultSpeakerData]);
+  }, [open, getDefaultTtsEngine, defaultSpeakerData]);
+
+  // Initialize model and language from engineInfo when it loads
+  useEffect(() => {
+    if (engineInfo && open) {
+      if (engineInfo.defaultModelName && !ttsModelName) {
+        setTtsModelName(engineInfo.defaultModelName);
+      }
+      if (engineInfo.defaultLanguage && language === 'de') {
+        setLanguage(engineInfo.defaultLanguage);
+      }
+    }
+  }, [engineInfo, open, ttsModelName, language]);
 
   // Auto-select model when engine changes: use DB default if available, otherwise use first model
   useEffect(() => {
@@ -163,8 +172,8 @@ export const TextUploadDialog: React.FC<TextUploadDialogProps> = ({
 
       // If current model is invalid or empty, select best available model
       if (!modelExists || !ttsModelName) {
-        // Get per-engine default model
-        const dbDefaultModel = getDefaultTtsModel(ttsEngine);
+        // Get per-engine default model from engineInfo (Single Source of Truth)
+        const dbDefaultModel = engineInfo?.defaultModelName || '';
         const defaultModelAvailable = models.includes(dbDefaultModel);
 
         if (dbDefaultModel && defaultModelAvailable) {
@@ -172,11 +181,11 @@ export const TextUploadDialog: React.FC<TextUploadDialogProps> = ({
 
           logger.group(
             '🔧 Text Upload - Model Auto-Select',
-            'Using default model from DB settings',
+            'Using default model from engine status',
             {
               'Engine': ttsEngine,
               'Selected Model': dbDefaultModel,
-              'Source': 'settings.tts.engines.{engine}.defaultModelName',
+              'Source': 'engineInfo.defaultModelName',
               'Available Models': models
             },
             '#4CAF50'
@@ -200,26 +209,25 @@ export const TextUploadDialog: React.FC<TextUploadDialogProps> = ({
         }
       }
     }
-  }, [ttsEngine, models, ttsModelName, getDefaultTtsModel]);
+  }, [ttsEngine, models, ttsModelName, engineInfo]);
 
-  // Auto-select language when engine changes: use DB default if available, otherwise use first language
+  // Auto-select language when engine changes: use default if available, otherwise use first language
   useEffect(() => {
     if (engineInfo && availableLanguages.length > 0) {
-      // Get default language from engine settings
-      const engineConfig = settings?.tts.engines[ttsEngine];
-      const dbDefaultLanguage = engineConfig?.defaultLanguage;
+      // Get default language from engine status (Single Source of Truth)
+      const dbDefaultLanguage = engineInfo.defaultLanguage;
 
-      // Use DB default if available, otherwise use first available language
+      // Use default if available, otherwise use first available language
       if (dbDefaultLanguage && availableLanguages.includes(dbDefaultLanguage)) {
         setLanguage(dbDefaultLanguage);
 
         logger.group(
           '🌍 Text Upload - Language Auto-Select',
-          'Using engine default language from DB settings',
+          'Using engine default language from engine status',
           {
             'Engine': ttsEngine,
             'Selected Language': dbDefaultLanguage,
-            'Source': 'settings.tts.engines.defaultLanguage',
+            'Source': 'engineInfo.defaultLanguage',
             'Available Languages': availableLanguages
           },
           '#4CAF50'
@@ -241,7 +249,7 @@ export const TextUploadDialog: React.FC<TextUploadDialogProps> = ({
         );
       }
     }
-  }, [ttsEngine, engineInfo, settings, availableLanguages]);
+  }, [ttsEngine, engineInfo, availableLanguages]);
 
   // Reset text and file after dialog closes (after animation completes)
   useEffect(() => {
@@ -532,12 +540,12 @@ export const TextUploadDialog: React.FC<TextUploadDialogProps> = ({
                       <FormControl fullWidth disabled={enginesLoading}>
                         <InputLabel>{t('tts.engine')}</InputLabel>
                         <Select
-                          value={engines.some((e) => e.name === ttsEngine) ? ttsEngine : ''}
+                          value={engines.some((e) => e.variantId === ttsEngine) ? ttsEngine : ''}
                           onChange={(e) => setTtsEngine(e.target.value)}
                           label={t('tts.engine')}
                         >
                           {engines.map((eng) => (
-                            <MenuItem key={eng.name} value={eng.name}>
+                            <MenuItem key={eng.variantId} value={eng.variantId}>
                               {eng.displayName}
                             </MenuItem>
                           ))}

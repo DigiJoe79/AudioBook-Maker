@@ -361,7 +361,7 @@ const JobCard = memo(
           {/* Error Message */}
           {job.status === 'failed' && job.errorMessage && (
             <Alert severity="error" sx={{ mt: 1.5, py: 0.5 }}>
-              <Typography variant="caption">{job.errorMessage}</Typography>
+              <Typography variant="caption">{translateBackendError(job.errorMessage, t)}</Typography>
             </Alert>
           )}
         </Box>

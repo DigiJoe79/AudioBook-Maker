@@ -37,7 +37,6 @@ import { fetchSpeakers } from '@services/settingsApi';
 import { queryKeys } from '@services/queryKeys';
 import type { Segment } from '@types';
 import { logger } from '@utils/logger';
-import { useAppStore } from '@store/appStore';
 
 interface EditSegmentSettingsDialogProps {
   open: boolean;
@@ -60,9 +59,6 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
   const { t } = useTranslation();
   const { showError, ErrorDialog } = useError();
 
-  // Get settings for default language
-  const settings = useAppStore(state => state.settings);
-
   // Local state - IMPORTANT: Use empty string for invalid/missing values
   const [selectedEngine, setSelectedEngine] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>('');
@@ -73,7 +69,7 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
   // Load available engines and models (only enabled engines)
   const { data: enginesStatus, isLoading: enginesLoading } = useAllEnginesStatus();
   const availableEngines = (enginesStatus?.tts ?? []).filter(e => e.isEnabled);
-  const selectedEngineInfo = availableEngines.find(e => e.name === selectedEngine);
+  const selectedEngineInfo = availableEngines.find(e => e.variantId === selectedEngine);
   const availableModels = selectedEngineInfo?.availableModels ?? [];
 
   // Load available speakers
@@ -92,7 +88,7 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
   useEffect(() => {
     if (segment && open) {
       // Check if engine is valid
-      const engineExists = availableEngines.some(e => e.name === segment.ttsEngine);
+      const engineExists = availableEngines.some(e => e.variantId === segment.ttsEngine);
       setSelectedEngine(engineExists ? segment.ttsEngine : '');
 
       // Check if model is valid (will be validated when models load)
@@ -134,9 +130,8 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
 
       // If current model is invalid or empty, select best available model
       if (!modelExists || !selectedModel) {
-        // Try per-engine default model first
-        const engineConfig = settings?.tts.engines[selectedEngine];
-        const perEngineDefault = engineConfig?.defaultModelName;
+        // Try per-variant default model from engine status (Single Source of Truth)
+        const perEngineDefault = selectedEngineInfo?.defaultModelName;
         const perEngineModelAvailable = perEngineDefault && availableModels.includes(perEngineDefault);
 
         if (perEngineModelAvailable) {
@@ -144,12 +139,12 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
 
           logger.group(
             '🔄 Engine Model Auto-Select',
-            'Using per-engine default model from settings',
+            'Using per-engine default model from engine status',
             {
               'Engine': selectedEngine,
               'Auto-Selected Model': perEngineDefault,
               'Previous Model': selectedModel || '(none)',
-              'Source': 'settings.tts.engines.defaultModelName'
+              'Source': 'selectedEngineInfo.defaultModelName'
             },
             '#4CAF50'
           );
@@ -172,15 +167,14 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
         }
       }
     }
-  }, [selectedEngine, availableModels, settings]);
+  }, [selectedEngine, availableModels, selectedEngineInfo]);
 
   // Auto-select default language when engine changes
   useEffect(() => {
     if (selectedEngine && supportedLanguages.length > 0) {
       // ALWAYS set default language when engine changes (not just when invalid)
-      // Get default language from engine settings
-      const engineConfig = settings?.tts.engines[selectedEngine];
-      const defaultLanguage = engineConfig?.defaultLanguage;
+      // Get default language from engine status (Single Source of Truth)
+      const defaultLanguage = selectedEngineInfo?.defaultLanguage;
 
       // Use default if valid, otherwise use first supported language
       if (defaultLanguage && supportedLanguages.includes(defaultLanguage)) {
@@ -188,12 +182,12 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
 
         logger.group(
           '🌍 Engine Language Auto-Select',
-          'Automatically selected default language from settings',
+          'Automatically selected default language from engine status',
           {
             'Engine': selectedEngine,
             'Auto-Selected Language': defaultLanguage,
             'Previous Language': selectedLanguage || '(none)',
-            'Source': 'settings.tts.engines.defaultLanguage'
+            'Source': 'selectedEngineInfo.defaultLanguage'
           },
           '#4CAF50'
         );
@@ -214,7 +208,7 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
         );
       }
     }
-  }, [selectedEngine, supportedLanguages, settings]);
+  }, [selectedEngine, supportedLanguages, selectedEngineInfo]);
 
   const handleSave = async () => {
     if (!segment) return;
@@ -314,7 +308,7 @@ export const EditSegmentSettingsDialog: React.FC<EditSegmentSettingsDialogProps>
                   displayEmpty={false}
                 >
                   {availableEngines.map((engine) => (
-                    <MenuItem key={engine.name} value={engine.name}>
+                    <MenuItem key={engine.variantId} value={engine.variantId}>
                       {engine.displayName}
                     </MenuItem>
                   ))}

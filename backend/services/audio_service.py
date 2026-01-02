@@ -271,92 +271,10 @@ class AudioService:
             logger.error(f"Unexpected error during conversion: {e}")
             raise RuntimeError(f"Audio conversion failed: {str(e)}")
 
-    def add_silence(self, audio_path: Path, silence_ms: int, position: str = 'end') -> Path:
-        """
-        Add silence to audio file
-
-        Args:
-            audio_path: Path to audio file
-            silence_ms: Duration of silence in milliseconds
-            position: Where to add silence ('start', 'end', or 'both')
-
-        Returns:
-            Path to modified audio file
-        """
-        audio = AudioSegment.from_file(str(audio_path))
-        silence = AudioSegment.silent(duration=silence_ms)
-
-        if position == 'start':
-            audio = silence + audio
-        elif position == 'end':
-            audio = audio + silence
-        elif position == 'both':
-            audio = silence + audio + silence
-        else:
-            raise ValueError(f"Invalid position: {position}")
-
-        # Overwrite the original file
-        audio.export(str(audio_path), format=audio_path.suffix[1:])
-        return audio_path
-
     def get_audio_duration(self, audio_path: Path) -> float:
         """Get duration of audio file in seconds"""
         audio = AudioSegment.from_file(str(audio_path))
         return len(audio) / 1000.0
-
-    def get_file_size(self, file_path: Path) -> int:
-        """Get file size in bytes"""
-        return file_path.stat().st_size
-
-    def estimate_file_size(
-        self,
-        duration_seconds: float,
-        format: str,
-        bitrate: Optional[str] = None,
-        sample_rate: int = 24000
-    ) -> int:
-        """
-        Estimate output file size based on duration and format
-
-        Args:
-            duration_seconds: Audio duration in seconds
-            format: Output format (mp3, m4a, wav)
-            bitrate: Bitrate for compressed formats
-            sample_rate: Sample rate in Hz
-
-        Returns:
-            Estimated file size in bytes
-        """
-        if format.lower() == 'wav':
-            # WAV is uncompressed: size = sample_rate * bit_depth * channels * duration
-            # Assuming 16-bit stereo
-            bytes_per_second = sample_rate * 2 * 2  # 16-bit = 2 bytes, stereo = 2 channels
-            return int(duration_seconds * bytes_per_second)
-        else:
-            # Compressed formats: use bitrate
-            if not bitrate:
-                bitrate = '192k'  # Default
-
-            # Parse bitrate (e.g., '192k' -> 192000)
-            if bitrate.endswith('k'):
-                bitrate_bps = int(bitrate[:-1]) * 1000
-            else:
-                bitrate_bps = int(bitrate)
-
-            # Calculate size (add 10% overhead for metadata and encoding)
-            bytes_total = (bitrate_bps * duration_seconds) / 8
-            return int(bytes_total * 1.1)
-
-    def validate_audio_file(self, file_path: Path) -> bool:
-        """Validate that file exists and is readable as audio"""
-        if not file_path.exists():
-            return False
-
-        try:
-            audio = AudioSegment.from_file(str(file_path))
-            return len(audio) > 0
-        except Exception:
-            return False
 
     def cleanup_temp_files(self, job_id: str):
         """Clean up temporary files for an export job"""

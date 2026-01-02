@@ -12,12 +12,12 @@
  * Supported field rendering types.
  * Each type determines how the value is formatted in the UI.
  */
-export type FieldType = 'percent' | 'seconds' | 'text' | 'string' | 'number'
+type FieldType = 'percent' | 'seconds' | 'text' | 'string' | 'number'
 
 /**
  * Severity levels for info block items.
  */
-export type Severity = 'error' | 'warning' | 'info'
+type Severity = 'error' | 'warning' | 'info'
 
 /**
  * Overall quality status.
@@ -42,7 +42,7 @@ export interface QualityField {
 /**
  * Single item in an info block.
  */
-export interface InfoBlockItem {
+interface InfoBlockItem {
   /** i18n key or display text */
   text: string
   /** Severity determines icon/color */
@@ -55,7 +55,7 @@ export interface InfoBlockItem {
  * Engine-specific details for UI rendering.
  * Structure is defined by engine, rendered generically by frontend.
  */
-export interface QualityEngineDetails {
+interface QualityEngineDetails {
   /** i18n key for section header (e.g., "whisperTranscription") */
   topLabel: string
   /** Ordered key-value pairs to display */
@@ -84,7 +84,7 @@ export interface QualityEngineResult {
  * Combined quality analysis result for a segment.
  * Aggregates results from all engines.
  */
-export interface QualityAnalysisResult {
+interface QualityAnalysisResult {
   /** Aggregated score (average of all engines) */
   qualityScore: number
   /** Worst status from all engines */
@@ -99,7 +99,7 @@ export interface QualityAnalysisResult {
  * Segment status within a quality job.
  * Tracks whether segment has been analyzed in this job (for resume support).
  */
-export interface QualityJobSegmentStatus {
+interface QualityJobSegmentStatus {
   id: string
   jobStatus: 'pending' | 'analyzed'
 }
@@ -150,7 +150,7 @@ export interface QualityJobsListResponse {
  * Segment with quality analysis data.
  * Extends base Segment with quality fields from backend.
  */
-export interface SegmentQualityData {
+interface SegmentQualityData {
   /** Whether any analysis has been performed */
   qualityAnalyzed?: boolean
   /** Aggregated quality score (0-100) */

@@ -44,6 +44,7 @@ import {
   ViewContent,
 } from '@components/layout/ViewComponents'
 import EnginesView from './EnginesView'
+import EngineHostsTab from '@components/settings/EngineHostsTab'
 
 // ============================================================================
 // Tab Panel Component
@@ -209,6 +210,7 @@ const SettingsView = memo(() => {
         <Tabs value={activeTab} onChange={handleTabChange}>
           <Tab label={t('settings.tabs.general')} />
           <Tab label={t('settings.tabs.engines')} />
+          <Tab label={t('settings.tabs.docker')} />
         </Tabs>
       </ViewToolbar>
 
@@ -447,6 +449,11 @@ const SettingsView = memo(() => {
         {/* Engines Tab */}
         <TabPanel value={activeTab} index={1}>
           <EnginesView embedded />
+        </TabPanel>
+
+        {/* Engine Hosts Tab */}
+        <TabPanel value={activeTab} index={2}>
+          <EngineHostsTab />
         </TabPanel>
       </ViewContent>
 

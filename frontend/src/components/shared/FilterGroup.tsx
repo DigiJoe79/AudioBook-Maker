@@ -13,7 +13,7 @@
 import React from 'react'
 import { Box, type SxProps, type Theme } from '@mui/material'
 
-export interface FilterGroupProps {
+interface FilterGroupProps {
   /** Filter controls */
   children: React.ReactNode
 
@@ -44,7 +44,7 @@ export const FilterGroup: React.FC<FilterGroupProps> = ({ children, sx }) => {
  * Individual filter control with label.
  */
 
-export interface FilterItemProps {
+interface FilterItemProps {
   /** Filter label */
   label: string
 

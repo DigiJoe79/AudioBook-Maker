@@ -18,55 +18,27 @@
 import { create } from 'zustand'
 import { produce } from 'immer'
 import type { BackendProfile, SessionState, EngineAvailability } from '@types'
+import type { AllEnginesStatus } from '@/types/engines'
 import { logger } from '@utils/logger'
+import { queryClient } from '@services/queryClient'
+import { queryKeys } from '@services/queryKeys'
 
 // ============================================================================
 // Types & Interfaces
 // ============================================================================
 
-// Common engine settings structure
-interface EngineSettings {
-  enabled?: boolean;
-  defaultModelName?: string;
-  parameters?: Record<string, unknown>;
-}
-
 export interface GlobalSettings {
-  tts: {
-    defaultTtsEngine: string;
-    // NOTE: defaultTtsModelName removed - now per-engine (see engines.*.defaultModelName)
-    // NOTE: defaultTtsSpeaker removed - speakers table (is_default flag) is the single source of truth
-    //       Use useDefaultSpeaker() hook to get the default speaker
-    engines: {
-      [engineName: string]: EngineSettings & {
-        defaultLanguage: string;
-      };
-    };
-  };
+  // NOTE: Default engines are now in engines.is_default (Single Source of Truth)
+  // NOTE: Per-variant settings are now in engines table
   audio: {
     // Export settings
     defaultFormat: 'mp3' | 'wav' | 'm4a';
     defaultQuality: 'low' | 'medium' | 'high';
     pauseBetweenSegments: number;
     defaultDividerDuration: number;
-    // Audio Analysis Engine settings
-    defaultAudioEngine?: string;
-    engines?: {
-      [engineName: string]: EngineSettings;
-    };
   };
   text: {
-    defaultTextEngine?: string;  // Text processing engine to use
     preferredMaxSegmentLength: number;
-    engines?: {
-      [engineName: string]: EngineSettings;
-    };
-  };
-  stt: {
-    defaultSttEngine: string;
-    engines?: {
-      [engineName: string]: EngineSettings;
-    };
   };
   quality: {
     autoAnalyzeSegment: boolean;
@@ -90,7 +62,7 @@ interface ConnectionState {
   profile: BackendProfile | null
 }
 
-export interface AppStore {
+interface AppStore {
   // ====== Backend Connection ======
   connection: ConnectionState
 
@@ -105,14 +77,10 @@ export interface AppStore {
   lastSessionState: SessionState | null
 
   // ====== Computed Getters ======
-  // Direct access to DB Settings defaults
+  // Get default engine from engines status (Single Source of Truth: engines.is_default)
+  // Note: For default model/language, use engineInfo from useAllEnginesStatus() hook
   getDefaultTtsEngine: () => string
-  getDefaultTtsModel: (engineName?: string) => string  // Per-engine default model
-  getDefaultLanguage: (engineName?: string) => string
-
-  // STT getters
   getDefaultSttEngine: () => string
-  getDefaultSttModel: (engineName?: string) => string  // Per-engine default model
 
   // Text getters
   getDefaultTextEngine: () => string
@@ -122,8 +90,6 @@ export interface AppStore {
 
   // Engine availability getters
   canUseImport: () => boolean
-  canUseTTS: () => boolean
-  canUseSTT: () => boolean
 
   // ====== Actions: Connection ======
   setBackendConnection: (profile: BackendProfile, version: string) => void
@@ -149,15 +115,9 @@ export interface AppStore {
 
 const SESSION_STORAGE_KEY = 'audiobook-maker:session-state'
 
-// Fallback defaults if settings are not loaded
-// NOTE: Empty strings force AppLayout to select first available engine/model
-// This maintains engine-agnostic architecture (no hardcoded engine names)
-const FALLBACK_DEFAULTS = {
-  ttsEngine: '',
-  ttsModelName: '',
-  ttsSpeaker: '',
-  language: 'de',
-} as const
+// Fallback default for TTS engine if none is set
+// NOTE: Empty string forces AppLayout to select first available engine
+const FALLBACK_TTS_ENGINE = ''
 
 // ============================================================================
 // Store Implementation
@@ -178,26 +138,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   // ====== Engine Availability ======
   engineAvailability: {
-    tts: {
-      hasEnabled: false,
-      hasRunning: false,
-      engines: [],
-    },
-    text: {
-      hasEnabled: false,
-      hasRunning: false,
-      engines: [],
-    },
-    stt: {
-      hasEnabled: false,
-      hasRunning: false,
-      engines: [],
-    },
-    audio: {
-      hasEnabled: false,
-      hasRunning: false,
-      engines: [],
-    },
+    tts: { hasEnabled: false },
+    text: { hasEnabled: false },
+    stt: { hasEnabled: false },
+    audio: { hasEnabled: false },
   },
 
   // ====== Session State ======
@@ -207,75 +151,62 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // Direct access to DB Settings (no session overrides)
 
   /**
-   * Get default TTS engine from database settings
+   * Get default TTS engine from engines status (Single Source of Truth: engines.is_default)
    */
   getDefaultTtsEngine: () => {
-    const state = get()
-    return state.settings?.tts.defaultTtsEngine || FALLBACK_DEFAULTS.ttsEngine
+    const enginesData = queryClient.getQueryData<AllEnginesStatus>(queryKeys.engines.all())
+    if (enginesData?.tts) {
+      const defaultEngine = enginesData.tts.find(e => e.isDefault)
+      if (defaultEngine) {
+        return defaultEngine.variantId
+      }
+    }
+    return FALLBACK_TTS_ENGINE
   },
 
   /**
-   * Get default TTS model for a specific engine (per-engine default)
-   */
-  getDefaultTtsModel: (engineName?: string) => {
-    const state = get()
-    const engine = engineName ?? state.getDefaultTtsEngine()
-    const engineConfig = state.settings?.tts.engines[engine]
-    return engineConfig?.defaultModelName ?? FALLBACK_DEFAULTS.ttsModelName
-  },
-
-  /**
-   * Get default language for a specific engine from database settings
-   */
-  getDefaultLanguage: (engineName?: string) => {
-    const state = get()
-    const engine = engineName ?? state.getDefaultTtsEngine()
-    const engineConfig = state.settings?.tts.engines[engine]
-    return engineConfig?.defaultLanguage || FALLBACK_DEFAULTS.language
-  },
-
-  /**
-   * Get default STT engine from database settings
+   * Get default STT engine from engines status (Single Source of Truth: engines.is_default)
    * Returns empty string if no default is set (deactivated)
    */
   getDefaultSttEngine: () => {
-    const state = get()
-    // Use ?? to preserve empty string (deactivated state)
-    // || would fallback for empty string, masking intentional deactivation
-    return state.settings?.stt.defaultSttEngine ?? ''
+    const enginesData = queryClient.getQueryData<AllEnginesStatus>(queryKeys.engines.all())
+    if (enginesData?.stt) {
+      const defaultEngine = enginesData.stt.find(e => e.isDefault)
+      if (defaultEngine) {
+        return defaultEngine.variantId
+      }
+    }
+    return ''
   },
 
   /**
-   * Get default STT model for a specific engine (per-engine default)
-   * Returns empty string if engine is deactivated (empty string)
-   * Falls back to 'base' only if engine is valid but has no model
-   */
-  getDefaultSttModel: (engineName?: string) => {
-    const state = get()
-    const engine = engineName ?? state.getDefaultSttEngine()
-    // If engine is empty string (deactivated), return empty string
-    if (engine === '') return ''
-    const engineConfig = state.settings?.stt.engines?.[engine]
-    return engineConfig?.defaultModelName || 'base'
-  },
-
-  /**
-   * Get default text processing engine from database settings
+   * Get default text processing engine from engines status (Single Source of Truth: engines.is_default)
    * Returns empty string if no default is set (deactivated)
    */
   getDefaultTextEngine: () => {
-    const state = get()
-    // Use ?? to preserve empty string (deactivated state)
-    // || would fallback for empty string, masking intentional deactivation
-    return state.settings?.text.defaultTextEngine ?? ''
+    const enginesData = queryClient.getQueryData<AllEnginesStatus>(queryKeys.engines.all())
+    if (enginesData?.text) {
+      const defaultEngine = enginesData.text.find(e => e.isDefault)
+      if (defaultEngine) {
+        return defaultEngine.variantId
+      }
+    }
+    return ''
   },
 
   /**
-   * Get default audio analysis engine from database settings
+   * Get default audio analysis engine from engines status (Single Source of Truth: engines.is_default)
+   * Returns empty string if no default is set (deactivated)
    */
   getDefaultAudioEngine: () => {
-    const state = get()
-    return state.settings?.audio?.defaultAudioEngine ?? ''
+    const enginesData = queryClient.getQueryData<AllEnginesStatus>(queryKeys.engines.all())
+    if (enginesData?.audio) {
+      const defaultEngine = enginesData.audio.find(e => e.isDefault)
+      if (defaultEngine) {
+        return defaultEngine.variantId
+      }
+    }
+    return ''
   },
 
   /**
@@ -284,22 +215,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   canUseImport: () => {
     const state = get()
     return state.engineAvailability.text.hasEnabled
-  },
-
-  /**
-   * Check if TTS generation is available (requires TTS engine)
-   */
-  canUseTTS: () => {
-    const state = get()
-    return state.engineAvailability.tts.hasEnabled
-  },
-
-  /**
-   * Check if STT analysis is available (requires STT engine)
-   */
-  canUseSTT: () => {
-    const state = get()
-    return state.engineAvailability.stt.hasEnabled
   },
 
   // ====== Actions: Connection ======
@@ -356,9 +271,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     logger.group(
       '💾 App Store',
       'Loading settings',
-      {
-        'Default TTS Engine': settings.tts.defaultTtsEngine
-      },
+      { loaded: true },
       '#2196F3'  // Blue for info
     )
 
@@ -410,30 +323,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // ====== Actions: Engine Availability ======
 
   updateEngineAvailability: (data) => {
-    set((state) => ({
+    set({
       engineAvailability: {
-        tts: {
-          hasEnabled: data.hasTtsEngine,
-          hasRunning: state.engineAvailability.tts.hasRunning,
-          engines: state.engineAvailability.tts.engines,
-        },
-        text: {
-          hasEnabled: data.hasTextEngine,
-          hasRunning: state.engineAvailability.text.hasRunning,
-          engines: state.engineAvailability.text.engines,
-        },
-        stt: {
-          hasEnabled: data.hasSttEngine,
-          hasRunning: state.engineAvailability.stt.hasRunning,
-          engines: state.engineAvailability.stt.engines,
-        },
-        audio: {
-          hasEnabled: data.hasAudioEngine,
-          hasRunning: state.engineAvailability.audio.hasRunning,
-          engines: state.engineAvailability.audio.engines,
-        },
+        tts: { hasEnabled: data.hasTtsEngine },
+        text: { hasEnabled: data.hasTextEngine },
+        stt: { hasEnabled: data.hasSttEngine },
+        audio: { hasEnabled: data.hasAudioEngine },
       },
-    }))
+    })
   },
 
   // ====== Actions: Session State ======
@@ -550,19 +447,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
 }))
 
 // ============================================================================
-// Helper Functions
-// ============================================================================
-
-/**
- * Helper function to get default language for a specific engine
- * Falls back to 'en' if engine or language is not configured
- */
-export function getDefaultLanguage(settings: GlobalSettings | null, engineType: string): string {
-  if (!settings) return 'en'
-  const engineConfig = settings.tts.engines[engineType]
-  return engineConfig?.defaultLanguage || 'en'
-}
-
 // ============================================================================
 // Expose store to window in development for E2E testing
 // ============================================================================

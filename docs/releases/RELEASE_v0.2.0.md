@@ -110,7 +110,7 @@ Out of the box:
 
 **Want to add Piper? Coqui? Just implement the 3 methods!**
 
-📖 **See [ENGINE_DEVELOPMENT_GUIDE.md](./docs/ENGINE_DEVELOPMENT_GUIDE.md) for complete documentation.**
+📖 **See [ENGINE_DEVELOPMENT_GUIDE.md](./docs/engine-development-guide.md) for complete documentation.**
 
 ---
 

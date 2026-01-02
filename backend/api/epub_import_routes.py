@@ -32,6 +32,7 @@ from models.response_models import (
 from services.markdown_parser import MarkdownParser
 from services.import_validator import ImportValidator
 from services.epub_importer import EpubImporter
+from ebooklib.epub import EpubException
 from db.database import get_db
 from db.repositories import ProjectRepository, ChapterRepository, SegmentRepository
 from services.settings_service import SettingsService
@@ -83,7 +84,14 @@ async def get_epub_import_preview(
         md_content = importer.to_markdown_document(book)
     except ValueError as ve:
         logger.error(f"EPUB parsing failed: {str(ve)}")
-        raise HTTPException(status_code=400, detail=str(ve))
+        raise HTTPException(status_code=400, detail=f"[EPUB_IMPORT_VALIDATION_ERROR]error:{str(ve)}")
+    except EpubException as ee:
+        # Invalid EPUB structure (not a ZIP, missing files, etc.)
+        logger.error(f"Invalid EPUB file: {str(ee)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"[EPUB_IMPORT_INVALID_EPUB]error:{str(ee)}",
+        )
     except Exception as e:
         logger.exception(f"Unexpected EPUB parsing error: {e}")
         raise HTTPException(
@@ -98,14 +106,24 @@ async def get_epub_import_preview(
         settings_service.get_setting("audio.defaultDividerDuration") or 2000
     )
 
-    # Conservative engine max as in markdown preview
-    conservative_engine_max = 250
-    max_length = min(user_pref, conservative_engine_max)
+    # Get default TTS engine's constraints for accurate preview
+    # This ensures preview matches actual import behavior
+    tts_manager = get_tts_engine_manager()
+    default_engine = settings_service.get_default_engine('tts')
+    engine_max = 500  # Fallback if no engine found
+
+    if default_engine:
+        metadata = tts_manager.get_engine_metadata(default_engine)
+        if metadata:
+            constraints = metadata.get('constraints') or {}
+            engine_max = constraints.get('max_text_length', 500)
+
+    max_length = min(user_pref, engine_max)
 
     logger.debug(
         "EPUB preview segmentation limits - "
         f"User pref: {user_pref}, "
-        f"Conservative engine max: {conservative_engine_max}, "
+        f"Engine max ({default_engine}): {engine_max}, "
         f"Using max: {max_length}"
     )
 
@@ -121,7 +139,7 @@ async def get_epub_import_preview(
         )
     except ValueError as ve:
         logger.error(f"Markdown parsing failed for EPUB: {str(ve)}")
-        raise HTTPException(status_code=400, detail=str(ve))
+        raise HTTPException(status_code=400, detail=f"[EPUB_IMPORT_VALIDATION_ERROR]error:{str(ve)}")
     except Exception as e:
         logger.error(f"Segmentation failed for EPUB preview: {str(e)}")
         raise HTTPException(
@@ -262,6 +280,17 @@ async def execute_epub_import(
             detail="[EPUB_IMPORT_MISSING_TARGET_ID]",
         )
 
+    # Early validation: Check merge target exists BEFORE expensive parsing
+    merge_target_project = None
+    if mode == "merge":
+        project_repo = ProjectRepository(conn)
+        merge_target_project = project_repo.get_by_id(merge_target_id)
+        if not merge_target_project:
+            raise HTTPException(
+                status_code=404,
+                detail=f"[EPUB_IMPORT_TARGET_NOT_FOUND]projectId:{merge_target_id}",
+            )
+
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="[EPUB_IMPORT_FILE_EMPTY]")
@@ -291,7 +320,14 @@ async def execute_epub_import(
         md_content = importer.to_markdown_document(book)
     except ValueError as ve:
         logger.error(f"EPUB parsing failed during import: {str(ve)}")
-        raise HTTPException(status_code=400, detail=str(ve))
+        raise HTTPException(status_code=400, detail=f"[EPUB_IMPORT_VALIDATION_ERROR]error:{str(ve)}")
+    except EpubException as ee:
+        # Invalid EPUB structure (not a ZIP, missing files, etc.)
+        logger.error(f"Invalid EPUB file during import: {str(ee)}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"[EPUB_IMPORT_INVALID_EPUB]error:{str(ee)}",
+        )
     except Exception as e:
         logger.exception(f"Unexpected EPUB parsing error during import: {e}")
         raise HTTPException(
@@ -309,8 +345,9 @@ async def execute_epub_import(
             detail=f"[EPUB_IMPORT_UNKNOWN_ENGINE]engine:{tts_engine}",
         )
 
-    metadata = tts_manager._engine_metadata[tts_engine]
-    constraints = metadata.get("constraints", {})
+    # Get engine constraints from metadata (Single Source of Truth)
+    metadata = tts_manager.get_engine_metadata(tts_engine)
+    constraints = metadata.get("constraints", {}) if metadata else {}
     engine_max = constraints.get("max_text_length", 500)
 
     user_pref = settings_service.get_setting("text.preferredMaxSegmentLength") or 250
@@ -339,7 +376,7 @@ async def execute_epub_import(
         )
     except ValueError as ve:
         logger.error(f"Markdown parsing failed during EPUB import: {str(ve)}")
-        raise HTTPException(status_code=400, detail=str(ve))
+        raise HTTPException(status_code=400, detail=f"[EPUB_IMPORT_VALIDATION_ERROR]error:{str(ve)}")
     except Exception as e:
         logger.error(f"Segmentation failed during EPUB import: {str(e)}")
         raise HTTPException(
@@ -371,12 +408,8 @@ async def execute_epub_import(
             event_type=EventType.IMPORT_PROGRESS,
         )
     else:
-        project = project_repo.get_by_id(merge_target_id)
-        if project is None:
-            raise HTTPException(
-                status_code=404,
-                detail="[EPUB_IMPORT_TARGET_NOT_FOUND]",
-            )
+        # Use pre-validated project from early check
+        project = merge_target_project
 
     # Filter chapters based on selection
     # Note: selected_chapters_list contains chapter IDs (e.g., "temp-epub-ch-0", "temp-epub-ch-1")

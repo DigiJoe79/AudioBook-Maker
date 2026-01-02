@@ -16,7 +16,7 @@ import {
 } from '@mui/material'
 import { useTranslation } from 'react-i18next'
 
-export interface ConfirmDialogProps {
+interface ConfirmDialogProps {
   /** Whether the dialog is open */
   open: boolean
 

@@ -18,7 +18,7 @@ import React from 'react'
 import { Box, type SxProps, type Theme } from '@mui/material'
 import { getElevatedBackground } from '../../../theme'
 
-export interface ViewToolbarProps {
+interface ViewToolbarProps {
   /** Toolbar content (filters, tabs, search, etc.) */
   children: React.ReactNode
 

@@ -10,7 +10,184 @@
     "title": "Optionen",
     "tabs": {
       "general": "Allgemein",
-      "engines": "Engines"
+      "engines": "Engines",
+      "docker": "Hosts"
+    },
+    "dockerHosts": {
+      "title": "Hosts",
+      "description": "Konfiguriere Docker-Hosts zum Ausführen von TTS-Engines in Containern. Füge Remote-Server mit GPU-Unterstützung für beschleunigte Sprachgenerierung hinzu.",
+      "local": "Lokal",
+      "addHost": "Host hinzufügen",
+      "hostId": "Host-ID",
+      "hostIdHelp": "Eindeutiger Bezeichner (z.B. gpu-server)",
+      "hostName": "Anzeigename",
+      "hostUrl": "Docker-URL",
+      "hostUrlHelp": "SSH-URL (z.B. ssh://user@192.168.1.100)",
+      "testConnection": "Verbindung testen",
+      "deleteTitle": "Host löschen?",
+      "deleteConfirm": "Möchtest du den Host \"{{name}}\" wirklich löschen?",
+      "messages": {
+        "created": "Docker-Host erfolgreich hinzugefügt",
+        "deleted": "Docker-Host erfolgreich gelöscht",
+        "cannotDeleteLocal": "Der lokale Host kann nicht gelöscht werden",
+        "fillAllFields": "Bitte fülle alle Felder aus",
+        "loadError": "Fehler beim Laden der Docker-Hosts",
+        "connectionFailed": "Verbindung fehlgeschlagen"
+      },
+      "volumeConfig": {
+        "title": "Volume-Konfiguration",
+        "samplesPath": "Samples-Pfad",
+        "samplesPathHelp": "Host-Pfad für Sprecher-Samples (Windows: C:\\pfad, Linux: /pfad). Leer lassen für Upload-Modus.",
+        "modelsPath": "Modelle-Pfad",
+        "modelsPathHelp": "Host-Pfad für externe Modelle (Windows: C:\\pfad, Linux: /pfad). Leer lassen für keine.",
+        "saved": "Volume-Konfiguration gespeichert"
+      },
+      "status": {
+        "connected": "Verbunden",
+        "disconnected": "Getrennt",
+        "connecting": "Verbinde..."
+      },
+      "images": {
+        "title": "Docker Images",
+        "noImages": "Keine Images verfügbar",
+        "installed": "Installiert",
+        "notInstalled": "Nicht installiert",
+        "install": "Installieren",
+        "uninstall": "Deinstallieren",
+        "installing": "Installiere...",
+        "uninstalling": "Deinstalliere...",
+        "requiresGpu": "Erfordert GPU",
+        "installSuccess": "Image erfolgreich installiert",
+        "installFailed": "Image-Installation fehlgeschlagen",
+        "uninstallSuccess": "Image erfolgreich deinstalliert",
+        "uninstallFailed": "Image-Deinstallation fehlgeschlagen"
+      }
+    },
+    "engineHosts": {
+      "title": "Engine Hosts",
+      "description": "Verwalte Hosts auf denen Engines laufen. Lokale Engines laufen als Subprozesse, Docker-Engines in Containern.",
+      "types": {
+        "subprocess": "Lokal (Subprozess)",
+        "dockerLocal": "Docker Lokal",
+        "dockerRemote": "Docker Remote"
+      },
+      "engineCount": "{{count}} Engines",
+      "engineCount_one": "{{count}} Engine",
+      "defaultEngine": "Standard-Engine",
+      "gpuEnabled": "GPU aktiviert",
+      "gpu": "GPU",
+      "noGpu": "Keine GPU",
+      "checkFailed": "Prüfung fehlgeschlagen",
+      "discoverModels": "Models entdecken",
+      "discoverSuccess": "Models erfolgreich entdeckt",
+      "discoverFailed": "Model-Erkennung fehlgeschlagen",
+      "status": {
+        "notInstalled": "Nicht installiert",
+        "disabled": "Deaktiviert",
+        "running": "Läuft",
+        "stopped": "Gestoppt",
+        "starting": "Startet...",
+        "stopping": "Stoppt...",
+        "error": "Fehler"
+      },
+      "enable": "Aktivieren",
+      "disable": "Deaktivieren",
+      "enableSuccess": "Engine aktiviert",
+      "disableSuccess": "Engine deaktiviert",
+      "toggleFailed": "Aktivierungsstatus konnte nicht geändert werden",
+      "cannotDisableRunning": "Engine vor dem Deaktivieren stoppen",
+      "cannotUninstallRunning": "Engine vor dem Deinstallieren stoppen",
+      "noEngines": "Keine Engines installiert. Klicke + um Engines aus dem Katalog hinzuzufügen.",
+      "syncCatalog": "Online-Engine-Katalog synchronisieren",
+      "syncButton": "Katalog synchronisieren",
+      "checkUpdate": "Nach Updates suchen",
+      "updateAvailable": "Update verfügbar!",
+      "updateAvailableTooltip": "Eine neuere Version ist im Registry verfügbar",
+      "upToDate": "Image ist aktuell",
+      "checkingUpdate": "Suche nach Updates...",
+      "checkAllUpdates": "Alle Images auf Updates prüfen",
+      "checkAllResult": "{{updates}} Updates verfügbar, {{upToDate}} aktuell",
+      "allUpToDate": "Alle {{count}} Images sind aktuell",
+      "pullUpdate": "Neuestes Image pullen",
+      "messages": {
+        "catalogSynced": "Katalog synchronisiert: {{added}} hinzugefügt, {{updated}} aktualisiert"
+      },
+      "hostUnavailable": "Host nicht erreichbar - Engines können nicht gestartet werden",
+      "deleteForbidden": "Dieser Host kann nicht gelöscht werden - er ist geschützt",
+      "hasEngines": "Host mit installierten Engines kann nicht gelöscht werden. Deinstallieren Sie zuerst die Engines.",
+      "notDocker": "Diese Operation erfordert einen Docker-Host",
+      "sshKeyGenerationFailed": "SSH-Schlüssel konnte nicht generiert werden: {{error}}"
+    },
+    "addHost": {
+      "title": "Docker Host hinzufügen",
+      "step1": "Details eingeben",
+      "step2": "SSH-Schlüssel installieren",
+      "name": "Hostname",
+      "namePlaceholder": "GPU Server",
+      "sshUrl": "SSH-URL",
+      "sshUrlPlaceholder": "ssh://user@192.168.1.100",
+      "sshUrlHelp": "SSH-Verbindungs-URL für den Remote Docker Host",
+      "generateKey": "SSH-Schlüssel generieren",
+      "installInstructions": "Führen Sie diesen Befehl auf Ihrem Remote-Host aus, um den SSH-Schlüssel zu autorisieren:",
+      "securityNote": "Dieser Schlüssel ist auf Docker-Operationen beschränkt. Selbst bei Kompromittierung kann kein Shell-Zugang hergestellt werden.",
+      "testConnection": "Verbindung testen",
+      "connectionSuccess": "Verbindung erfolgreich!",
+      "connectionFailed": "Verbindung fehlgeschlagen",
+      "gpuAvailable": "GPU verfügbar",
+      "noGpu": "Keine GPU"
+    },
+    "hostSettings": {
+      "title": "Host-Einstellungen",
+      "sshKey": "SSH Public Key",
+      "sshKeyInfo": "Dieser Schlüssel muss in der authorized_keys-Datei auf dem Remote-Host vorhanden sein."
+    },
+    "addImage": {
+      "title": "Engine hinzufügen zu: {{host}}",
+      "buttonTooltip": "Engine aus Katalog hinzufügen",
+      "dockerLocal": "Docker Lokal",
+      "install": "Installieren",
+      "installing": "Installation",
+      "starting": "Starte...",
+      "loadError": "Katalog konnte nicht geladen werden",
+      "noImages": "Keine Images im Katalog verfügbar. Versuchen Sie den Katalog zu synchronisieren.",
+      "installSuccess": "Engine erfolgreich installiert",
+      "installed": "Installiert",
+      "otherTagInstalled": "Nutzt {{tag}}",
+      "languages": "Sprachen",
+      "types": {
+        "tts": "Text-zu-Sprache",
+        "stt": "Sprache-zu-Text",
+        "text": "Textverarbeitung",
+        "audio": "Audio-Analyse"
+      },
+      "tabs": {
+        "catalog": "Katalog",
+        "custom": "Eigenes Image"
+      },
+      "custom": {
+        "title": "Eigenes Docker-Image entdecken",
+        "description": "Geben Sie ein Docker-Image ein, um dessen Engine-Metadaten zu ermitteln",
+        "dockerImage": "Docker-Image",
+        "dockerImagePlaceholder": "z.B. ghcr.io/user/my-engine",
+        "dockerTag": "Tag",
+        "dockerTagPlaceholder": "latest",
+        "discover": "Entdecken",
+        "discovering": "Ermittle...",
+        "discoverySuccess": "Engine erfolgreich entdeckt",
+        "discoveryFailed": "Ermittlung fehlgeschlagen",
+        "engineInfo": "Entdeckte Engine",
+        "name": "Name",
+        "displayName": "Anzeigename",
+        "engineType": "Engine-Typ",
+        "languages": "Sprachen",
+        "models": "Modelle",
+        "gpu": "Erfordert GPU",
+        "register": "Engine registrieren",
+        "registering": "Registriere...",
+        "registerSuccess": "Engine erfolgreich registriert",
+        "registerFailed": "Registrierung fehlgeschlagen",
+        "editBeforeRegister": "Sie können den Anzeigenamen vor der Registrierung bearbeiten"
+      }
     },
     "general": {
       "theme": "Theme",
@@ -322,7 +499,11 @@
     "create": "Erstellen",
     "saving": "Speichert...",
     "description": "Beschreibung",
-    "optional": "Optional"
+    "optional": "Optional",
+    "add": "Hinzufügen",
+    "expand": "Erweitern",
+    "collapse": "Einklappen",
+    "comingSoon": "Demnächst verfügbar - dieses Feature ist für eine zukünftige Version geplant"
   },
   "projects": {
     "new": "Neues Projekt",
@@ -534,7 +715,8 @@
       "jobCancelFailed": "TTS-Job konnte nicht abgebrochen werden: {{error}}",
       "jobResumeFailed": "TTS-Job konnte nicht fortgesetzt werden: {{error}}",
       "generationFailed": "TTS-Generierung fehlgeschlagen: {{error}}",
-      "gpuOom": "GPU-Speicher erschöpft. Versuchen Sie kürzeren Text oder starten Sie die Engine neu."
+      "gpuOom": "GPU-Speicher erschöpft. Versuchen Sie kürzeren Text oder starten Sie die Engine neu.",
+      "jobPartialFailure": "Mit Fehlern abgeschlossen: {{processed}} ok, {{failed}} fehlgeschlagen von {{total}}"
     }
   },
   "export": {
@@ -699,6 +881,9 @@
     "confirmTitle": "Vom Backend trennen?",
     "confirmMessage": "Sie sind derzeit mit \"{{name}}\" verbunden. Ihre Sitzung wird gespeichert und kann wiederhergestellt werden, wenn Sie sich erneut verbinden.",
     "disconnect": "Trennen",
+    "disconnectOnly": "Nur trennen",
+    "shutdownBackend": "Backend herunterfahren",
+    "shuttingDown": "Wird heruntergefahren...",
     "unknownBackend": "Unbekanntes Backend"
   },
   "appLayout": {
@@ -802,6 +987,7 @@
     "deleted": "Profil erfolgreich gelöscht",
     "createFailed": "Fehler beim Erstellen des Profils",
     "updateFailed": "Fehler beim Aktualisieren des Profils",
+    "updateError": "Aktualisierungsfehler",
     "deleteFailed": "Fehler beim Löschen des Profils",
     "saveFailed": "Fehler beim Speichern des Profils"
   },
@@ -896,6 +1082,7 @@
     }
   },
   "pronunciation": {
+    "edit": "Aussprache bearbeiten",
     "errors": {
       "ruleNotFound": "Aussprache-Regel nicht gefunden: {{ruleId}}",
       "deleteFailed": "Fehler beim Löschen der Aussprache-Regel {{ruleId}}",
@@ -1056,7 +1243,7 @@
       "dragDrop": "Markdown-Datei hier ablegen oder klicken zum Auswählen",
       "dropHere": "Datei hier ablegen zum Hochladen",
       "browse": "Dateien durchsuchen",
-      "selected": "",
+      "selected": "Ausgewählte Datei",
       "supportedFormats": "Unterstützte Formate",
       "textLanguage": "Sprache für Textsegmentierung",
       "noTextModels": "Keine Textverarbeitungsmodelle verfügbar. Bitte aktivieren Sie eine Text-Engine.",
@@ -1153,7 +1340,10 @@
       "epubInvalidMode": "Ungültiger Import-Modus: {{mode}}. Verwenden Sie 'new' oder 'merge'.",
       "epubMissingTargetId": "Ziel-Projekt-ID ist für Merge-Modus erforderlich.",
       "epubUnknownEngine": "Unbekannte TTS-Engine: {{engine}}",
-      "epubTargetNotFound": "Ziel-Projekt für Merge nicht gefunden."
+      "epubTargetNotFound": "Ziel-Projekt für Merge nicht gefunden.",
+      "epubInvalidEpub": "Ungültige EPUB-Datei: {{error}}",
+      "epubValidationError": "EPUB-Validierung fehlgeschlagen: {{error}}",
+      "validationError": "Validierung fehlgeschlagen: {{error}}"
     },
     "noTextEngine": {
       "title": "Textverarbeitungs-Engine erforderlich",
@@ -1206,6 +1396,7 @@
       "settings": "Einstellungen",
       "chapter": "Kapitel",
       "segment": "Segment",
+      "segments": "Segmente",
       "pronunciation": "Aussprache"
     },
     "severity": {
@@ -1288,7 +1479,9 @@
       "starting": "Startet...",
       "startingTooltip": "Engine wird gestartet",
       "stopping": "Stoppt...",
-      "stoppingTooltip": "Engine wird gestoppt"
+      "stoppingTooltip": "Engine wird gestoppt",
+      "notInstalled": "Nicht installiert",
+      "notInstalledTooltip": "Docker-Image nicht installiert - klicke Installieren zum Herunterladen"
     },
     "selectDefaultEngine": "Standard-Engine auswählen",
     "openSettings": "Engine-Einstellungen",
@@ -1297,10 +1490,13 @@
     "setDefaultEngineErrorTitle": "Standard-Engine-Aktualisierung fehlgeschlagen",
     "defaultModel": "Standard-Modell",
     "version": "Version",
+    "model": "Modell",
     "noEngineConfigured": "Keine Engine konfiguriert",
     "deactivated": "Deaktiviert",
     "deactivatedHint": "Klicken um eine Engine auszuwählen",
     "deactivatedDesc": "Keine Engine für diese Funktion aktiv",
+    "ttsRequiresDefault": "TTS benötigt immer eine aktive Standard-Engine für die Audiogenerierung",
+    "ttsRequiresDefaultShort": "TTS benötigt immer eine Standard-Engine",
     "selectActiveEngine": "Aktive Engine auswählen",
     "loadError": "Fehler beim Laden der Engines",
     "toggleEnabledError": "Fehler beim Aktualisieren des Engine-Status",
@@ -1309,18 +1505,65 @@
       "start": "Starten",
       "stop": "Stoppen",
       "enable": "Aktivieren",
-      "disable": "Deaktivieren"
+      "disable": "Deaktivieren",
+      "install": "Installieren",
+      "uninstall": "Deinstallieren"
     },
     "autoStopIn": "Auto-Stopp in {{time}}",
     "noOtherEngines": "Keine weiteren Engines verfügbar",
     "addEngineHint": "Weitere Engines können im Backend hinzugefügt werden",
     "keepRunning": "Dauerhaft aktiv",
     "keepRunningDescription": "Engine nicht automatisch nach Inaktivität stoppen",
+    "runner": "Runner",
+    "runnerLocal": "Lokal (Subprozess)",
+    "runnerDockerLocal": "Docker (Lokal)",
+    "runnerLocalTooltip": "Läuft als lokaler Subprozess",
+    "runnerDockerRemote": "Läuft in Docker auf {{host}}",
+    "variantLocal": "Lokal",
+    "variantDocker": "Docker",
+    "variantGroup": {
+      "subprocess": "Lokale Engines",
+      "dockerLocal": "Docker (Lokal)",
+      "dockerRemote": "Docker (Remote)"
+    },
+    "runnerDisabledWhileRunning": "Runner kann nicht gewechselt werden während Engine läuft",
+    "setRunnerError": "Fehler beim Setzen des Engine-Runners",
+    "setRunnerErrorTitle": "Runner-Zuweisung fehlgeschlagen",
     "globalSettings": "Globale Engine-Einstellungen",
     "inactivityTimeout": "Engine-Stop nach Inaktivität",
     "stopAfterJob": "Nach Job",
     "autostartKeepRunning": "Dauerhaft aktive Engines beim App-Start automatisch starten",
-    "engineStartup": "Engine-Start"
+    "engineStartup": "Engine-Start",
+    "errors": {
+      "variantNotFound": "Engine-Variante '{{variantId}}' nicht gefunden",
+      "imageAlreadyInstalled": "Docker-Image für '{{variantId}}' ist bereits installiert",
+      "imageNotInstalled": "Docker-Image für '{{variantId}}' ist nicht installiert",
+      "dockerHostUnavailable": "Docker-Host '{{hostId}}' nicht erreichbar",
+      "dockerHostNotConnected": "Docker-Host '{{hostId}}' ist nicht verbunden",
+      "dockerImageNotFound": "Docker-Image nicht gefunden: {{image}}",
+      "dockerRemoveFailed": "Docker-Image '{{image}}' konnte nicht entfernt werden: {{error}}",
+      "dockerClientCreationFailed": "Docker-Client konnte nicht erstellt werden: {{error}}",
+      "imagePullFailed": "Docker-Image '{{image}}' konnte nicht geladen werden: {{error}}",
+      "imageInstallFailed": "Installation fehlgeschlagen für '{{variantId}}': {{error}}",
+      "imageUninstallFailed": "Deinstallation fehlgeschlagen für '{{variantId}}': {{error}}",
+      "invalidVariantId": "Ungültige Varianten-ID: {{variantId}}",
+      "notDockerVariant": "Variante '{{variantId}}' ist keine Docker-Variante",
+      "hostNotFound": "Host '{{hostId}}' nicht gefunden",
+      "dockerNotAvailable": "Docker läuft nicht. Bitte Docker Desktop starten.",
+      "dockerPullFailed": "Image {{image}} konnte nicht geladen werden: {{error}}",
+      "dockerPullCancelled": "Image-Download wurde abgebrochen",
+      "cancelFailed": "Image-Download für '{{variantId}}' konnte nicht abgebrochen werden: {{error}}",
+      "noActivePull": "Kein aktiver Image-Download zum Abbrechen",
+      "catalogLoadFailed": "Docker-Katalog konnte nicht geladen werden: {{error}}",
+      "catalogSyncFailed": "Online-Katalog konnte nicht synchronisiert werden: {{error}}",
+      "alreadyExists": "Engine '{{engine}}' existiert bereits auf diesem Host",
+      "noModelDiscovered": "Keine Modelle für Engine '{{engine}}' gefunden",
+      "typeUnknown": "Unbekannter Engine-Typ: {{type}}",
+      "notRegistered": "Engine '{{engine}}' ist nicht registriert",
+      "modelNotFound": "Modell '{{model}}' nicht gefunden für Engine '{{engine}}'",
+      "settingsUpdateFailed": "Engine-Einstellungen konnten nicht aktualisiert werden: {{error}}",
+      "modelDiscoveryFailed": "Modell-Erkennung fehlgeschlagen: {{error}}"
+    }
   },
   "errorBoundary": {
     "title": "Ein unerwarteter Fehler ist aufgetreten",

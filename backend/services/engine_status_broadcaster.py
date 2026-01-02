@@ -14,7 +14,7 @@ import asyncio
 from typing import Dict, Any, List
 from loguru import logger
 
-from services.event_broadcaster import emit_engine_status
+from services.event_broadcaster import emit_engine_status, safe_broadcast
 from services.settings_service import SettingsService
 from core.tts_engine_manager import get_tts_engine_manager
 from core.text_engine_manager import get_text_engine_manager
@@ -55,7 +55,7 @@ class EngineStatusBroadcaster:
 
         Returns:
             List of engine status dictionaries with:
-            - name: Engine identifier
+            - variantId: Engine variant identifier (e.g., 'xtts:local')
             - isEnabled: Whether engine is enabled in settings
             - isRunning: Whether engine server is active
             - status: 'running', 'stopped', or 'disabled'
@@ -64,9 +64,11 @@ class EngineStatusBroadcaster:
         """
         engines_status = []
 
-        for engine_name in manager.list_all_engines():
-            is_enabled = settings_service.is_engine_enabled(engine_name, engine_type)
-            is_running = manager.is_engine_running(engine_name)
+        # Note: list_all_engines() now returns variant_ids (e.g., 'xtts:local')
+        # directly from the manager's tracking dictionaries
+        for variant_id in manager.list_all_engines():
+            is_enabled = settings_service.is_engine_enabled(variant_id, engine_type)
+            is_running = manager.is_engine_running(variant_id)
 
             # Determine status string
             if not is_enabled:
@@ -79,15 +81,15 @@ class EngineStatusBroadcaster:
             # Get countdown timer
             seconds_until_auto_stop = None
             if is_running:
-                seconds_until_auto_stop = manager.get_seconds_until_auto_stop(engine_name)
+                seconds_until_auto_stop = manager.get_seconds_until_auto_stop(variant_id)
 
             engines_status.append({
-                "name": engine_name,
+                "variantId": variant_id,
                 "isEnabled": is_enabled,
                 "isRunning": is_running,
                 "status": status,
                 "secondsUntilAutoStop": seconds_until_auto_stop,
-                "port": manager.engine_ports.get(engine_name),
+                "port": manager.engine_ports.get(variant_id),
             })
 
         return engines_status
@@ -235,18 +237,17 @@ class EngineStatusBroadcaster:
 
         Use this for initial state on SSE connect or after engine changes.
         """
-        try:
-            status = await self.get_current_engine_status()
-            await emit_engine_status(
-                engines_status=status["engines"],
-                has_tts_engine=status["hasTtsEngine"],
-                has_text_engine=status["hasTextEngine"],
-                has_stt_engine=status["hasSttEngine"],
-                has_audio_engine=status["hasAudioEngine"],
-            )
-            logger.debug("[EngineStatusBroadcaster] Immediate broadcast sent")
-        except Exception as e:
-            logger.error(f"[EngineStatusBroadcaster] Failed to broadcast now: {e}")
+        status = await self.get_current_engine_status()
+        await safe_broadcast(
+            emit_engine_status,
+            engines_status=status["engines"],
+            has_tts_engine=status["hasTtsEngine"],
+            has_text_engine=status["hasTextEngine"],
+            has_stt_engine=status["hasSttEngine"],
+            has_audio_engine=status["hasAudioEngine"],
+            event_description="engine.status"
+        )
+        logger.debug("[EngineStatusBroadcaster] Immediate broadcast sent")
 
 
 # Global singleton instance

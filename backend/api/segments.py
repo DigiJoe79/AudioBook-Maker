@@ -11,7 +11,7 @@ from db.database import get_db
 from db.repositories import SegmentRepository
 from models.response_models import SegmentResponse, DeleteResponse, ReorderResponse, to_camel
 from config import OUTPUT_DIR
-from services.event_broadcaster import broadcaster, EventType
+from services.event_broadcaster import broadcaster, EventType, safe_broadcast
 
 router = APIRouter(tags=["segments"])
 
@@ -107,31 +107,34 @@ async def create_segment(
         )
 
         # Broadcast segment.created event for ALL segments (CRUD consistency)
-        try:
-            logger.debug(f"Broadcasting segment.created event: segmentId={new_segment['id']}, chapterId={new_segment['chapter_id']}")
-            await broadcaster.broadcast_event(
-                event_type=EventType.SEGMENT_CREATED,
-                data={
-                    "segmentId": new_segment["id"],
-                    "chapterId": new_segment["chapter_id"],
-                    "text": new_segment.get("text", ""),
-                    "segmentType": new_segment.get("segment_type", "standard"),
-                    "orderIndex": new_segment.get("order_index", 0)
-                },
-                channel="projects"
-            )
+        logger.debug(f"Broadcasting segment.created event: segmentId={new_segment['id']}, chapterId={new_segment['chapter_id']}")
+        await safe_broadcast(
+            broadcaster.broadcast_event,
+            event_type=EventType.SEGMENT_CREATED,
+            data={
+                "segmentId": new_segment["id"],
+                "chapterId": new_segment["chapter_id"],
+                "text": new_segment.get("text", ""),
+                "segmentType": new_segment.get("segment_type", "standard"),
+                "orderIndex": new_segment.get("order_index", 0)
+            },
+            channel="projects",
+            event_description="segment.created"
+        )
 
-            # Additional segment.updated event for divider segments (triggers audio/waveform update)
-            # Standard segments get segment.completed after TTS generation
-            if new_segment.get("segment_type") == "divider" and new_segment.get("pause_duration", 0) > 0:
-                logger.debug(f"Broadcasting segment.updated event for new divider: segmentId={new_segment['id']}, chapterId={new_segment['chapter_id']}")
-                await broadcaster.broadcast_segment_update({
+        # Additional segment.updated event for divider segments (triggers audio/waveform update)
+        # Standard segments get segment.completed after TTS generation
+        if new_segment.get("segment_type") == "divider" and new_segment.get("pause_duration", 0) > 0:
+            logger.debug(f"Broadcasting segment.updated event for new divider: segmentId={new_segment['id']}, chapterId={new_segment['chapter_id']}")
+            await safe_broadcast(
+                broadcaster.broadcast_segment_update,
+                {
                     "segmentId": new_segment["id"],
                     "chapterId": new_segment["chapter_id"],
                     "pauseDuration": new_segment.get("pause_duration"),
-                })
-        except Exception as sse_err:
-            logger.warning(f"Failed to broadcast segment events: {sse_err}")
+                },
+                event_description="segment.updated for divider"
+            )
 
         return new_segment
     except HTTPException:
@@ -204,16 +207,17 @@ async def update_segment(
             raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
 
         # Broadcast SSE event for real-time UI updates (including MSE player hot-swap)
-        try:
-            logger.debug(f"Broadcasting segment.updated event: segmentId={updated['id']}, chapterId={updated['chapter_id']}")
-            await broadcaster.broadcast_segment_update({
+        logger.debug(f"Broadcasting segment.updated event: segmentId={updated['id']}, chapterId={updated['chapter_id']}")
+        await safe_broadcast(
+            broadcaster.broadcast_segment_update,
+            {
                 "segmentId": updated["id"],
                 "chapterId": updated["chapter_id"],
                 "pauseDuration": updated.get("pause_duration"),
                 "text": updated.get("text"),
-            })
-        except Exception as sse_err:
-            logger.warning(f"Failed to broadcast segment.updated event: {sse_err}")
+            },
+            event_description="segment.updated"
+        )
 
         return updated
     except HTTPException:
@@ -252,7 +256,7 @@ async def delete_segment(segment_id: str, conn: sqlite3.Connection = Depends(get
 
                 if audio_file.exists():
                     os.remove(audio_file)
-                    logger.debug(f"✓ Deleted audio file: {filename}")
+                    logger.debug(f"[OK] Deleted audio file: {filename}")
                 else:
                     logger.warning(f"Audio file not found: {audio_file}")
             except Exception as e:
@@ -269,25 +273,26 @@ async def delete_segment(segment_id: str, conn: sqlite3.Connection = Depends(get
         chapter_id = segment.get("chapter_id")
 
         # Broadcast SSE events
-        try:
-            # Broadcast segment.deleted event (CRUD consistency)
-            logger.debug(f"Broadcasting segment.deleted event: segmentId={segment_id}, chapterId={chapter_id}")
-            await broadcaster.broadcast_event(
-                event_type=EventType.SEGMENT_DELETED,
-                data={"segmentId": segment_id, "chapterId": chapter_id},
-                channel="projects"
-            )
+        # Broadcast segment.deleted event (CRUD consistency)
+        logger.debug(f"Broadcasting segment.deleted event: segmentId={segment_id}, chapterId={chapter_id}")
+        await safe_broadcast(
+            broadcaster.broadcast_event,
+            event_type=EventType.SEGMENT_DELETED,
+            data={"segmentId": segment_id, "chapterId": chapter_id},
+            channel="projects",
+            event_description="segment.deleted"
+        )
 
-            # Also broadcast chapter.updated event to trigger AudioPlayer refresh
-            # (on "projects" channel for unified channel architecture)
-            logger.debug(f"Broadcasting chapter.updated event after segment deletion: chapterId={chapter_id}")
-            await broadcaster.broadcast_event(
-                event_type=EventType.CHAPTER_UPDATED,
-                data={"chapterId": chapter_id},
-                channel="projects"
-            )
-        except Exception as sse_err:
-            logger.warning(f"Failed to broadcast segment deletion events: {sse_err}")
+        # Also broadcast chapter.updated event to trigger AudioPlayer refresh
+        # (on "projects" channel for unified channel architecture)
+        logger.debug(f"Broadcasting chapter.updated event after segment deletion: chapterId={chapter_id}")
+        await safe_broadcast(
+            broadcaster.broadcast_event,
+            event_type=EventType.CHAPTER_UPDATED,
+            data={"chapterId": chapter_id},
+            channel="projects",
+            event_description="chapter.updated after segment deletion"
+        )
 
         return DeleteResponse(
             success=True,
@@ -328,15 +333,14 @@ async def reorder_segments(
         segment_repo.reorder_batch(data.segment_ids, data.chapter_id)
 
         # Broadcast segment.reordered event (CRUD consistency)
-        try:
-            logger.debug(f"Broadcasting segment.reordered event: chapterId={data.chapter_id}, segments={len(data.segment_ids)}")
-            await broadcaster.broadcast_event(
-                event_type=EventType.SEGMENT_REORDERED,
-                data={"chapterId": data.chapter_id, "segmentIds": data.segment_ids},
-                channel="projects"
-            )
-        except Exception as sse_err:
-            logger.warning(f"Failed to broadcast segment.reordered event: {sse_err}")
+        logger.debug(f"Broadcasting segment.reordered event: chapterId={data.chapter_id}, segments={len(data.segment_ids)}")
+        await safe_broadcast(
+            broadcaster.broadcast_event,
+            event_type=EventType.SEGMENT_REORDERED,
+            data={"chapterId": data.chapter_id, "segmentIds": data.segment_ids},
+            channel="projects",
+            event_description="segment.reordered"
+        )
 
         return ReorderResponse(
             success=True,

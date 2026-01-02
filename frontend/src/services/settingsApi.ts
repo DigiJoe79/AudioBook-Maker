@@ -40,26 +40,28 @@ export async function resetSettings(): Promise<void> {
   if (!response.ok) throw new Error('Failed to reset settings');
 }
 
+// Note: engine may be a variant_id (e.g., 'xtts:local') - must be URL-encoded
 export async function fetchSegmentLimits(engine: string): Promise<{
   userPreference: number;
   engineMaximum: number;
   effectiveLimit: number;
 }> {
   const response = await fetch(
-    `${getApiBaseUrl()}/api/settings/segment-limits/${engine}`
+    `${getApiBaseUrl()}/api/settings/segment-limits/${encodeURIComponent(engine)}`
   );
   if (!response.ok) throw new Error('Failed to fetch segment limits');
   return response.json();
 }
 
+// Note: engine may be a variant_id (e.g., 'xtts:local') - must be URL-encoded
 export async function fetchEngineSchema(
   engine: string,
   engineType?: string
 ): Promise<Record<string, EngineParameterSchema>> {
   // Use new generic endpoint if engineType provided, fallback to legacy TTS endpoint
   const url = engineType
-    ? `${getApiBaseUrl()}/api/settings/engine-schema/${engineType}/${engine}`
-    : `${getApiBaseUrl()}/api/settings/engine-schema/${engine}`
+    ? `${getApiBaseUrl()}/api/settings/engine-schema/${engineType}/${encodeURIComponent(engine)}`
+    : `${getApiBaseUrl()}/api/settings/engine-schema/${encodeURIComponent(engine)}`
   const response = await fetch(url);
   if (!response.ok) throw new Error('Failed to fetch engine schema');
   const data = await response.json();

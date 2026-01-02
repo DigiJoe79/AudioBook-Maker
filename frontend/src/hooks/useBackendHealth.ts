@@ -9,7 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 import { queryKeys } from '@services/queryKeys'
 import type { BackendHealthResponse } from '@types'
 
-export interface BackendHealthResult {
+interface BackendHealthResult {
   /** Whether the backend is online and responding */
   isOnline: boolean
 

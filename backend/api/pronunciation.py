@@ -54,7 +54,7 @@ async def create_rule(
             event_type=EventType.PRONUNCIATION_RULE_CREATED
         )
 
-        logger.info(f"✓ Pronunciation rule created: {rule.pattern} → {rule.replacement}")
+        logger.info(f"[OK] Pronunciation rule created: {rule.pattern} -> {rule.replacement}")
 
         return PronunciationRuleResponse(
             id=rule.id,
@@ -153,7 +153,7 @@ async def update_rule(
             event_type=EventType.PRONUNCIATION_RULE_UPDATED
         )
 
-        logger.info(f"✓ Pronunciation rule updated: {rule.pattern} → {rule.replacement}")
+        logger.info(f"[OK] Pronunciation rule updated: {rule.pattern} -> {rule.replacement}")
 
         return PronunciationRuleResponse(
             id=rule.id,
@@ -196,7 +196,7 @@ async def delete_rule(
                 event_type=EventType.PRONUNCIATION_RULE_DELETED
             )
 
-            logger.info(f"✓ Pronunciation rule deleted: {rule.pattern}")
+            logger.info(f"[OK] Pronunciation rule deleted: {rule.pattern}")
 
             return MessageResponse(success=True, message="Rule deleted successfully")
         else:
@@ -524,11 +524,8 @@ async def generate_test_audio(
             rules=[test_rule]
         )
 
-        # Generate audio with transformed text
-        # This would need to call the TTS engine directly
-        # For now, return the transformation info
-
-        # TODO: Integrate with engine manager to generate actual audio
+        # TODO(#27): Generate actual audio with transformed text
+        # https://github.com/DigiJoe79/AudioBook-Maker/issues/27
 
         return PronunciationTestAudioResponse(
             original_text=segment['text'],

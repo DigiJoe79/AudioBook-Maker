@@ -12,9 +12,9 @@
  * - Performance optimized with React.memo
  */
 
-import React, { useCallback, useMemo } from 'react'
+import React, { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Box, Tooltip, Typography, useTheme, Badge } from '@mui/material'
+import { Box, Tooltip, Typography, useTheme, Badge, Dialog, DialogTitle, DialogContent, DialogActions, Button, CircularProgress } from '@mui/material'
 import {
   NotificationsActive as ActivityIcon,
   Upload as ImportIcon,
@@ -25,10 +25,11 @@ import {
   Assignment as JobsIcon,
   PowerSettingsNew as DisconnectIcon,
   Info as InfoIcon,
+  PowerOff as ShutdownIcon,
+  LinkOff as DisconnectOnlyIcon,
 } from '@mui/icons-material'
 import { useNavigationStore } from '@store/navigationStore'
 import { useAppStore } from '@store/appStore'
-import { useConfirm } from '@hooks/useConfirm'
 import { getCurrentSessionState } from '@utils/sessionHelpers'
 import type { ViewType } from '@types'
 import { useTranslation } from 'react-i18next'
@@ -36,6 +37,7 @@ import { eventLogStore } from '@services/eventLog'
 import { useActiveTTSJobs, useSpeakers } from '@hooks/useTTSQuery'
 import { useActiveQualityJobs } from '@hooks/useQualityQuery'
 import { logger } from '@utils/logger'
+import { systemApi } from '@services/api'
 
 const SIDEBAR_WIDTH = 72
 
@@ -197,7 +199,6 @@ NavigationItemButton.displayName = 'NavigationItemButton'
 export const NavigationSidebar = React.memo(() => {
   const theme = useTheme()
   const { t } = useTranslation()
-  const { confirm, ConfirmDialog } = useConfirm()
   const navigate = useNavigate()
   const currentView = useNavigationStore((state) => state.currentView)
   const navigateTo = useNavigationStore((state) => state.navigateTo)
@@ -246,28 +247,28 @@ export const NavigationSidebar = React.memo(() => {
     [navigateTo, hasActiveSpeakers]
   )
 
-  // Disconnect handler with confirmation
-  const handleDisconnectClick = useCallback(async () => {
-    const confirmed = await confirm(
-      t('disconnect.confirmTitle'),
-      t('disconnect.confirmMessage', {
-        name: currentProfile?.name || t('disconnect.unknownBackend')
-      }),
-      {
-        icon: <InfoIcon color="primary" />,
-        confirmText: t('disconnect.disconnect'),
-        confirmColor: 'primary',
-      }
-    )
+  // Disconnect dialog state
+  const [disconnectDialogOpen, setDisconnectDialogOpen] = useState(false)
+  const [isShuttingDown, setIsShuttingDown] = useState(false)
 
-    if (!confirmed) return
+  // Open disconnect dialog
+  const handleDisconnectClick = useCallback(() => {
+    setDisconnectDialogOpen(true)
+  }, [])
 
+  // Close disconnect dialog
+  const handleDisconnectCancel = useCallback(() => {
+    setDisconnectDialogOpen(false)
+  }, [])
+
+  // Disconnect only (keep backend running)
+  const handleDisconnectOnly = useCallback(() => {
     logger.group(
       '🔌 Backend Connection',
       'User Initiated Disconnect',
       {
         'Profile': currentProfile?.name || 'Unknown',
-        'Action': 'Disconnecting and returning to start page'
+        'Action': 'Disconnecting (backend keeps running)'
       },
       '#2196F3'
     )
@@ -279,9 +280,54 @@ export const NavigationSidebar = React.memo(() => {
     // Disconnect from backend
     disconnectBackend()
 
+    setDisconnectDialogOpen(false)
+
     // Navigate back to start page
     navigate('/', { replace: true })
-  }, [confirm, t, currentProfile, saveSessionState, disconnectBackend, navigate])
+  }, [currentProfile, saveSessionState, disconnectBackend, navigate])
+
+  // Shutdown backend completely
+  const handleShutdownBackend = useCallback(async () => {
+    setIsShuttingDown(true)
+
+    logger.group(
+      '🔌 Backend Connection',
+      'User Initiated Shutdown',
+      {
+        'Profile': currentProfile?.name || 'Unknown',
+        'Action': 'Shutting down backend and all engines'
+      },
+      '#F44336'
+    )
+
+    try {
+      // Call shutdown API
+      await systemApi.shutdown()
+
+      // Save session state
+      const sessionState = getCurrentSessionState()
+      saveSessionState(sessionState)
+
+      // Wait a moment for backend to start shutdown
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      // Disconnect from frontend side
+      disconnectBackend()
+
+      setDisconnectDialogOpen(false)
+
+      // Navigate back to start page
+      navigate('/', { replace: true })
+    } catch (error) {
+      logger.error('Failed to shutdown backend', error)
+      // Even if shutdown API fails, disconnect from frontend
+      disconnectBackend()
+      setDisconnectDialogOpen(false)
+      navigate('/', { replace: true })
+    } finally {
+      setIsShuttingDown(false)
+    }
+  }, [currentProfile, saveSessionState, disconnectBackend, navigate])
 
   // Helper function to check if item should be disabled
   const isItemDisabled = useCallback(
@@ -433,8 +479,52 @@ export const NavigationSidebar = React.memo(() => {
         </Tooltip>
       </Box>
 
-      {/* Disconnect Confirmation Dialog */}
-      <ConfirmDialog />
+      {/* Disconnect Options Dialog */}
+      <Dialog
+        open={disconnectDialogOpen}
+        onClose={handleDisconnectCancel}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <InfoIcon color="primary" />
+          {t('disconnect.confirmTitle')}
+        </DialogTitle>
+        <DialogContent>
+          <Typography>
+            {t('disconnect.confirmMessage', {
+              name: currentProfile?.name || t('disconnect.unknownBackend')
+            })}
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2, gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <Button
+            onClick={handleDisconnectCancel}
+            color="inherit"
+            disabled={isShuttingDown}
+          >
+            {t('common.cancel')}
+          </Button>
+          <Button
+            onClick={handleDisconnectOnly}
+            color="primary"
+            variant="outlined"
+            startIcon={<DisconnectOnlyIcon />}
+            disabled={isShuttingDown}
+          >
+            {t('disconnect.disconnectOnly')}
+          </Button>
+          <Button
+            onClick={handleShutdownBackend}
+            color="error"
+            variant="contained"
+            startIcon={isShuttingDown ? <CircularProgress size={16} color="inherit" /> : <ShutdownIcon />}
+            disabled={isShuttingDown}
+          >
+            {isShuttingDown ? t('disconnect.shuttingDown') : t('disconnect.shutdownBackend')}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 })

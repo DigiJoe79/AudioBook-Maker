@@ -41,6 +41,7 @@ from loguru import logger
 
 from core.base_engine_manager import BaseEngineManager
 from core.stt_engine_discovery import STTEngineDiscovery
+from core.engine_exceptions import EngineClientError, EngineLoadingError, EngineServerError
 
 
 class STTEngineManager(BaseEngineManager):
@@ -62,8 +63,7 @@ class STTEngineManager(BaseEngineManager):
         Inherited from BaseEngineManager:
         - engine_type: 'stt'
         - engines_base_path: Path to engines/stt/ subdirectory
-        - _engine_metadata: Discovered STT engines
-        - engine_processes: Running engine processes
+        - engine_endpoints: Running engine endpoints (subprocess and Docker)
         - engine_ports: Assigned ports
         - active_engine: Currently loaded engine
         - http_client: Async HTTP client
@@ -82,34 +82,38 @@ class STTEngineManager(BaseEngineManager):
         engines_base_path = Path(BACKEND_ROOT) / 'engines' / 'stt'
         super().__init__(engines_base_path=engines_base_path, engine_type='stt')
 
-    def _discover_engines(self) -> None:
+    def discover_local_engines(self) -> Dict[str, Dict[str, Any]]:
         """
         Discover STT engines from engines/stt/ directory
 
         Uses STTEngineDiscovery to scan for engine servers.
-        Populates self._engine_metadata dictionary.
+        Returns discovered engine metadata directly.
+
+        Returns:
+            Dictionary mapping engine_name -> engine_metadata
         """
         try:
             discovery = STTEngineDiscovery(self.engines_base_path)
-            self._engine_metadata = discovery.discover_all()
+            discovered = discovery.discover_all()
 
-            if not self._engine_metadata:
-                logger.warning("No STT engines discovered! Check engines/stt/ directory.")
+            if not discovered:
+                logger.info("No local STT engines found (subprocess)")
             else:
                 logger.debug(
-                    f"Auto-discovered {len(self._engine_metadata)} STT engines: "
-                    f"{list(self._engine_metadata.keys())}"
+                    f"Auto-discovered {len(discovered)} subprocess STT engines: "
+                    f"{list(discovered.keys())}"
                 )
+            return discovered
         except Exception as e:
             logger.error(f"STT engine discovery failed: {e}")
-            self._engine_metadata = {}
+            return {}
 
     def get_available_models(self, engine_name: str) -> list[Dict[str, Any]]:
         """
         Get list of available models for a specific STT engine
 
         Args:
-            engine_name: Engine identifier (e.g., 'whisper')
+            engine_name: Engine identifier (e.g., 'whisper' or 'whisper:local')
 
         Returns:
             List of model dictionaries with metadata:
@@ -121,14 +125,19 @@ class STTEngineManager(BaseEngineManager):
         Raises:
             ValueError: If engine_name is unknown
         """
-        if engine_name not in self._engine_metadata:
-            available = ', '.join(self._engine_metadata.keys())
+        # Parse variant ID to get base engine name (e.g., 'whisper:local' -> 'whisper')
+        from core.base_engine_manager import parse_variant_id
+        base_name, _ = parse_variant_id(engine_name)
+
+        # Get metadata from DB (Single Source of Truth)
+        metadata = self.get_engine_metadata(engine_name)
+        if not metadata:
+            available = ', '.join(self.list_installed_engines())
             raise ValueError(
                 f"Unknown STT engine: '{engine_name}'. "
                 f"Available engines: {available}"
             )
 
-        metadata = self._engine_metadata[engine_name]
         return metadata.get('models', [])
 
     async def transcribe_with_engine(
@@ -157,11 +166,11 @@ class STTEngineManager(BaseEngineManager):
         Raises:
             RuntimeError: If engine not running or transcription fails
         """
-        port = self.engine_ports.get(engine_name)
-        if not port:
+        base_url = self.get_engine_base_url(engine_name)
+        if not base_url:
             raise RuntimeError(f"STT engine {engine_name} not running")
 
-        url = f"http://127.0.0.1:{port}/transcribe"
+        url = f"{base_url}/transcribe"
 
         payload = {
             "audioPath": audio_path,
@@ -175,14 +184,22 @@ class STTEngineManager(BaseEngineManager):
             response = await self.http_client.post(url, json=payload)
             response.raise_for_status()
         except httpx.RequestError as e:
-            raise RuntimeError(f"HTTP request to {engine_name} failed: {e}")
+            raise EngineServerError(f"HTTP request to {engine_name} failed: {e}")
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Engine {engine_name} returned error {e.response.status_code}: {e.response.text[:200]}")
+            status_code = e.response.status_code
+            detail = e.response.text[:200]
+
+            if status_code in (400, 404):
+                raise EngineClientError(f"{engine_name} rejected request ({status_code}): {detail}")
+            elif status_code == 503:
+                raise EngineLoadingError(f"{engine_name} is loading: {detail}")
+            else:
+                raise EngineServerError(f"{engine_name} error ({status_code}): {detail}")
 
         try:
             result = response.json()
         except ValueError as e:
-            raise RuntimeError(f"Invalid JSON response from {engine_name}: {e}")
+            raise EngineServerError(f"Invalid JSON response from {engine_name}: {e}")
 
         logger.debug(
             f"Transcription completed: {len(result.get('text', ''))} characters, "
@@ -234,9 +251,9 @@ class STTEngineManager(BaseEngineManager):
         # Ensure engine is ready
         await self.ensure_engine_ready(engine_name, model_name)
 
-        # Get engine port
-        port = self.engine_ports.get(engine_name)
-        if not port:
+        # Get engine base URL
+        base_url = self.get_engine_base_url(engine_name)
+        if not base_url:
             raise RuntimeError(f"Engine {engine_name} not running")
 
         # Read and encode audio
@@ -249,7 +266,7 @@ class STTEngineManager(BaseEngineManager):
             raise RuntimeError(f"Failed to read audio file: {e}")
 
         # Call engine's analyze endpoint
-        url = f"http://127.0.0.1:{port}/analyze"
+        url = f"{base_url}/analyze"
         payload = {
             "audioBase64": audio_base64,
             "language": language
@@ -266,14 +283,22 @@ class STTEngineManager(BaseEngineManager):
             response = await self.http_client.post(url, json=payload, timeout=float(ENGINE_ANALYSIS_TIMEOUT))
             response.raise_for_status()
         except httpx.RequestError as e:
-            raise RuntimeError(f"HTTP request to {engine_name} failed: {e}")
+            raise EngineServerError(f"HTTP request to {engine_name} failed: {e}")
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Engine {engine_name} returned error {e.response.status_code}: {e.response.text[:200]}")
+            status_code = e.response.status_code
+            detail = e.response.text[:200]
+
+            if status_code in (400, 404):
+                raise EngineClientError(f"{engine_name} rejected request ({status_code}): {detail}")
+            elif status_code == 503:
+                raise EngineLoadingError(f"{engine_name} is loading: {detail}")
+            else:
+                raise EngineServerError(f"{engine_name} error ({status_code}): {detail}")
 
         try:
             result = response.json()
         except ValueError as e:
-            raise RuntimeError(f"Invalid JSON response from {engine_name}: {e}")
+            raise EngineServerError(f"Invalid JSON response from {engine_name}: {e}")
 
         # Record activity for auto-stop tracking
         self.record_activity(engine_name)

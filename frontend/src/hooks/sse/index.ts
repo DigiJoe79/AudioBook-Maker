@@ -25,6 +25,7 @@
  * ```
  */
 
+import { useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useSSETTSHandlers } from './useSSETTSHandlers'
 import { useSSESegmentHandlers } from './useSSESegmentHandlers'
@@ -32,6 +33,7 @@ import { useSSEExportHandlers } from './useSSEExportHandlers'
 import { useSSESystemHandlers } from './useSSESystemHandlers'
 import { useSSEEngineHandlers } from './useSSEEngineHandlers'
 import { useSSEQualityHandlers } from './useSSEQualityHandlers'
+import { useSSEDockerHostHandlers } from './useSSEDockerHostHandlers'
 
 /**
  * Handler function type - accepts event data only (backendUrl handled separately)
@@ -87,11 +89,14 @@ export function useSSEHandlers(options?: UseSSEHandlersOptions) {
   const systemHandlers = useSSESystemHandlers()
   const engineHandlers = useSSEEngineHandlers() // Engine status handlers
   const qualityHandlers = useSSEQualityHandlers() // Quality analysis handlers
+  const dockerHostHandlers = useSSEDockerHostHandlers() // Docker host connection handlers
 
-  // Combine all handlers into a single object
-  // Note: Some handlers from different domains may overlap (e.g., segment handlers)
-  // The order here determines priority if there are conflicts
-  return {
+  // Combine all handlers into a single STABLE object using useMemo
+  // This prevents stale closure issues in useSSEEventHandlers where handleEvent
+  // callback would otherwise capture an outdated handlers reference.
+  // The memo dependencies are the handler objects from each domain - these are
+  // stable because their individual handler functions are wrapped with useCallback.
+  return useMemo(() => ({
     // TTS Job handlers
     'job.created': ttsHandlers.handleJobCreated as EventHandler,
     'job.started': ttsHandlers.handleJobStarted as EventHandler,
@@ -161,11 +166,25 @@ export function useSSEHandlers(options?: UseSSEHandlersOptions) {
     'engine.status': engineHandlers.handleEngineStatus as EventHandler,
     'engine.starting': engineHandlers.handleEngineStarting as EventHandler,
     'engine.started': engineHandlers.handleEngineStarted as EventHandler,
+    'engine.model_loaded': engineHandlers.handleEngineModelLoaded as EventHandler,
     'engine.stopping': engineHandlers.handleEngineStopping as EventHandler,
     'engine.stopped': engineHandlers.handleEngineStopped as EventHandler,
     'engine.enabled': engineHandlers.handleEngineEnabled as EventHandler,
     'engine.disabled': engineHandlers.handleEngineDisabled as EventHandler,
     'engine.error': engineHandlers.handleEngineError as EventHandler,
+
+    // Docker image handlers
+    'docker.image.installing': engineHandlers.handleDockerImageInstalling as EventHandler,
+    'docker.image.progress': engineHandlers.handleDockerImageProgress as EventHandler,
+    'docker.image.installed': engineHandlers.handleDockerImageInstalled as EventHandler,
+    'docker.image.uninstalled': engineHandlers.handleDockerImageUninstalled as EventHandler,
+    'docker.image.cancelled': engineHandlers.handleDockerImageCancelled as EventHandler,
+    'docker.image.error': engineHandlers.handleDockerImageError as EventHandler,
+
+    // Docker host handlers
+    'docker.host.connected': dockerHostHandlers.handleDockerHostConnected as EventHandler,
+    'docker.host.disconnected': dockerHostHandlers.handleDockerHostDisconnected as EventHandler,
+    'docker.host.connecting': dockerHostHandlers.handleDockerHostConnecting as EventHandler,
 
     // Quality handlers
     'quality.job.created': qualityHandlers['quality.job.created'] as EventHandler,
@@ -177,5 +196,13 @@ export function useSSEHandlers(options?: UseSSEHandlersOptions) {
     'quality.job.resumed': qualityHandlers['quality.job.resumed'] as EventHandler,
     'quality.segment.analyzed': qualityHandlers['quality.segment.analyzed'] as EventHandler,
     'quality.segment.failed': qualityHandlers['quality.segment.failed'] as EventHandler,
-  }
+  }), [
+    ttsHandlers,
+    segmentHandlers,
+    exportHandlers,
+    systemHandlers,
+    engineHandlers,
+    qualityHandlers,
+    dockerHostHandlers,
+  ])
 }

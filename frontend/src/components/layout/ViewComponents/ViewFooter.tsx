@@ -15,7 +15,7 @@ import React from 'react'
 import { Box, type SxProps, type Theme } from '@mui/material'
 import { getElevatedBackground } from '../../../theme'
 
-export interface ViewFooterProps {
+interface ViewFooterProps {
   /** Status/info text displayed on the left */
   status?: React.ReactNode
 

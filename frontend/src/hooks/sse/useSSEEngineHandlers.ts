@@ -20,11 +20,35 @@ import { useAppStore } from '@store/appStore'
 import type { AllEnginesStatus, EngineType, EngineStatusInfo } from '@/types/engines'
 import type {
   EngineStartedData,
+  EngineModelLoadedData,
   EngineStoppedData,
   EngineEnabledData,
   EngineStatusData,
   EngineErrorData,
+  DockerImageInstallingData,
+  DockerImageProgressData,
+  DockerImageInstalledData,
+  DockerImageUninstalledData,
+  DockerImageErrorData,
+  SSEEngineStatusUpdate,
 } from '@/types/sseEvents'
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Get the engine lookup name from SSE event data
+ * Uses variantId if available (for variant-aware matching), falls back to engineName
+ *
+ * This is necessary because:
+ * - Backend sends engineName as base name (e.g., 'xtts')
+ * - Backend sends variantId as full variant (e.g., 'xtts:local')
+ * - Frontend engines have name = variant_id (e.g., 'xtts:local')
+ */
+function getEngineLookupName(data: { engineName: string; variantId?: string }): string {
+  return data.variantId || data.engineName
+}
 
 // ============================================================================
 // Handler Functions
@@ -43,7 +67,7 @@ function handleEngineStatus(
     // Note: engine.status is sent every 15s - no logging to reduce noise
 
     // Update engines query cache - MERGE SSE data with existing rich data
-    // SSE only sends: name, isEnabled, isRunning, status, secondsUntilAutoStop, port
+    // SSE only sends: variantId, isEnabled, isRunning, status, secondsUntilAutoStop, port
     // Existing data has: displayName, version, device, supportedLanguages, etc.
     queryClient.setQueryData<AllEnginesStatus>(
       queryKeys.engines.all(),
@@ -51,7 +75,7 @@ function handleEngineStatus(
         // Helper to merge SSE status into existing engine data using immer
         const mergeEngineList = (
           existingList: EngineStatusInfo[] | undefined,
-          sseList: Array<{ name: string; isEnabled: boolean; isRunning: boolean; status: string; secondsUntilAutoStop?: number; port?: number }>
+          sseList: SSEEngineStatusUpdate[]
         ): EngineStatusInfo[] => {
           if (!existingList || existingList.length === 0) {
             // No existing data - use SSE data as-is (partial)
@@ -61,7 +85,7 @@ function handleEngineStatus(
           // Merge with immer: update status fields while preserving rich metadata
           return produce(existingList, draft => {
             for (const sseEngine of sseList) {
-              const existing = draft.find(e => e.name === sseEngine.name)
+              const existing = draft.find(e => e.variantId === sseEngine.variantId)
               if (existing) {
                 existing.isEnabled = sseEngine.isEnabled
                 existing.isRunning = sseEngine.isRunning
@@ -119,9 +143,13 @@ function handleEngineStatus(
  */
 function handleEngineStarted(data: EngineStartedData, queryClient: QueryClient) {
   try {
-    logger.group('📡 SSE Event', `Engine started: ${data.engineName}`, {
+    const lookupName = getEngineLookupName(data)
+
+    logger.group('📡 SSE Event', `Engine started: ${lookupName}`, {
       'Engine Type': data.engineType,
       'Engine Name': data.engineName,
+      'Variant ID': data.variantId || 'N/A',
+      'Lookup Name': lookupName,
       'Port': data.port,
       'Version': data.version || 'N/A',
       'Event Type': 'engine.started'
@@ -134,7 +162,7 @@ function handleEngineStarted(data: EngineStartedData, queryClient: QueryClient) 
         if (!oldData) return oldData
 
         return produce(oldData, draft => {
-          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.name === data.engineName)
+          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.variantId === lookupName)
           if (engine) {
             engine.isRunning = true
             engine.status = 'running'
@@ -150,7 +178,54 @@ function handleEngineStarted(data: EngineStartedData, queryClient: QueryClient) 
     logger.error('[SSE] Failed to handle engine.started event', {
       engineType: data.engineType,
       engineName: data.engineName,
+      variantId: data.variantId,
       port: data.port,
+      error: error instanceof Error ? error.message : String(error)
+    })
+    // Recovery: invalidate engines query
+    queryClient.invalidateQueries({
+      queryKey: queryKeys.engines.all()
+    })
+  }
+}
+
+/**
+ * Handle engine.model_loaded event
+ * Action: Update engine's loadedModel field
+ */
+function handleEngineModelLoaded(data: EngineModelLoadedData, queryClient: QueryClient) {
+  try {
+    const lookupName = getEngineLookupName(data)
+
+    logger.group('📡 SSE Event', `Model loaded: ${data.loadedModel} on ${lookupName}`, {
+      'Engine Type': data.engineType,
+      'Engine Name': data.engineName,
+      'Variant ID': data.variantId || 'N/A',
+      'Lookup Name': lookupName,
+      'Loaded Model': data.loadedModel,
+      'Event Type': 'engine.model_loaded'
+    }, '#8BC34A') // Light green
+
+    // Update engines query cache with immer
+    queryClient.setQueryData<AllEnginesStatus>(
+      queryKeys.engines.all(),
+      (oldData) => {
+        if (!oldData) return oldData
+
+        return produce(oldData, draft => {
+          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.variantId === lookupName)
+          if (engine) {
+            engine.loadedModel = data.loadedModel
+          }
+        })
+      }
+    )
+  } catch (error) {
+    logger.error('[SSE] Failed to handle engine.model_loaded event', {
+      engineType: data.engineType,
+      engineName: data.engineName,
+      variantId: data.variantId,
+      loadedModel: data.loadedModel,
       error: error instanceof Error ? error.message : String(error)
     })
     // Recovery: invalidate engines query
@@ -164,11 +239,15 @@ function handleEngineStarted(data: EngineStartedData, queryClient: QueryClient) 
  * Handle engine.starting event
  * Action: Update engine status to 'starting'
  */
-function handleEngineStarting(data: { engineType: EngineType; engineName: string }, queryClient: QueryClient) {
+function handleEngineStarting(data: { engineType: EngineType; engineName: string; variantId?: string }, queryClient: QueryClient) {
   try {
-    logger.group('📡 SSE Event', `Engine starting: ${data.engineName}`, {
+    const lookupName = getEngineLookupName(data)
+
+    logger.group('📡 SSE Event', `Engine starting: ${lookupName}`, {
       'Engine Type': data.engineType,
       'Engine Name': data.engineName,
+      'Variant ID': data.variantId || 'N/A',
+      'Lookup Name': lookupName,
       'Event Type': 'engine.starting'
     }, '#FF9800')
 
@@ -178,7 +257,7 @@ function handleEngineStarting(data: { engineType: EngineType; engineName: string
         if (!oldData) return oldData
 
         return produce(oldData, draft => {
-          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.name === data.engineName)
+          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.variantId === lookupName)
           if (engine) {
             engine.status = 'starting'
           }
@@ -189,6 +268,7 @@ function handleEngineStarting(data: { engineType: EngineType; engineName: string
     logger.error('[SSE] Failed to handle engine.starting event', {
       engineType: data.engineType,
       engineName: data.engineName,
+      variantId: data.variantId,
       error: error instanceof Error ? error.message : String(error)
     })
     // Recovery: invalidate engines query
@@ -202,11 +282,15 @@ function handleEngineStarting(data: { engineType: EngineType; engineName: string
  * Handle engine.stopping event
  * Action: Update engine status to 'stopping'
  */
-function handleEngineStopping(data: { engineType: EngineType; engineName: string; reason?: string }, queryClient: QueryClient) {
+function handleEngineStopping(data: { engineType: EngineType; engineName: string; reason?: string; variantId?: string }, queryClient: QueryClient) {
   try {
-    logger.group('📡 SSE Event', `Engine stopping: ${data.engineName}`, {
+    const lookupName = getEngineLookupName(data)
+
+    logger.group('📡 SSE Event', `Engine stopping: ${lookupName}`, {
       'Engine Type': data.engineType,
       'Engine Name': data.engineName,
+      'Variant ID': data.variantId || 'N/A',
+      'Lookup Name': lookupName,
       'Reason': data.reason || 'manual',
       'Event Type': 'engine.stopping'
     }, '#FF9800')
@@ -217,7 +301,7 @@ function handleEngineStopping(data: { engineType: EngineType; engineName: string
         if (!oldData) return oldData
 
         return produce(oldData, draft => {
-          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.name === data.engineName)
+          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.variantId === lookupName)
           if (engine) {
             engine.status = 'stopping'
           }
@@ -228,6 +312,7 @@ function handleEngineStopping(data: { engineType: EngineType; engineName: string
     logger.error('[SSE] Failed to handle engine.stopping event', {
       engineType: data.engineType,
       engineName: data.engineName,
+      variantId: data.variantId,
       reason: data.reason,
       error: error instanceof Error ? error.message : String(error)
     })
@@ -244,9 +329,13 @@ function handleEngineStopping(data: { engineType: EngineType; engineName: string
  */
 function handleEngineStopped(data: EngineStoppedData, queryClient: QueryClient) {
   try {
-    logger.group('📡 SSE Event', `Engine stopped: ${data.engineName}`, {
+    const lookupName = getEngineLookupName(data)
+
+    logger.group('📡 SSE Event', `Engine stopped: ${lookupName}`, {
       'Engine Type': data.engineType,
       'Engine Name': data.engineName,
+      'Variant ID': data.variantId || 'N/A',
+      'Lookup Name': lookupName,
       'Reason': data.reason,
       'Event Type': 'engine.stopped'
     }, '#FF9800')
@@ -257,7 +346,7 @@ function handleEngineStopped(data: EngineStoppedData, queryClient: QueryClient) 
         if (!oldData) return oldData
 
         return produce(oldData, draft => {
-          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.name === data.engineName)
+          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.variantId === lookupName)
           if (engine) {
             engine.isRunning = false
             engine.status = 'stopped'
@@ -270,6 +359,7 @@ function handleEngineStopped(data: EngineStoppedData, queryClient: QueryClient) 
     logger.error('[SSE] Failed to handle engine.stopped event', {
       engineType: data.engineType,
       engineName: data.engineName,
+      variantId: data.variantId,
       reason: data.reason,
       error: error instanceof Error ? error.message : String(error)
     })
@@ -286,9 +376,13 @@ function handleEngineStopped(data: EngineStoppedData, queryClient: QueryClient) 
  */
 function handleEngineError(data: EngineErrorData, queryClient: QueryClient) {
   try {
-    logger.group('📡 SSE Event', `Engine error: ${data.engineName}`, {
+    const lookupName = getEngineLookupName(data)
+
+    logger.group('📡 SSE Event', `Engine error: ${lookupName}`, {
       'Engine Type': data.engineType,
       'Engine Name': data.engineName,
+      'Variant ID': data.variantId || 'N/A',
+      'Lookup Name': lookupName,
       'Error': data.error,
       'Details': data.details || 'N/A',
       'Event Type': 'engine.error'
@@ -300,7 +394,7 @@ function handleEngineError(data: EngineErrorData, queryClient: QueryClient) {
         if (!oldData) return oldData
 
         return produce(oldData, draft => {
-          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.name === data.engineName)
+          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.variantId === lookupName)
           if (engine) {
             engine.isRunning = false
             engine.status = 'error'
@@ -313,6 +407,7 @@ function handleEngineError(data: EngineErrorData, queryClient: QueryClient) {
     logger.error('[SSE] Failed to handle engine.error event', {
       engineType: data.engineType,
       engineName: data.engineName,
+      variantId: data.variantId,
       engineError: data.error,
       error: error instanceof Error ? error.message : String(error)
     })
@@ -329,9 +424,13 @@ function handleEngineError(data: EngineErrorData, queryClient: QueryClient) {
  */
 function handleEngineEnabled(data: EngineEnabledData, queryClient: QueryClient) {
   try {
-    logger.group('📡 SSE Event', `Engine ${data.isEnabled ? 'enabled' : 'disabled'}: ${data.engineName}`, {
+    const lookupName = getEngineLookupName(data)
+
+    logger.group('📡 SSE Event', `Engine ${data.isEnabled ? 'enabled' : 'disabled'}: ${lookupName}`, {
       'Engine Type': data.engineType,
       'Engine Name': data.engineName,
+      'Variant ID': data.variantId || 'N/A',
+      'Lookup Name': lookupName,
       'Is Enabled': data.isEnabled,
       'Event Type': data.isEnabled ? 'engine.enabled' : 'engine.disabled'
     }, data.isEnabled ? '#4CAF50' : '#FF9800')
@@ -342,7 +441,7 @@ function handleEngineEnabled(data: EngineEnabledData, queryClient: QueryClient) 
         if (!oldData) return oldData
 
         return produce(oldData, draft => {
-          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.name === data.engineName)
+          const engine = (draft[data.engineType] as EngineStatusInfo[]).find(e => e.variantId === lookupName)
           if (engine) {
             engine.isEnabled = data.isEnabled
             engine.status = data.isEnabled ? (engine.isRunning ? 'running' : 'stopped') : 'disabled'
@@ -363,6 +462,7 @@ function handleEngineEnabled(data: EngineEnabledData, queryClient: QueryClient) 
     logger.error('[SSE] Failed to handle engine.enabled/disabled event', {
       engineType: data.engineType,
       engineName: data.engineName,
+      variantId: data.variantId,
       isEnabled: data.isEnabled,
       error: error instanceof Error ? error.message : String(error)
     })
@@ -371,6 +471,86 @@ function handleEngineEnabled(data: EngineEnabledData, queryClient: QueryClient) 
       queryKey: queryKeys.engines.all()
     })
   }
+}
+
+// ============================================================================
+// Docker Image Handler Functions
+// ============================================================================
+
+/**
+ * Handle docker.image.installing event
+ * Action: Invalidate engines query so new engine with isPulling=true appears in list
+ */
+function handleDockerImageInstalling(data: DockerImageInstallingData, queryClient: QueryClient) {
+  logger.info('[SSE] Docker image installing', { variantId: data.variantId, imageName: data.imageName })
+
+  // Invalidate engines query so the new engine (with isPulling=true) appears in list
+  queryClient.invalidateQueries({ queryKey: queryKeys.engines.all() })
+
+  // Dispatch CustomEvent for AddImagePopover to pick up
+  window.dispatchEvent(new CustomEvent('docker-image-installing', { detail: data }))
+}
+
+/**
+ * Handle docker.image.progress event
+ * Action: Dispatch CustomEvent for UI components to update progress
+ */
+function handleDockerImageProgress(data: DockerImageProgressData) {
+  // No logging - too frequent during pull
+  window.dispatchEvent(new CustomEvent('docker-image-progress', { detail: data }))
+}
+
+/**
+ * Handle docker.image.installed event
+ * Action: Invalidate engines query to refresh status
+ */
+function handleDockerImageInstalled(data: DockerImageInstalledData, queryClient: QueryClient) {
+  logger.info('[SSE] Docker image installed', { variantId: data.variantId, imageName: data.imageName })
+
+  // Dispatch CustomEvent for UI components to clear progress
+  window.dispatchEvent(new CustomEvent('docker-image-installed', { detail: data }))
+
+  // Invalidate engines query to refresh status
+  queryClient.invalidateQueries({ queryKey: queryKeys.engines.all() })
+}
+
+/**
+ * Handle docker.image.uninstalled event
+ * Action: Invalidate engines query to refresh status
+ */
+function handleDockerImageUninstalled(data: DockerImageUninstalledData, queryClient: QueryClient) {
+  logger.info('[SSE] Docker image uninstalled', { variantId: data.variantId })
+
+  // Invalidate engines query to refresh status
+  queryClient.invalidateQueries({ queryKey: queryKeys.engines.all() })
+}
+
+/**
+ * Handle docker.image.cancelled event
+ * Action: Clear progress and invalidate engines query
+ */
+function handleDockerImageCancelled(data: { variantId: string }, queryClient: QueryClient) {
+  logger.info('[SSE] Docker image pull cancelled', { variantId: data.variantId })
+
+  // Dispatch CustomEvent for UI components to clear progress
+  window.dispatchEvent(new CustomEvent('docker-image-cancelled', { detail: data }))
+
+  // Invalidate engines query to refresh status (isPulling should be false now)
+  queryClient.invalidateQueries({ queryKey: queryKeys.engines.all() })
+}
+
+/**
+ * Handle docker.image.error event
+ * Action: Log the error
+ */
+function handleDockerImageError(data: DockerImageErrorData, queryClient: QueryClient) {
+  logger.error('[SSE] Docker image error', { variantId: data.variantId, error: data.error, operation: data.operation })
+
+  // Dispatch CustomEvent for UI components to clear progress
+  window.dispatchEvent(new CustomEvent('docker-image-error', { detail: data }))
+
+  // Invalidate engines query in case of partial state
+  queryClient.invalidateQueries({ queryKey: queryKeys.engines.all() })
 }
 
 // ============================================================================
@@ -395,15 +575,19 @@ export function useSSEEngineHandlers() {
       [queryClient, updateEngineAvailability]
     ),
     handleEngineStarting: useCallback(
-      (data: { engineType: EngineType; engineName: string }) => handleEngineStarting(data, queryClient),
+      (data: { engineType: EngineType; engineName: string; variantId?: string }) => handleEngineStarting(data, queryClient),
       [queryClient]
     ),
     handleEngineStarted: useCallback(
       (data: EngineStartedData) => handleEngineStarted(data, queryClient),
       [queryClient]
     ),
+    handleEngineModelLoaded: useCallback(
+      (data: EngineModelLoadedData) => handleEngineModelLoaded(data, queryClient),
+      [queryClient]
+    ),
     handleEngineStopping: useCallback(
-      (data: { engineType: EngineType; engineName: string; reason?: string }) => handleEngineStopping(data, queryClient),
+      (data: { engineType: EngineType; engineName: string; reason?: string; variantId?: string }) => handleEngineStopping(data, queryClient),
       [queryClient]
     ),
     handleEngineStopped: useCallback(
@@ -420,6 +604,31 @@ export function useSSEEngineHandlers() {
     ),
     handleEngineError: useCallback(
       (data: EngineErrorData) => handleEngineError(data, queryClient),
+      [queryClient]
+    ),
+    // Docker image handlers
+    handleDockerImageInstalling: useCallback(
+      (data: DockerImageInstallingData) => handleDockerImageInstalling(data, queryClient),
+      [queryClient]
+    ),
+    handleDockerImageProgress: useCallback(
+      (data: DockerImageProgressData) => handleDockerImageProgress(data),
+      []
+    ),
+    handleDockerImageInstalled: useCallback(
+      (data: DockerImageInstalledData) => handleDockerImageInstalled(data, queryClient),
+      [queryClient]
+    ),
+    handleDockerImageUninstalled: useCallback(
+      (data: DockerImageUninstalledData) => handleDockerImageUninstalled(data, queryClient),
+      [queryClient]
+    ),
+    handleDockerImageCancelled: useCallback(
+      (data: { variantId: string }) => handleDockerImageCancelled(data, queryClient),
+      [queryClient]
+    ),
+    handleDockerImageError: useCallback(
+      (data: DockerImageErrorData) => handleDockerImageError(data, queryClient),
       [queryClient]
     ),
   }

@@ -651,9 +651,6 @@ export const SegmentList: React.FC<SegmentListProps> = ({
 
   // Get TTS default settings from DB (for new segment creation)
   const defaultEngine = useAppStore((state) => state.getDefaultTtsEngine())
-  const getDefaultTtsModel = useAppStore((state) => state.getDefaultTtsModel)
-  const defaultModelName = getDefaultTtsModel(defaultEngine)
-  const defaultLanguage = useAppStore((state) => state.getDefaultLanguage())
   const settings = useAppStore((state) => state.settings)
 
   // Check engine availability for quality analysis (needs at least STT or Audio engine)
@@ -667,24 +664,26 @@ export const SegmentList: React.FC<SegmentListProps> = ({
   // Fetch engines and models for validation (only enabled engines)
   const { data: enginesStatus } = useAllEnginesStatus()
   const engines = (enginesStatus?.tts ?? []).filter(e => e.isEnabled)
-  const engineInfo = engines.find((e) => e.name === defaultEngine)
+  const engineInfo = engines.find((e) => e.variantId === defaultEngine)
   const models = engineInfo?.availableModels ?? []
 
-  // Calculate available languages: supportedLanguages + defaultLanguage from DB (if not already included)
+  // Get default model and language from engine status (Single Source of Truth)
+  const defaultModelName = engineInfo?.defaultModelName || ''
+  const defaultLanguage = engineInfo?.defaultLanguage || 'de'
+
+  // Calculate available languages: supportedLanguages + defaultLanguage from engine (if not already included)
   const availableLanguages = React.useMemo(() => {
     if (!engineInfo) return []
 
     const supported = engineInfo.supportedLanguages || []
-    const engineConfig = settings?.tts.engines[defaultEngine]
-    const dbDefaultLanguage = engineConfig?.defaultLanguage
 
     // Add DB default language if it's not already in supported languages
-    if (dbDefaultLanguage && !supported.includes(dbDefaultLanguage)) {
-      return [dbDefaultLanguage, ...supported]
+    if (defaultLanguage && !supported.includes(defaultLanguage)) {
+      return [defaultLanguage, ...supported]
     }
 
     return supported
-  }, [engineInfo, settings, defaultEngine])
+  }, [engineInfo, defaultLanguage])
 
   // Validate and get effective model: use DB default if available, otherwise first available
   const effectiveModelName = React.useMemo(() => {

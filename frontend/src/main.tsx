@@ -1,13 +1,13 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { QueryClient, QueryClientProvider, QueryCache } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { CacheProvider } from '@emotion/react'
 import createCache from '@emotion/cache'
 import App from './App'
 import './styles/globals.css'
 import './i18n/config' // Initialize i18n
-import { logger } from '@utils/logger'
+import { queryClient } from '@services/queryClient'
 
 // Get the CSP nonce injected by Tauri
 // Tauri 2.0 automatically adds a nonce to the CSP, which makes 'unsafe-inline' ignored
@@ -23,34 +23,6 @@ const emotionCache = createCache({
   key: 'css',
   prepend: true,
   nonce: getNonce(),
-})
-
-// Create QueryClient with sensible defaults
-const queryClient = new QueryClient({
-  queryCache: new QueryCache({
-    // Global error handler to ensure no query errors are completely silent
-    onError: (error: Error) => {
-      logger.error('[QueryClient] Query error:', { error: error.message })
-    },
-  }),
-  defaultOptions: {
-    queries: {
-      // Stale time: How long data is considered fresh (default: 0 = always stale)
-      staleTime: 0,
-      // Cache time: How long unused data stays in cache (10 minutes)
-      gcTime: 10 * 60 * 1000,
-      // Retry failed requests 1 time
-      retry: 1,
-      // Refetch on window focus - disabled since SSE provides real-time updates
-      refetchOnWindowFocus: false,
-      // Refetch on mount if data is stale
-      refetchOnMount: true,
-    },
-    mutations: {
-      // Retry failed mutations 0 times by default
-      retry: 0,
-    },
-  },
 })
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

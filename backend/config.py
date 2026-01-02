@@ -38,17 +38,11 @@ DATABASE_PATH = os.getenv("DATABASE_PATH", str(Path(DATA_DIR) / "audiobook_maker
 # HTTP client timeout for engine communication (seconds)
 ENGINE_HTTP_TIMEOUT = int(os.getenv("ENGINE_HTTP_TIMEOUT", "300"))
 
-# Engine startup/shutdown timeout (seconds)
-ENGINE_SHUTDOWN_TIMEOUT = int(os.getenv("ENGINE_SHUTDOWN_TIMEOUT", "10"))
-
 # Engine health check timeout (seconds)
 ENGINE_HEALTH_CHECK_TIMEOUT = int(os.getenv("ENGINE_HEALTH_CHECK_TIMEOUT", "5"))
 
 # Engine analysis timeout for STT/Audio operations (seconds)
 ENGINE_ANALYSIS_TIMEOUT = int(os.getenv("ENGINE_ANALYSIS_TIMEOUT", "120"))
-
-# Discovery mode engine auto-stop timeout (seconds)
-ENGINE_DISCOVERY_TIMEOUT = int(os.getenv("ENGINE_DISCOVERY_TIMEOUT", "30"))
 
 # Idle engine check interval (seconds)
 IDLE_ENGINE_CHECK_INTERVAL = int(os.getenv("IDLE_ENGINE_CHECK_INTERVAL", "60"))
@@ -110,3 +104,28 @@ IMPORT_MAX_CHAPTER_LENGTH = int(os.getenv("IMPORT_MAX_CHAPTER_LENGTH", "30000"))
 
 # Maximum segment length for import validation (characters)
 IMPORT_MAX_SEGMENT_LENGTH = int(os.getenv("IMPORT_MAX_SEGMENT_LENGTH", "1000"))
+
+
+# ===== Docker Configuration =====
+
+# Default engine runner mode: "local" (subprocess) or "docker" (containers)
+DEFAULT_ENGINE_RUNNER = os.getenv("DEFAULT_ENGINE_RUNNER", "local")
+
+
+def is_subprocess_available() -> bool:
+    """
+    Check if subprocess engines are available.
+
+    Subprocess engines only work when backend runs locally (not in Docker).
+    When DEFAULT_ENGINE_RUNNER is 'docker', backend is containerized.
+
+    Returns:
+        True if subprocess engines can be used, False otherwise.
+    """
+    return DEFAULT_ENGINE_RUNNER == "local"
+
+
+# Docker Host Monitoring Configuration
+DOCKER_HOST_HEARTBEAT_INTERVAL = int(os.getenv("DOCKER_HOST_HEARTBEAT_INTERVAL", "30"))
+DOCKER_HOST_RECONNECT_INITIAL_DELAY = float(os.getenv("DOCKER_HOST_RECONNECT_INITIAL_DELAY", "1.0"))
+DOCKER_HOST_RECONNECT_MAX_DELAY = float(os.getenv("DOCKER_HOST_RECONNECT_MAX_DELAY", "30.0"))

@@ -25,9 +25,23 @@ Usage:
 import asyncio
 import json
 import uuid
-from typing import Dict, Set, AsyncGenerator, Any, Optional
+from typing import Dict, Set, AsyncGenerator, Any, Optional, Callable, Awaitable
 from datetime import datetime, timezone
 from loguru import logger
+
+
+def utc_now_iso() -> str:
+    """
+    Generate UTC timestamp in ISO format with 'Z' suffix.
+
+    This ensures JavaScript's Date parser correctly interprets
+    the timestamp as UTC, avoiding timezone offset issues when
+    frontend (Windows) and backend (WSL2/Linux) are in different timezones.
+
+    Returns:
+        ISO 8601 string with 'Z' suffix, e.g., '2025-12-29T14:30:00.123456Z'
+    """
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
 class EventType:
@@ -115,12 +129,27 @@ class EventType:
     # Engine events
     ENGINE_STARTING = "engine.starting"
     ENGINE_STARTED = "engine.started"
+    ENGINE_MODEL_LOADED = "engine.model_loaded"  # Model loaded, engine fully ready
     ENGINE_STOPPING = "engine.stopping"
     ENGINE_STOPPED = "engine.stopped"
     ENGINE_ERROR = "engine.error"
     ENGINE_ENABLED = "engine.enabled"
     ENGINE_DISABLED = "engine.disabled"
     ENGINE_STATUS = "engine.status"  # Periodic status with countdown timers
+
+    # Docker image events
+    DOCKER_IMAGE_INSTALLING = "docker.image.installing"
+    DOCKER_IMAGE_PROGRESS = "docker.image.progress"
+    DOCKER_IMAGE_INSTALLED = "docker.image.installed"
+    DOCKER_IMAGE_UNINSTALLING = "docker.image.uninstalling"
+    DOCKER_IMAGE_UNINSTALLED = "docker.image.uninstalled"
+    DOCKER_IMAGE_CANCELLED = "docker.image.cancelled"
+    DOCKER_IMAGE_ERROR = "docker.image.error"
+
+    # Docker host connection events
+    DOCKER_HOST_CONNECTED = "docker.host.connected"
+    DOCKER_HOST_DISCONNECTED = "docker.host.disconnected"
+    DOCKER_HOST_CONNECTING = "docker.host.connecting"
 
 
 class EventBroadcaster:
@@ -711,6 +740,40 @@ class EventBroadcaster:
 broadcaster = EventBroadcaster()
 
 
+# ==================== Utility Functions ====================
+
+async def safe_broadcast(
+    broadcast_func: Callable[..., Awaitable[None]],
+    *args,
+    event_description: str = "event",
+    **kwargs
+) -> None:
+    """
+    Safely broadcast an SSE event, logging any errors without raising.
+
+    Consolidates duplicated error handling for all broadcast calls across API routes.
+    Prevents SSE failures from affecting API responses - broadcasts are fire-and-forget.
+
+    Args:
+        broadcast_func: The broadcaster method to call (e.g., broadcaster.broadcast_segment_update)
+        *args: Positional arguments to pass to broadcast_func
+        event_description: Human-readable event description for error logging (default: "event")
+        **kwargs: Keyword arguments to pass to broadcast_func
+
+    Usage:
+        await safe_broadcast(
+            broadcaster.broadcast_segment_update,
+            data,
+            event_type=EventType.SEGMENT_UPDATED,
+            event_description="segment update"
+        )
+    """
+    try:
+        await broadcast_func(*args, **kwargs)
+    except Exception as e:
+        logger.warning(f"Failed to broadcast {event_description}: {e}")
+
+
 # Convenience functions for common operations
 async def emit_segment_started(segment_id: str, chapter_id: str):
     """Emit segment started event"""
@@ -845,7 +908,6 @@ async def emit_job_started(
         started_at: ISO timestamp when job started (from DB)
         tts_engine: TTS engine name (for display in job title)
     """
-    from datetime import datetime
     await broadcaster.broadcast_job_update(
         {
             "jobId": job_id,
@@ -855,7 +917,7 @@ async def emit_job_started(
             "processedSegments": processed_segments,
             "progress": 0.0,
             "segmentIds": segment_ids,
-            "startedAt": started_at or datetime.now().isoformat(),
+            "startedAt": started_at or utc_now_iso(),
             "ttsEngine": tts_engine
         },
         event_type=EventType.JOB_STARTED
@@ -985,7 +1047,6 @@ async def emit_job_resumed(
         resumedAt is used by frontend as createdAt to prevent timestamp
         flickering back to original job creation time.
     """
-    from datetime import datetime
     await broadcaster.broadcast_job_update(
         {
             "jobId": job_id,
@@ -995,7 +1056,7 @@ async def emit_job_resumed(
             "processedSegments": 0,
             "progress": 0.0,
             "segmentIds": segment_ids,
-            "resumedAt": datetime.now().isoformat()
+            "resumedAt": utc_now_iso()
         },
         event_type=EventType.JOB_RESUMED
     )
@@ -1007,7 +1068,8 @@ async def emit_engine_started(
     engine_type: str,
     engine_name: str,
     port: int,
-    version: Optional[str] = None
+    version: Optional[str] = None,
+    variant_id: Optional[str] = None
 ):
     """
     Emit engine started event when an engine server starts
@@ -1017,6 +1079,7 @@ async def emit_engine_started(
         engine_name: Engine identifier (e.g., 'xtts', 'chatterbox')
         port: HTTP port the engine is listening on
         version: Package version from health check (optional)
+        variant_id: Variant identifier for variant-aware frontends (optional)
     """
     data = {
         "engineType": engine_type,
@@ -1026,6 +1089,8 @@ async def emit_engine_started(
     }
     if version:
         data["version"] = version
+    if variant_id:
+        data["variantId"] = variant_id
 
     await broadcaster.broadcast_event(
         event_type=EventType.ENGINE_STARTED,
@@ -1034,27 +1099,77 @@ async def emit_engine_started(
     )
 
 
-async def emit_engine_starting(engine_type: str, engine_name: str):
-    """Emit when engine server is starting (process launched, waiting for ready)"""
+async def emit_engine_model_loaded(
+    engine_type: str,
+    engine_name: str,
+    model_name: str,
+    variant_id: Optional[str] = None
+):
+    """
+    Emit engine model loaded event when a model is loaded on an engine.
+
+    This event indicates the engine is fully ready for requests.
+    Also emitted on model hotswap (changing model without restart).
+
+    Args:
+        engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
+        engine_name: Engine identifier (e.g., 'xtts', 'chatterbox')
+        model_name: Name of the loaded model
+        variant_id: Variant identifier for variant-aware frontends (optional)
+    """
+    data = {
+        "engineType": engine_type,
+        "engineName": engine_name,
+        "loadedModel": model_name,
+    }
+    if variant_id:
+        data["variantId"] = variant_id
+
     await broadcaster.broadcast_event(
-        event_type=EventType.ENGINE_STARTING,
-        data={
-            "engineType": engine_type,
-            "engineName": engine_name,
-        },
+        event_type=EventType.ENGINE_MODEL_LOADED,
+        data=data,
         channel="engines"
     )
 
 
-async def emit_engine_stopping(engine_type: str, engine_name: str, reason: str = "manual"):
+async def emit_engine_starting(
+    engine_type: str,
+    engine_name: str,
+    variant_id: Optional[str] = None
+):
+    """Emit when engine server is starting (process launched, waiting for ready)"""
+    data = {
+        "engineType": engine_type,
+        "engineName": engine_name,
+    }
+    if variant_id:
+        data["variantId"] = variant_id
+
+    await broadcaster.broadcast_event(
+        event_type=EventType.ENGINE_STARTING,
+        data=data,
+        channel="engines"
+    )
+
+
+async def emit_engine_stopping(
+    engine_type: str,
+    engine_name: str,
+    reason: str = "manual",
+    variant_id: Optional[str] = None
+):
     """Emit when engine server is stopping (shutdown requested)"""
+    data = {
+        "engineType": engine_type,
+        "engineName": engine_name,
+        "reason": reason,
+    }
+    if variant_id:
+        data["variantId"] = variant_id
+
     await broadcaster.broadcast_event(
         event_type=EventType.ENGINE_STOPPING,
-        data={
-            "engineType": engine_type,
-            "engineName": engine_name,
-            "reason": reason,
-        },
+        data=data,
         channel="engines"
     )
 
@@ -1062,7 +1177,8 @@ async def emit_engine_stopping(engine_type: str, engine_name: str, reason: str =
 async def emit_engine_stopped(
     engine_type: str,
     engine_name: str,
-    reason: str = "manual"
+    reason: str = "manual",
+    variant_id: Optional[str] = None
 ):
     """
     Emit engine stopped event when an engine server stops
@@ -1071,22 +1187,28 @@ async def emit_engine_stopped(
         engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
         engine_name: Engine identifier (e.g., 'xtts', 'chatterbox')
         reason: Reason for stop - "manual", "inactivity", or "error"
+        variant_id: Variant identifier for variant-aware frontends (optional)
     """
+    data = {
+        "engineType": engine_type,
+        "engineName": engine_name,
+        "status": "stopped",
+        "reason": reason,
+    }
+    if variant_id:
+        data["variantId"] = variant_id
+
     await broadcaster.broadcast_event(
         event_type=EventType.ENGINE_STOPPED,
-        data={
-            "engineType": engine_type,
-            "engineName": engine_name,
-            "status": "stopped",
-            "reason": reason,
-        },
+        data=data,
         channel="engines"
     )
 
 
 async def emit_engine_enabled(
     engine_type: str,
-    engine_name: str
+    engine_name: str,
+    variant_id: Optional[str] = None
 ):
     """
     Emit engine enabled event when an engine is enabled via settings
@@ -1094,21 +1216,27 @@ async def emit_engine_enabled(
     Args:
         engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
         engine_name: Engine identifier (e.g., 'xtts', 'chatterbox')
+        variant_id: Variant identifier for variant-aware frontends (optional)
     """
+    data = {
+        "engineType": engine_type,
+        "engineName": engine_name,
+        "isEnabled": True,
+    }
+    if variant_id:
+        data["variantId"] = variant_id
+
     await broadcaster.broadcast_event(
         event_type=EventType.ENGINE_ENABLED,
-        data={
-            "engineType": engine_type,
-            "engineName": engine_name,
-            "isEnabled": True,
-        },
+        data=data,
         channel="engines"
     )
 
 
 async def emit_engine_disabled(
     engine_type: str,
-    engine_name: str
+    engine_name: str,
+    variant_id: Optional[str] = None
 ):
     """
     Emit engine disabled event when an engine is disabled via settings
@@ -1116,14 +1244,19 @@ async def emit_engine_disabled(
     Args:
         engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
         engine_name: Engine identifier (e.g., 'xtts', 'chatterbox')
+        variant_id: Variant identifier for variant-aware frontends (optional)
     """
+    data = {
+        "engineType": engine_type,
+        "engineName": engine_name,
+        "isEnabled": False,
+    }
+    if variant_id:
+        data["variantId"] = variant_id
+
     await broadcaster.broadcast_event(
         event_type=EventType.ENGINE_DISABLED,
-        data={
-            "engineType": engine_type,
-            "engineName": engine_name,
-            "isEnabled": False,
-        },
+        data=data,
         channel="engines"
     )
 
@@ -1132,7 +1265,8 @@ async def emit_engine_error(
     engine_type: str,
     engine_name: str,
     error: str,
-    details: str = None
+    details: str = None,
+    variant_id: Optional[str] = None
 ):
     """
     Emit engine error event when an engine encounters an error
@@ -1142,6 +1276,7 @@ async def emit_engine_error(
         engine_name: Engine identifier (e.g., 'xtts', 'chatterbox')
         error: Error message
         details: Optional detailed error information
+        variant_id: Variant identifier for variant-aware frontends (optional)
     """
     data = {
         "engineType": engine_type,
@@ -1150,6 +1285,8 @@ async def emit_engine_error(
     }
     if details:
         data["details"] = details
+    if variant_id:
+        data["variantId"] = variant_id
 
     await broadcaster.broadcast_event(
         event_type=EventType.ENGINE_ERROR,
@@ -1171,7 +1308,7 @@ async def emit_engine_status(
     Args:
         engines_status: Dict with engine status per type:
             {
-                "tts": [{"name": "xtts", "isRunning": True, "secondsUntilAutoStop": 180}, ...],
+                "tts": [{"variantId": "xtts:local", "isRunning": True, "secondsUntilAutoStop": 180}, ...],
                 "text": [...],
                 "stt": [...],
                 "audio": [...]
@@ -1189,6 +1326,114 @@ async def emit_engine_status(
             "hasTextEngine": has_text_engine,
             "hasSttEngine": has_stt_engine,
             "hasAudioEngine": has_audio_engine,
+        },
+        channel="engines"
+    )
+
+
+# ==================== Docker Image Event Helpers ====================
+
+async def emit_docker_image_installing(variant_id: str, image_name: str, host_id: str):
+    """Emit when Docker image pull starts"""
+    await broadcaster.broadcast_event(
+        event_type=EventType.DOCKER_IMAGE_INSTALLING,
+        data={
+            "variantId": variant_id,
+            "imageName": image_name,
+            "hostId": host_id,
+        },
+        channel="engines"
+    )
+
+
+async def emit_docker_image_progress(
+    variant_id: str,
+    status: str,
+    progress_percent: int,
+    current_layer: str = "",
+    message: str = ""
+):
+    """
+    Emit Docker image pull progress event.
+
+    Args:
+        variant_id: The variant being installed (e.g., 'xtts:docker:local')
+        status: Current status ('downloading', 'extracting', 'verifying')
+        progress_percent: Overall progress percentage (0-100)
+        current_layer: Current layer being processed (optional)
+        message: Human-readable progress message (optional)
+    """
+    await broadcaster.broadcast_event(
+        event_type=EventType.DOCKER_IMAGE_PROGRESS,
+        data={
+            "variantId": variant_id,
+            "status": status,
+            "progressPercent": progress_percent,
+            "currentLayer": current_layer,
+            "message": message,
+        },
+        channel="engines"
+    )
+
+
+async def emit_docker_image_installed(variant_id: str, image_name: str, host_id: str):
+    """Emit when Docker image is successfully installed"""
+    await broadcaster.broadcast_event(
+        event_type=EventType.DOCKER_IMAGE_INSTALLED,
+        data={
+            "variantId": variant_id,
+            "imageName": image_name,
+            "hostId": host_id,
+            "isInstalled": True,
+        },
+        channel="engines"
+    )
+
+
+async def emit_docker_image_uninstalling(variant_id: str, host_id: str):
+    """Emit when Docker image removal starts"""
+    await broadcaster.broadcast_event(
+        event_type=EventType.DOCKER_IMAGE_UNINSTALLING,
+        data={
+            "variantId": variant_id,
+            "hostId": host_id,
+        },
+        channel="engines"
+    )
+
+
+async def emit_docker_image_uninstalled(variant_id: str, host_id: str):
+    """Emit when Docker image is successfully removed"""
+    await broadcaster.broadcast_event(
+        event_type=EventType.DOCKER_IMAGE_UNINSTALLED,
+        data={
+            "variantId": variant_id,
+            "hostId": host_id,
+            "isInstalled": False,
+        },
+        channel="engines"
+    )
+
+
+async def emit_docker_image_cancelled(variant_id: str):
+    """Emit when Docker image pull is cancelled by user"""
+    await broadcaster.broadcast_event(
+        event_type=EventType.DOCKER_IMAGE_CANCELLED,
+        data={
+            "variantId": variant_id,
+        },
+        channel="engines"
+    )
+
+
+async def emit_docker_image_error(variant_id: str, error: str, operation: str = "install"):
+    """Emit when Docker image operation fails"""
+    await broadcaster.broadcast_event(
+        event_type=EventType.DOCKER_IMAGE_ERROR,
+        data={
+            "variantId": variant_id,
+            "error": error,
+            "operation": operation,
         },
         channel="engines"
     )
@@ -1235,7 +1480,6 @@ async def emit_quality_job_started(
     started_at: str = None
 ):
     """Emit quality job started event"""
-    from datetime import datetime
     await broadcaster.broadcast_event(
         event_type=EventType.QUALITY_JOB_STARTED,
         data={
@@ -1243,7 +1487,7 @@ async def emit_quality_job_started(
             "chapterId": chapter_id,
             "totalSegments": total_segments,
             "processedSegments": processed_segments,
-            "startedAt": started_at or datetime.now().isoformat(),
+            "startedAt": started_at or utc_now_iso(),
         },
         channel="quality"
     )
@@ -1316,13 +1560,12 @@ async def emit_quality_job_cancelled(job_id: str, chapter_id: str):
 
 async def emit_quality_job_resumed(job_id: str, chapter_id: str):
     """Emit quality job resumed event"""
-    from datetime import datetime
     await broadcaster.broadcast_event(
         event_type=EventType.QUALITY_JOB_RESUMED,
         data={
             "jobId": job_id,
             "chapterId": chapter_id,
-            "resumedAt": datetime.now().isoformat(),
+            "resumedAt": utc_now_iso(),
         },
         channel="quality"
     )
@@ -1473,4 +1716,85 @@ async def emit_import_cancelled(import_id: str, message: str = ""):
             "message": message,
         },
         channel="import"
+    )
+
+
+# ==================== Docker Host Event Helpers ====================
+
+async def emit_docker_host_connected(
+    host_id: str,
+    docker_version: str,
+    os_info: str,
+    has_gpu: bool = False
+):
+    """
+    Emit when Docker host connection is established.
+
+    Args:
+        host_id: Host identifier (e.g., 'docker:local', 'docker:gpu-server')
+        docker_version: Docker daemon version (e.g., '24.0.6')
+        os_info: Operating system info (e.g., 'Docker Desktop')
+        has_gpu: Whether host has NVIDIA GPU runtime
+    """
+    await broadcaster.broadcast_event(
+        event_type=EventType.DOCKER_HOST_CONNECTED,
+        data={
+            "hostId": host_id,
+            "dockerVersion": docker_version,
+            "os": os_info,
+            "isAvailable": True,
+            "hasGpu": has_gpu,
+        },
+        channel="engines"
+    )
+
+
+async def emit_docker_host_disconnected(
+    host_id: str,
+    reason: str,
+    error_code: str = "CONNECTION_LOST"
+):
+    """
+    Emit when Docker host connection is lost.
+
+    Args:
+        host_id: Host identifier
+        reason: Reason for disconnection (e.g., 'Connection refused', 'Timeout')
+        error_code: Categorized error code for frontend handling
+            - SSH_AUTH_FAILED: SSH authentication failed
+            - CONNECTION_REFUSED: Connection refused (Docker daemon not running)
+            - CONNECTION_TIMEOUT: Connection timeout
+            - DNS_FAILED: Cannot resolve hostname
+            - NETWORK_UNREACHABLE: Network unreachable
+            - SSH_CONNECTION_FAILED: SSH connection failed
+            - DOCKER_NOT_FOUND: Docker not found on remote host
+            - CONNECTION_LOST: Generic connection lost (default)
+    """
+    await broadcaster.broadcast_event(
+        event_type=EventType.DOCKER_HOST_DISCONNECTED,
+        data={
+            "hostId": host_id,
+            "reason": reason,
+            "errorCode": error_code,
+            "isAvailable": False,
+        },
+        channel="engines"
+    )
+
+
+async def emit_docker_host_connecting(host_id: str, attempt: int):
+    """
+    Emit when attempting to reconnect to Docker host.
+
+    Args:
+        host_id: Host identifier
+        attempt: Reconnection attempt number (1, 2, 3, ...)
+    """
+    await broadcaster.broadcast_event(
+        event_type=EventType.DOCKER_HOST_CONNECTING,
+        data={
+            "hostId": host_id,
+            "attempt": attempt,
+        },
+        channel="engines"
     )

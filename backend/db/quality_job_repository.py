@@ -7,9 +7,20 @@ Manages the quality_jobs table for unified STT + Audio analysis jobs.
 import json
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from loguru import logger
+
+
+def utc_now_iso() -> str:
+    """
+    Generate UTC timestamp in ISO format with 'Z' suffix.
+
+    This ensures JavaScript's Date parser correctly interprets
+    the timestamp as UTC, avoiding timezone offset issues when
+    frontend (Windows) and backend (WSL2/Linux) are in different timezones.
+    """
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
 def dict_from_row(row: sqlite3.Row) -> Dict[str, Any]:
@@ -27,56 +38,6 @@ class QualityJobRepository:
 
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
-        self._ensure_table_exists()
-
-    def _ensure_table_exists(self):
-        """Create quality_jobs table if it doesn't exist."""
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS quality_jobs (
-                id TEXT PRIMARY KEY,
-                job_type TEXT NOT NULL,
-                target_id TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-
-                -- Engine configuration
-                stt_engine TEXT,
-                stt_model_name TEXT,
-                audio_engine TEXT,
-
-                -- Context
-                chapter_id TEXT,
-                segment_id TEXT,
-                language TEXT DEFAULT 'en',
-
-                -- Segment tracking (like TTS jobs)
-                segment_ids TEXT,
-
-                -- Progress
-                total_segments INTEGER DEFAULT 0,
-                processed_segments INTEGER DEFAULT 0,
-                failed_segments INTEGER DEFAULT 0,
-                current_segment_id TEXT,
-
-                -- Metadata
-                trigger_source TEXT DEFAULT 'manual',
-                error_message TEXT,
-
-                -- Timestamps
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                started_at TIMESTAMP,
-                completed_at TIMESTAMP
-            )
-        """)
-        self.conn.commit()
-
-        # Migration: Add segment_ids column if it doesn't exist (for existing DBs)
-        try:
-            cursor.execute("SELECT segment_ids FROM quality_jobs LIMIT 1")
-        except sqlite3.OperationalError:
-            logger.info("Migrating quality_jobs: Adding segment_ids column")
-            cursor.execute("ALTER TABLE quality_jobs ADD COLUMN segment_ids TEXT")
-            self.conn.commit()
 
     def _parse_job_segment_ids(self, job: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """
@@ -202,7 +163,7 @@ class QualityJobRepository:
                 UPDATE quality_jobs
                 SET status = 'running', started_at = ?
                 WHERE id = ?
-            """, (datetime.now().isoformat(), job_id))
+            """, (utc_now_iso(), job_id))
             self.conn.commit()
             # Return fresh job data with updated started_at
             return self.get_by_id(job_id)
@@ -276,7 +237,7 @@ class QualityJobRepository:
             UPDATE quality_jobs
             SET status = 'completed', completed_at = ?
             WHERE id = ?
-        """, (datetime.now().isoformat(), job_id))
+        """, (utc_now_iso(), job_id))
         self.conn.commit()
 
     def mark_failed(self, job_id: str, error_message: str):
@@ -286,7 +247,7 @@ class QualityJobRepository:
             UPDATE quality_jobs
             SET status = 'failed', error_message = ?, completed_at = ?
             WHERE id = ?
-        """, (error_message, datetime.now().isoformat(), job_id))
+        """, (error_message, utc_now_iso(), job_id))
         self.conn.commit()
 
     def mark_cancelled(self, job_id: str):
@@ -296,7 +257,7 @@ class QualityJobRepository:
             UPDATE quality_jobs
             SET status = 'cancelled', completed_at = ?
             WHERE id = ?
-        """, (datetime.now().isoformat(), job_id))
+        """, (utc_now_iso(), job_id))
         self.conn.commit()
 
     def request_cancellation(self, job_id: str) -> bool:

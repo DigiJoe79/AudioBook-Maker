@@ -18,12 +18,12 @@ export function useTextEngineLanguages() {
     if (!enginesStatus?.text || !defaultEngine) {
       return {
         languages: [] as string[],
-        engineName: defaultEngine ?? '',
+        engineName: defaultEngine,
         engineFound: false
       }
     }
 
-    const textEngine = enginesStatus.text.find(e => e.name === defaultEngine)
+    const textEngine = enginesStatus.text.find(e => e.variantId === defaultEngine)
 
     if (!textEngine) {
       return {

@@ -42,6 +42,7 @@ from loguru import logger
 
 from core.base_engine_manager import BaseEngineManager
 from core.audio_engine_discovery import AudioEngineDiscovery
+from core.engine_exceptions import EngineClientError, EngineLoadingError, EngineServerError
 from config import BACKEND_ROOT
 
 
@@ -65,8 +66,7 @@ class AudioEngineManager(BaseEngineManager):
         Inherited from BaseEngineManager:
         - engine_type: 'audio'
         - engines_base_path: Path to engines/audio_analysis/ subdirectory
-        - _engine_metadata: Discovered audio engines
-        - engine_processes: Running engine processes
+        - engine_endpoints: Running engine endpoints (subprocess and Docker)
         - engine_ports: Assigned ports
         - active_engine: Currently loaded engine
         - http_client: Async HTTP client
@@ -83,30 +83,31 @@ class AudioEngineManager(BaseEngineManager):
         engines_base_path = Path(BACKEND_ROOT) / 'engines' / 'audio_analysis'
         super().__init__(engines_base_path=engines_base_path, engine_type='audio')
 
-    def _discover_engines(self) -> None:
+    def discover_local_engines(self) -> Dict[str, Dict[str, Any]]:
         """
         Discover audio analysis engines from engines/audio_analysis/ directory
 
         Uses AudioEngineDiscovery to scan for engine servers.
-        Populates self._engine_metadata dictionary.
+        Returns discovered engine metadata directly.
+
+        Returns:
+            Dictionary mapping engine_name -> engine_metadata
         """
         try:
             discovery = AudioEngineDiscovery(self.engines_base_path)
-            self._engine_metadata = discovery.discover_all()
+            discovered = discovery.discover_all()
 
-            if not self._engine_metadata:
-                logger.warning(
-                    "No audio analysis engines discovered! "
-                    "Check engines/audio_analysis/ directory."
-                )
+            if not discovered:
+                logger.info("No local audio analysis engines found (subprocess)")
             else:
-                logger.info(
-                    f"Auto-discovered {len(self._engine_metadata)} audio analysis engines: "
-                    f"{list(self._engine_metadata.keys())}"
+                logger.debug(
+                    f"Auto-discovered {len(discovered)} subprocess audio analysis engines: "
+                    f"{list(discovered.keys())}"
                 )
+            return discovered
         except Exception as e:
             logger.error(f"Audio engine discovery failed: {e}")
-            self._engine_metadata = {}
+            return {}
 
     async def analyze_with_engine(
         self,
@@ -136,11 +137,11 @@ class AudioEngineManager(BaseEngineManager):
             RuntimeError: If engine not running or analysis fails
             ValueError: If audio file not found or invalid
         """
-        port = self.engine_ports.get(engine_name)
-        if not port:
+        base_url = self.get_engine_base_url(engine_name)
+        if not base_url:
             raise RuntimeError(f"Audio engine {engine_name} not running")
 
-        url = f"http://127.0.0.1:{port}/analyze"
+        url = f"{base_url}/analyze"
 
         payload = {
             "audioPath": audio_path,
@@ -153,14 +154,22 @@ class AudioEngineManager(BaseEngineManager):
             response = await self.http_client.post(url, json=payload)
             response.raise_for_status()
         except httpx.RequestError as e:
-            raise RuntimeError(f"HTTP request to {engine_name} failed: {e}")
+            raise EngineServerError(f"HTTP request to {engine_name} failed: {e}")
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Engine {engine_name} returned error {e.response.status_code}: {e.response.text[:200]}")
+            status_code = e.response.status_code
+            detail = e.response.text[:200]
+
+            if status_code in (400, 404):
+                raise EngineClientError(f"{engine_name} rejected request ({status_code}): {detail}")
+            elif status_code == 503:
+                raise EngineLoadingError(f"{engine_name} is loading: {detail}")
+            else:
+                raise EngineServerError(f"{engine_name} error ({status_code}): {detail}")
 
         try:
             metrics = response.json()
         except ValueError as e:
-            raise RuntimeError(f"Invalid JSON response from {engine_name}: {e}")
+            raise EngineServerError(f"Invalid JSON response from {engine_name}: {e}")
 
         logger.debug(
             f"Analysis complete: speech={metrics.get('speechRatio'):.2%}, "
@@ -202,9 +211,9 @@ class AudioEngineManager(BaseEngineManager):
         """
         import base64
 
-        # Get engine port (assume engine is already started by caller via ensure_engine_ready)
-        port = self.engine_ports.get(engine_name)
-        if not port:
+        # Get engine base URL (assume engine is already started by caller via ensure_engine_ready)
+        base_url = self.get_engine_base_url(engine_name)
+        if not base_url:
             raise RuntimeError(f"Engine {engine_name} not running - call ensure_engine_ready first")
 
         # Read and encode audio
@@ -217,7 +226,7 @@ class AudioEngineManager(BaseEngineManager):
             raise RuntimeError(f"Failed to read audio file: {e}")
 
         # Call engine's analyze endpoint
-        url = f"http://127.0.0.1:{port}/analyze"
+        url = f"{base_url}/analyze"
         payload = {
             "audio_base64": audio_base64,
         }
@@ -229,14 +238,22 @@ class AudioEngineManager(BaseEngineManager):
             response = await self.http_client.post(url, json=payload, timeout=float(ENGINE_ANALYSIS_TIMEOUT))
             response.raise_for_status()
         except httpx.RequestError as e:
-            raise RuntimeError(f"HTTP request to {engine_name} failed: {e}")
+            raise EngineServerError(f"HTTP request to {engine_name} failed: {e}")
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Engine {engine_name} returned error {e.response.status_code}: {e.response.text[:200]}")
+            status_code = e.response.status_code
+            detail = e.response.text[:200]
+
+            if status_code in (400, 404):
+                raise EngineClientError(f"{engine_name} rejected request ({status_code}): {detail}")
+            elif status_code == 503:
+                raise EngineLoadingError(f"{engine_name} is loading: {detail}")
+            else:
+                raise EngineServerError(f"{engine_name} error ({status_code}): {detail}")
 
         try:
             result = response.json()
         except ValueError as e:
-            raise RuntimeError(f"Invalid JSON response from {engine_name}: {e}")
+            raise EngineServerError(f"Invalid JSON response from {engine_name}: {e}")
 
         # Record activity for auto-stop tracking
         self.record_activity(engine_name)

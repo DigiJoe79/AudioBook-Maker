@@ -6,7 +6,7 @@
  *
  * Architecture (mirrors TTS handlers):
  * - Direct cache updates via setQueryData for immediate UI response
- * - updateQualityJobInAllCaches updates all job caches (activeJobs, jobs list, specific job)
+ * - Uses updateQualityJobInCaches from jobCacheUpdater utility (consolidates duplicated cache update logic)
  * - NO invalidation during progress - only at job completion/failure
  * - Optimized with immer for O(1) updates
  */
@@ -28,71 +28,9 @@ import type {
   QualitySegmentFailedData,
 } from '@/types/sseEvents'
 import { logger } from '@utils/logger'
+import { updateQualityJobInCaches } from '@utils/jobCacheUpdater'
 
 // ==================== Helper Functions ====================
-
-/**
- * Update a quality job in ALL caches (activeJobs, jobs list, specific job).
- *
- * This ensures the UI updates immediately without waiting for refetch.
- * Mirrors the TTS updateJobInAllCaches pattern.
- *
- * IMPORTANT: Does NOT invalidate queries to avoid excessive refetches.
- * Final authoritative refetch happens at job.completed/failed events only.
- */
-function updateQualityJobInAllCaches(
-  queryClient: QueryClient,
-  jobId: string,
-  updates: Partial<QualityJob>
-) {
-  try {
-    // Helper function to update jobs array with immer
-    const updateJobsArray = produce((draft: { jobs?: QualityJob[] } | undefined) => {
-      if (!draft?.jobs) return
-      const job = draft.jobs.find((j: QualityJob) => j.id === jobId)
-      if (job) {
-        Object.assign(job, updates)
-      }
-    })
-
-    // 1. Update activeJobs cache
-    queryClient.setQueryData(
-      queryKeys.quality.activeJobs(),
-      updateJobsArray
-    )
-
-    // 2. Update ALL general jobs queries (with any filters)
-    // This updates the QualityJobsView
-    queryClient.setQueryData(
-      queryKeys.quality.jobs({ limit: 50 }),
-      updateJobsArray
-    )
-
-    // 3. Update specific job query if it exists
-    queryClient.setQueryData(
-      queryKeys.quality.job(jobId),
-      produce((draft: QualityJob | undefined) => {
-        if (draft) {
-          Object.assign(draft, updates)
-        }
-      })
-    )
-
-    // NO invalidation here - that would cause refetch on every progress event!
-    // Final authoritative refetch happens at job.completed/failed events only
-  } catch (error) {
-    logger.error('[SSE] Failed to update quality job in all caches', {
-      jobId,
-      updates,
-      error: error instanceof Error ? error.message : String(error)
-    })
-    // Recovery: invalidate to force refetch
-    queryClient.invalidateQueries({
-      queryKey: queryKeys.quality.all,
-      exact: false
-    })
-  }
-}
 
 /**
  * Add a new job to all caches.
@@ -231,7 +169,7 @@ export function useSSEQualityHandlers() {
 
         // Update job status to 'running'
         // Use processedSegments from event (for resumed jobs) or default to 0
-        updateQualityJobInAllCaches(queryClient, data.jobId, {
+        updateQualityJobInCaches(queryClient, data.jobId, {
           status: 'running',
           totalSegments: data.totalSegments,
           processedSegments: data.processedSegments ?? 0,
@@ -251,7 +189,7 @@ export function useSSEQualityHandlers() {
     (data: QualityJobProgressData) => {
       try {
         // Update job progress in all caches
-        updateQualityJobInAllCaches(queryClient, data.jobId, {
+        updateQualityJobInCaches(queryClient, data.jobId, {
           status: 'running',
           processedSegments: data.processedSegments,
           totalSegments: data.totalSegments,
@@ -343,7 +281,7 @@ export function useSSEQualityHandlers() {
         )
 
         // Update job status to 'completed'
-        updateQualityJobInAllCaches(queryClient, data.jobId, {
+        updateQualityJobInCaches(queryClient, data.jobId, {
           status: 'completed',
           processedSegments: data.totalSegments,
           totalSegments: data.totalSegments,
@@ -389,7 +327,7 @@ export function useSSEQualityHandlers() {
         )
 
         // Update job status to 'failed'
-        updateQualityJobInAllCaches(queryClient, data.jobId, {
+        updateQualityJobInCaches(queryClient, data.jobId, {
           status: 'failed',
           errorMessage: data.error,
           processedSegments: data.processedSegments,
@@ -426,7 +364,7 @@ export function useSSEQualityHandlers() {
         )
 
         // Update job status to 'cancelled'
-        updateQualityJobInAllCaches(queryClient, data.jobId, {
+        updateQualityJobInCaches(queryClient, data.jobId, {
           status: 'cancelled',
           completedAt: new Date(),
         })
@@ -461,7 +399,7 @@ export function useSSEQualityHandlers() {
 
         // Update job status to 'pending'
         // Use resumedAt as createdAt for display purposes (avoids flicker to old time)
-        updateQualityJobInAllCaches(queryClient, data.jobId, {
+        updateQualityJobInCaches(queryClient, data.jobId, {
           status: 'pending',
           completedAt: undefined,
           errorMessage: undefined,

@@ -123,6 +123,14 @@ export const queryKeys = {
   // Engines (Management)
   engines: {
     all: () => ['engines'] as const,
+    catalog: () => ['engines', 'catalog'] as const,
+    dockerImage: (variantId: string) => ['engines', 'docker', variantId] as const,
+  },
+
+  // Engine Hosts
+  engineHosts: {
+    all: () => ['engineHosts'] as const,
+    detail: (id: string) => ['engineHosts', 'detail', id] as const,
   },
 
   // Health
@@ -133,4 +141,4 @@ export const queryKeys = {
  * Helper type to extract query key types
  * Usage: type ProjectsKey = QueryKey<typeof queryKeys.projects.all>
  */
-export type QueryKey<T> = T extends readonly unknown[] ? T : never
+type QueryKey<T> = T extends readonly unknown[] ? T : never

@@ -79,6 +79,16 @@ backend/media/exports/*
 !backend/media/exports/.gitkeep
 backend/media/speaker_samples/*
 !backend/media/speaker_samples/.gitkeep
+
+# Docker Container Path 
+media/output/*
+!media/output/.gitkeep
+media/exports/*
+!media/exports/.gitkeep
+media/speaker_samples/*
+!media/speaker_samples/.gitkeep
+
+
 backend/cleanup.bat
 
 
@@ -89,6 +99,12 @@ backend/cleanup.bat
 # Download separately or use model management
 backend/engines/tts/*/models/*/
 !backend/engines/tts/*/models/.gitkeep
+
+# HuggingFace cache for Docker builds
+backend/engines/tts/*/hf_cache/
+
+# Model cache for Docker builds (copied from models/ for baking into images)
+backend/engines/tts/*/models_cache/
 
 # ============================================
 # IDE / Editor
@@ -236,3 +252,12 @@ backend/database/audiobook_maker.db-wal
 .analysis/*
 .quality
 .quality/*
+backend/engines/tts/*/samples/*
+data/
+data/*
+
+backend/engines/tts/debug-tts/*
+backend/engines/stt/debug-stt/*
+backend/engines/text_processing/debug-text/*
+backend/engines/audio_analysis/debug-audio/*
+backend/database/ssh_keys/*

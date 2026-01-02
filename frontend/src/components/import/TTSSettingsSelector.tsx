@@ -29,7 +29,6 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchSpeakers } from '@services/settingsApi'
 import { queryKeys } from '@services/queryKeys'
 import { useAllEnginesStatus } from '@hooks/useEnginesQuery'
-import { useAppStore } from '@store/appStore'
 import { logger } from '@utils/logger'
 
 interface TTSSettingsSelectorProps {
@@ -60,7 +59,7 @@ const TTSSettingsSelector: React.FC<TTSSettingsSelectorProps> = ({
   const engines = (enginesStatus?.tts ?? []).filter(e => e.isEnabled)
 
   // Get engine info and models for selected engine
-  const engineInfo = engines.find((e) => e.name === engine)
+  const engineInfo = engines.find((e) => e.variantId === engine)
   const models = engineInfo?.availableModels ?? []
 
   // Fetch speakers
@@ -73,16 +72,13 @@ const TTSSettingsSelector: React.FC<TTSSettingsSelectorProps> = ({
   // Filter speakers - only show active speakers (those with samples)
   const availableSpeakers = speakers?.filter((speaker) => speaker.isActive) || []
 
-  // Get global settings for default language lookup
-  const settings = useAppStore((state) => state.settings)
-
-  // Calculate available languages: supportedLanguages + defaultLanguage from DB (if not already included)
+  // Calculate available languages: supportedLanguages + defaultLanguage from engine (if not already included)
   const availableLanguages = React.useMemo(() => {
     if (!engineInfo) return []
 
     const supported = engineInfo.supportedLanguages || []
-    const engineConfig = settings?.tts.engines[engine]
-    const dbDefaultLanguage = engineConfig?.defaultLanguage
+    // Get default language directly from engine status (Single Source of Truth)
+    const dbDefaultLanguage = engineInfo.defaultLanguage
 
     // Add DB default language if it's not already in supported languages
     if (dbDefaultLanguage && !supported.includes(dbDefaultLanguage)) {
@@ -90,7 +86,7 @@ const TTSSettingsSelector: React.FC<TTSSettingsSelectorProps> = ({
     }
 
     return supported
-  }, [engineInfo, settings, engine])
+  }, [engineInfo])
 
   // Auto-select model when engine changes: use per-engine default if available, otherwise first model
   useEffect(() => {
@@ -99,9 +95,8 @@ const TTSSettingsSelector: React.FC<TTSSettingsSelectorProps> = ({
 
       // If current model is invalid or empty, select best available model
       if (!modelExists || !modelName) {
-        // Try per-engine default model first
-        const engineConfig = settings?.tts.engines[engine]
-        const perEngineDefaultModel = engineConfig?.defaultModelName
+        // Try per-variant default model from engine status (Single Source of Truth)
+        const perEngineDefaultModel = engineInfo?.defaultModelName
         const perEngineModelAvailable = perEngineDefaultModel && models.includes(perEngineDefaultModel)
 
         if (perEngineModelAvailable) {
@@ -109,11 +104,11 @@ const TTSSettingsSelector: React.FC<TTSSettingsSelectorProps> = ({
 
           logger.group(
             '🔧 Import TTS - Model Auto-Select',
-            'Using per-engine default model from settings',
+            'Using per-engine default model from engine status',
             {
               'Engine': engine,
               'Selected Model': perEngineDefaultModel,
-              'Source': 'settings.tts.engines.defaultModelName',
+              'Source': 'engineInfo.defaultModelName',
               'Available Models': models
             },
             '#4CAF50'
@@ -137,26 +132,25 @@ const TTSSettingsSelector: React.FC<TTSSettingsSelectorProps> = ({
         }
       }
     }
-  }, [engine, models, modelName, onModelChange, settings])
+  }, [engine, models, modelName, onModelChange, engineInfo])
 
-  // Auto-select language when engine changes: use DB default if available, otherwise use first language
+  // Auto-select language when engine changes: use default if available, otherwise use first language
   useEffect(() => {
     if (engineInfo && availableLanguages.length > 0) {
-      // Get default language from engine settings
-      const engineConfig = settings?.tts.engines[engine]
-      const dbDefaultLanguage = engineConfig?.defaultLanguage
+      // Get default language from engine status (Single Source of Truth)
+      const dbDefaultLanguage = engineInfo.defaultLanguage
 
-      // Use DB default if available, otherwise use first available language
+      // Use default if available, otherwise use first available language
       if (dbDefaultLanguage && availableLanguages.includes(dbDefaultLanguage)) {
         onLanguageChange(dbDefaultLanguage)
 
         logger.group(
           '🌍 Import TTS - Language Auto-Select',
-          'Using engine default language from DB settings',
+          'Using engine default language from engine status',
           {
             'Engine': engine,
             'Selected Language': dbDefaultLanguage,
-            'Source': 'settings.tts.engines.defaultLanguage',
+            'Source': 'engineInfo.defaultLanguage',
             'Available Languages': availableLanguages
           },
           '#4CAF50'
@@ -178,20 +172,21 @@ const TTSSettingsSelector: React.FC<TTSSettingsSelectorProps> = ({
         )
       }
     }
-  }, [engine, engineInfo, settings, onLanguageChange, availableLanguages])
+  }, [engine, engineInfo, onLanguageChange, availableLanguages])
 
   return (
-    <Stack spacing={2}>
+    <Stack spacing={2} data-testid="tts-settings-selector">
       {/* Engine Selection */}
       <FormControl fullWidth disabled={enginesLoading}>
         <InputLabel>{t('tts.engine')}</InputLabel>
         <Select
-          value={engines.some((e) => e.name === engine) ? engine : ''}
+          value={engines.some((e) => e.variantId === engine) ? engine : ''}
           onChange={(e) => onEngineChange(e.target.value)}
           label={t('tts.engine')}
+          data-testid="tts-engine-select"
         >
           {engines.map((eng) => (
-            <MenuItem key={eng.name} value={eng.name}>
+            <MenuItem key={eng.variantId} value={eng.variantId}>
               {eng.displayName}
             </MenuItem>
           ))}
@@ -205,6 +200,7 @@ const TTSSettingsSelector: React.FC<TTSSettingsSelectorProps> = ({
           value={models.includes(modelName) ? modelName : ''}
           onChange={(e) => onModelChange(e.target.value)}
           label={t('tts.model')}
+          data-testid="tts-model-select"
         >
           {models.map((model) => (
             <MenuItem key={model} value={model}>
@@ -241,6 +237,7 @@ const TTSSettingsSelector: React.FC<TTSSettingsSelectorProps> = ({
             value={speakerName}
             label={t('import.tts.speaker')}
             onChange={(e) => onSpeakerChange(e.target.value)}
+            data-testid="tts-speaker-select"
           >
             {availableSpeakers.map((speaker) => (
               <MenuItem key={speaker.id} value={speaker.name}>
@@ -258,6 +255,7 @@ const TTSSettingsSelector: React.FC<TTSSettingsSelectorProps> = ({
           value={availableLanguages.includes(language) ? language : ''}
           onChange={(e) => onLanguageChange(e.target.value)}
           label={t('tts.language')}
+          data-testid="tts-language-select"
         >
           {availableLanguages.map((lang) => (
             <MenuItem key={lang} value={lang}>

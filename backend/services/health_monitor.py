@@ -79,11 +79,6 @@ class HealthMonitor:
         with self._lock:
             return self._status.copy()
 
-    def set_busy(self, busy: bool):
-        """Update busy status (e.g., during TTS model loading)."""
-        with self._lock:
-            self._status["busy"] = busy
-
     def set_active_jobs(self, count: int):
         """Update active jobs count."""
         with self._lock:
@@ -102,11 +97,6 @@ class HealthMonitor:
             self._status["active_jobs"] = max(0, self._status["active_jobs"] - 1)
             self._status["busy"] = self._status["active_jobs"] > 0
             return self._status["active_jobs"]
-
-    def set_database_status(self, available: bool):
-        """Update database connectivity status."""
-        with self._lock:
-            self._status["database"] = available
 
 
 # Global singleton instance

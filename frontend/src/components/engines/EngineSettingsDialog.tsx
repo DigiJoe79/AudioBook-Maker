@@ -29,15 +29,16 @@ import {
 import { SettingsToggle } from '@components/settings/SettingsComponents'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient } from '@tanstack/react-query'
-import { useEngineSchema, useSettings, useUpdateSettings } from '@hooks/useSettings'
+import { useEngineSchema } from '@hooks/useSettings'
 import { useAppStore } from '@store/appStore'
 import { queryKeys } from '@services/queryKeys'
 import type { EngineStatusInfo } from '@/types/engines'
 import SpeechRatioSlider, { hasSpeechRatioParams, extractSpeechRatioValues } from './SpeechRatioSlider'
 import { logger } from '@/utils/logger'
 import { engineApi } from '@services/api'
+import { useError } from '@hooks/useError'
 
-export interface EngineSettingsDialogProps {
+interface EngineSettingsDialogProps {
   open: boolean
   onClose: () => void
   engine: EngineStatusInfo | null
@@ -55,9 +56,8 @@ const WHISPER_MODEL_DISPLAY_NAMES: Record<string, string> = {
 const EngineSettingsDialog = memo(({ open, onClose, engine }: EngineSettingsDialogProps) => {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const { showError, ErrorDialog } = useError()
   const settings = useAppStore((state) => state.settings)
-  const { refetch: refetchSettings } = useSettings()
-  const updateSettingsMutation = useUpdateSettings()
 
   // Local state for settings
   const [localSettings, setLocalSettings] = useState<{
@@ -66,6 +66,7 @@ const EngineSettingsDialog = memo(({ open, onClose, engine }: EngineSettingsDial
     parameters: Record<string, any>
   } | null>(null)
   const [keepRunning, setKeepRunning] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   const isInitializedRef = useRef(false)
 
   // Reset local settings when dialog closes
@@ -79,7 +80,7 @@ const EngineSettingsDialog = memo(({ open, onClose, engine }: EngineSettingsDial
 
   // Fetch engine schema for parameters (use engineType for generic endpoint)
   const { data: engineSchema, isLoading: schemaLoading } = useEngineSchema(
-    engine?.name || '',
+    engine?.variantId || '',
     engine?.engineType || 'tts'
   )
 
@@ -106,46 +107,24 @@ const EngineSettingsDialog = memo(({ open, onClose, engine }: EngineSettingsDial
   }, [engine])
 
   // Initialize local settings when dialog opens (only once per open cycle)
+  // Settings now come from engine prop (Single Source of Truth: engines table)
   useEffect(() => {
-    if (open && engine && settings && !isInitializedRef.current) {
+    if (open && engine && !isInitializedRef.current) {
       isInitializedRef.current = true
-      const engineType = engine.engineType
 
       // Initialize keepRunning from engine
       setKeepRunning(engine.keepRunning ?? false)
 
-      // Get engine config based on type
-      let defaultLanguage = availableLanguages[0] || 'en'
-      let parameters: Record<string, any> = {}
-      let defaultModelName = ''
+      // Get settings from engine prop (populated from engines table via /api/engines/status)
+      const savedModel = engine.defaultModelName || ''
+      const isValidModel = availableModels.some(m => m.name === savedModel)
+      const defaultModelName = isValidModel ? savedModel : (availableModels[0]?.name || '')
 
-      if (engineType === 'tts') {
-        const ttsConfig = settings.tts?.engines?.[engine.name]
-        defaultLanguage = ttsConfig?.defaultLanguage || defaultLanguage
-        parameters = ttsConfig?.parameters || {}
-        // Use saved model or engine default, but validate against available models
-        const savedModel = ttsConfig?.defaultModelName || engine.defaultModelName || ''
-        const isValidModel = availableModels.some(m => m.name === savedModel)
-        defaultModelName = isValidModel ? savedModel : (availableModels[0]?.name || '')
-      } else if (engineType === 'stt') {
-        // For STT, get defaultModelName and parameters from settings
-        const sttConfig = settings.stt?.engines?.[engine.name]
-        const savedModel = sttConfig?.defaultModelName || engine.defaultModelName || ''
-        const isValidModel = availableModels.some(m => m.name === savedModel)
-        defaultModelName = isValidModel ? savedModel : (availableModels[0]?.name || '')
-        parameters = sttConfig?.parameters || {}
-      } else if (engineType === 'audio') {
-        // For Audio engines, get parameters (including speechRatio thresholds)
-        const audioConfig = settings.audio?.engines?.[engine.name]
-        parameters = audioConfig?.parameters || {}
-        const savedModel = audioConfig?.defaultModelName || engine.defaultModelName || ''
-        const isValidModel = availableModels.some(m => m.name === savedModel)
-        defaultModelName = isValidModel ? savedModel : (availableModels[0]?.name || '')
-      } else if (engineType === 'text') {
-        // For Text engines
-        const textConfig = settings.text?.engines?.[engine.name]
-        parameters = textConfig?.parameters || {}
-      }
+      // Default language from engine, fallback to first available or 'en'
+      const defaultLanguage = engine.defaultLanguage || availableLanguages[0] || 'en'
+
+      // Load saved parameters from engine (populated from engines table via /api/engines/status)
+      const parameters: Record<string, any> = engine.parameters || {}
 
       setLocalSettings({
         defaultModelName,
@@ -153,7 +132,7 @@ const EngineSettingsDialog = memo(({ open, onClose, engine }: EngineSettingsDial
         parameters,
       })
     }
-  }, [open, engine, settings, availableLanguages, availableModels])
+  }, [open, engine, availableLanguages, availableModels])
 
   // Auto-select first model if current model is invalid
   useEffect(() => {
@@ -179,94 +158,39 @@ const EngineSettingsDialog = memo(({ open, onClose, engine }: EngineSettingsDial
     })
   }, [])
 
-  // Save all settings via unified settings API
+  // Save all settings via engines API (Single Source of Truth)
   const handleSave = useCallback(async () => {
-    if (!engine || !localSettings || !settings) return
+    if (!engine || !localSettings) return
 
     const engineType = engine.engineType
+    const variantId = engine.variantId
 
+    setIsSaving(true)
     try {
-      // First, save keepRunning via dedicated API endpoint
-      try {
-        await engineApi.setKeepRunning(engineType, engine.name, keepRunning)
-        logger.info(`[EngineSettingsDialog] Set keepRunning=${keepRunning} for ${engine.name}`)
-      } catch (err) {
-        logger.error('[EngineSettingsDialog] Failed to set keepRunning:', err)
-        throw err
-      }
-      if (engineType === 'tts') {
-        // Deep clone TTS settings and update engine config
-        const updatedTtsSettings = JSON.parse(JSON.stringify(settings.tts))
-        if (!updatedTtsSettings.engines) updatedTtsSettings.engines = {}
-        if (!updatedTtsSettings.engines[engine.name]) updatedTtsSettings.engines[engine.name] = {}
+      // 1. Save keepRunning via dedicated API endpoint
+      await engineApi.setKeepRunning(engineType, variantId, keepRunning)
+      logger.info(`[EngineSettingsDialog] Set keepRunning=${keepRunning} for ${variantId}`)
 
-        const engineConfig = updatedTtsSettings.engines[engine.name]
-        engineConfig.defaultModelName = localSettings.defaultModelName
-        engineConfig.defaultLanguage = localSettings.defaultLanguage
-        engineConfig.parameters = localSettings.parameters
-        engineConfig.keepRunning = keepRunning
+      // 2. Save engine settings (model, language, parameters) via new API
+      // This writes directly to the engines table (Single Source of Truth)
+      await engineApi.updateSettings(engineType, variantId, {
+        defaultModelName: localSettings.defaultModelName,
+        defaultLanguage: localSettings.defaultLanguage,
+        parameters: localSettings.parameters,
+      })
+      logger.info(`[EngineSettingsDialog] Updated settings for ${variantId}`)
 
-        await updateSettingsMutation.mutateAsync({
-          category: 'tts',
-          value: updatedTtsSettings
-        })
-      } else if (engineType === 'stt') {
-        // Deep clone STT settings and update engine config
-        const updatedSttSettings = JSON.parse(JSON.stringify(settings.stt))
-        if (!updatedSttSettings.engines) updatedSttSettings.engines = {}
-        if (!updatedSttSettings.engines[engine.name]) updatedSttSettings.engines[engine.name] = {}
-
-        const engineConfig = updatedSttSettings.engines[engine.name]
-        engineConfig.defaultModelName = localSettings.defaultModelName
-        engineConfig.parameters = localSettings.parameters
-        engineConfig.keepRunning = keepRunning
-
-        await updateSettingsMutation.mutateAsync({
-          category: 'stt',
-          value: updatedSttSettings
-        })
-      } else if (engineType === 'audio') {
-        // Deep clone Audio settings and update engine config
-        const updatedAudioSettings = JSON.parse(JSON.stringify(settings.audio))
-        if (!updatedAudioSettings.engines) updatedAudioSettings.engines = {}
-        if (!updatedAudioSettings.engines[engine.name]) updatedAudioSettings.engines[engine.name] = {}
-
-        const engineConfig = updatedAudioSettings.engines[engine.name]
-        engineConfig.defaultModelName = localSettings.defaultModelName
-        engineConfig.parameters = localSettings.parameters
-        engineConfig.keepRunning = keepRunning
-
-        await updateSettingsMutation.mutateAsync({
-          category: 'audio',
-          value: updatedAudioSettings
-        })
-      } else if (engineType === 'text') {
-        // Deep clone Text settings and update engine config
-        const updatedTextSettings = JSON.parse(JSON.stringify(settings.text))
-        if (!updatedTextSettings.engines) updatedTextSettings.engines = {}
-        if (!updatedTextSettings.engines[engine.name]) updatedTextSettings.engines[engine.name] = {}
-
-        const engineConfig = updatedTextSettings.engines[engine.name]
-        engineConfig.parameters = localSettings.parameters
-        engineConfig.keepRunning = keepRunning
-
-        await updateSettingsMutation.mutateAsync({
-          category: 'text',
-          value: updatedTextSettings
-        })
-      }
-
-      // Refetch settings to update store
-      await refetchSettings()
+      // 3. Invalidate engines query to refetch updated data
       queryClient.invalidateQueries({ queryKey: queryKeys.engines.all() })
 
       onClose()
     } catch (error) {
       logger.error('[EngineSettingsDialog] Failed to save engine settings', { error })
+      showError(t('common.error', 'Error'), t('engines.settingsSaveError', 'Failed to save engine settings'))
+    } finally {
+      setIsSaving(false)
     }
-  }, [engine, localSettings, settings, keepRunning, updateSettingsMutation, refetchSettings, queryClient, onClose])
-
-  const isSaving = updateSettingsMutation.isPending
+  }, [engine, localSettings, keepRunning, queryClient, onClose, t, showError])
 
   if (!engine) return null
 
@@ -479,6 +403,7 @@ const EngineSettingsDialog = memo(({ open, onClose, engine }: EngineSettingsDial
           {isSaving ? <CircularProgress size={20} /> : t('common.save')}
         </Button>
       </DialogActions>
+      <ErrorDialog />
     </Dialog>
   )
 })

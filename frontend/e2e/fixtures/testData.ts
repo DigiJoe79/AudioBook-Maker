@@ -145,7 +145,7 @@ export const testData = {
 
   // Settings
   settings: {
-    defaultTtsEngine: 'xtts',
+    defaultTtsEngine: 'xtts:local',
     defaultTtsModelName: 'v2.0.2',
     defaultTtsSpeakerName: 'Test Speaker',
     defaultLanguage: 'en',

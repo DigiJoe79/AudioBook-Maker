@@ -181,15 +181,13 @@ export function useSSEEventHandlers(options?: UseSSEEventHandlersOptions): void 
   const handlers = useSSEHandlers({ onAudioUpdate, onJobStatusChange })
 
   // Stabilize event handler callback to prevent re-subscription loops
-  // CRITICAL: handlers is not included in deps because the handler functions are already
-  // stabilized with useCallback in their respective domain hooks. Including it would
-  // cause reconnection loops because useSSEHandlers() returns a new object reference
-  // on every render (even though the handler functions themselves are stable).
+  // NOTE: handlers is now memoized in useSSEHandlers() via useMemo, so it's safe
+  // to include in dependencies. The handlers object only changes when the underlying
+  // handler functions change (which are stabilized with useCallback).
   const handleEvent = useCallback((event: MessageEvent) => {
     // Route event to appropriate handler with backendUrl context
     routeEvent(event, handlers, backendUrl)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backendUrl])
+  }, [backendUrl, handlers])
 
   // Subscribe to SSE events
   useEffect(() => {

@@ -20,7 +20,6 @@ import {
   CardContent,
   Box,
   Typography,
-  Chip,
   Stack,
   Menu,
   MenuItem,
@@ -39,14 +38,17 @@ import {
   Stop as StopIcon,
   Devices as DeviceIcon,
   Add as AddIcon,
-  PowerSettingsNew as PowerIcon,
+  Computer as ComputerIcon,
+  Storage as DockerIcon,
+  Cloud as CloudIcon,
+  PowerOff as PowerOffIcon,
 } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
-import { useStartEngine, useStopEngine, useEnableEngine, useDisableEngine } from '@hooks/useEnginesQuery'
+import { useStartEngine, useStopEngine } from '@hooks/useEnginesQuery'
 import type { EngineStatusInfo, EngineType } from '@/types/engines'
-import EngineStatusBadge from './EngineStatusBadge'
+import { useStatusBorderColor, getStatusBorderColor } from './EngineStatusBadge'
 
-export interface EngineDropdownCardProps {
+interface EngineDropdownCardProps {
   /** Engine type (tts, stt, text, audio) */
   engineType: EngineType
   /** Title for this engine type */
@@ -61,10 +63,6 @@ export interface EngineDropdownCardProps {
   isChangingDefault?: boolean
   /** Callback when settings icon is clicked */
   onSettingsClick?: (engine: EngineStatusInfo) => void
-  /** Callback when engine enabled state changes */
-  onToggleEnabled?: (engineName: string, enabled: boolean) => void
-  /** Whether toggle is in progress */
-  isTogglingEnabled?: boolean
   /** Callback when settings icon is clicked for a non-default engine in dropdown */
   onEngineSettingsClick?: (engine: EngineStatusInfo) => void
 }
@@ -77,8 +75,6 @@ const EngineDropdownCard = memo(({
   onDefaultChange,
   isChangingDefault,
   onSettingsClick,
-  onToggleEnabled,
-  isTogglingEnabled = false,
   onEngineSettingsClick,
 }: EngineDropdownCardProps) => {
   const { t } = useTranslation()
@@ -91,18 +87,18 @@ const EngineDropdownCard = memo(({
   const startMutation = useStartEngine()
   const stopMutation = useStopEngine()
 
-  // Enable/Disable mutations
-  const enableMutation = useEnableEngine()
-  const disableMutation = useDisableEngine()
-
   // Find the default engine, or fall back to first engine if no default is set
   // This handles both: engines with no default concept AND engines where default isn't set yet
-  const foundDefault = currentDefault ? engines.find(e => e.name === currentDefault) : null
+  // Note: currentDefault is now the full variantId (e.g., 'xtts:local') matching e.name
+  const foundDefault = currentDefault ? engines.find(e => e.variantId === currentDefault) : null
   const defaultEngine = foundDefault || engines[0]
 
+  // Status border color for the card
+  const statusBorderColor = useStatusBorderColor(defaultEngine?.status ?? 'stopped')
+
   // Filter engines: exclude displayed engine from dropdown list
-  const displayedEngineName = defaultEngine?.name
-  const otherEngines = engines.filter(e => e.name !== displayedEngineName)
+  const displayedEngineName = defaultEngine?.variantId
+  const otherEngines = engines.filter(e => e.variantId !== displayedEngineName)
 
   // Show dropdown if there are other engines OR if there's only one engine (to show the hint)
   const hasEngines = engines.length > 0
@@ -111,6 +107,10 @@ const EngineDropdownCard = memo(({
   // Can start/stop logic - all engines can be started/stopped
   const canStart = defaultEngine?.isEnabled && !defaultEngine?.isRunning
   const canStop = defaultEngine?.isRunning
+
+  // Check if THIS specific engine (on the card) is being started/stopped
+  const isStartingDefault = startMutation.isPending && startMutation.variables?.engineName === defaultEngine?.variantId
+  const isStoppingDefault = stopMutation.isPending && stopMutation.variables?.engineName === defaultEngine?.variantId
 
   const handleClick = useCallback((event: React.MouseEvent<HTMLElement>) => {
     if (hasEngines) {
@@ -141,7 +141,7 @@ const EngineDropdownCard = memo(({
     if (defaultEngine) {
       startMutation.mutate({
         engineType: defaultEngine.engineType,
-        engineName: defaultEngine.name,
+        engineName: defaultEngine.variantId,
       })
     }
   }, [defaultEngine, startMutation])
@@ -151,7 +151,7 @@ const EngineDropdownCard = memo(({
     if (defaultEngine) {
       stopMutation.mutate({
         engineType: defaultEngine.engineType,
-        engineName: defaultEngine.name,
+        engineName: defaultEngine.variantId,
       })
     }
   }, [defaultEngine, stopMutation])
@@ -168,7 +168,7 @@ const EngineDropdownCard = memo(({
     event.stopPropagation()
     startMutation.mutate({
       engineType: engine.engineType,
-      engineName: engine.name,
+      engineName: engine.variantId,
     })
   }, [startMutation])
 
@@ -176,24 +176,9 @@ const EngineDropdownCard = memo(({
     event.stopPropagation()
     stopMutation.mutate({
       engineType: engine.engineType,
-      engineName: engine.name,
+      engineName: engine.variantId,
     })
   }, [stopMutation])
-
-  const handleToggleEnabled = useCallback((event: React.MouseEvent, engine: EngineStatusInfo) => {
-    event.stopPropagation()
-    if (engine.isEnabled) {
-      disableMutation.mutate({
-        engineType: engine.engineType,
-        engineName: engine.name,
-      })
-    } else {
-      enableMutation.mutate({
-        engineType: engine.engineType,
-        engineName: engine.name,
-      })
-    }
-  }, [enableMutation, disableMutation])
 
   if (!defaultEngine) {
     // No default engine - show empty state
@@ -227,8 +212,10 @@ const EngineDropdownCard = memo(({
           height: '100%',
           transition: 'all 0.2s ease',
           cursor: hasEngines ? 'pointer' : 'default',
+          borderLeft: `3px solid ${statusBorderColor}`,
           '&:hover': hasEngines ? {
             borderColor: theme.palette.primary.main,
+            borderLeftColor: statusBorderColor,
             boxShadow: `0 0 0 1px ${alpha(theme.palette.primary.main, 0.2)}`,
           } : {},
         }}
@@ -247,11 +234,11 @@ const EngineDropdownCard = memo(({
                     <IconButton
                       size="small"
                       onClick={handleStartClick}
-                      disabled={startMutation.isPending}
+                      disabled={isStartingDefault}
                       color="primary"
                       sx={{ p: 0.5 }}
                     >
-                      {startMutation.isPending ? (
+                      {isStartingDefault ? (
                         <CircularProgress size={16} />
                       ) : (
                         <PlayArrowIcon sx={{ fontSize: 18 }} />
@@ -268,11 +255,10 @@ const EngineDropdownCard = memo(({
                     <IconButton
                       size="small"
                       onClick={handleStopClick}
-                      disabled={stopMutation.isPending}
-                      color="error"
+                      disabled={isStoppingDefault}
                       sx={{ p: 0.5 }}
                     >
-                      {stopMutation.isPending ? (
+                      {isStoppingDefault ? (
                         <CircularProgress size={16} />
                       ) : (
                         <StopIcon sx={{ fontSize: 18 }} />
@@ -309,25 +295,25 @@ const EngineDropdownCard = memo(({
             </Stack>
           </Stack>
 
-          {/* Engine Name + Status Badge */}
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-            <Typography variant="h6" component="div">
-              {defaultEngine.displayName}
-            </Typography>
-            <EngineStatusBadge
-              status={defaultEngine.status}
-              port={defaultEngine.port}
-              errorMessage={defaultEngine.errorMessage}
-            />
-          </Box>
+          {/* Engine Name */}
+          <Typography variant="h6" component="div" sx={{ mb: 0.5 }}>
+            {defaultEngine.displayName}
+          </Typography>
 
-          {/* Version + Auto-Stop Countdown */}
+          {/* Version + Loaded Model + Auto-Stop Countdown */}
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-            {defaultEngine.version && (
-              <Typography variant="caption" color="text.secondary">
-                {t('engines.version')}: {defaultEngine.version}
-              </Typography>
-            )}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              {defaultEngine.version && (
+                <Typography variant="caption" color="text.secondary">
+                  {t('engines.version')}: {defaultEngine.version}
+                </Typography>
+              )}
+              {defaultEngine.isRunning && defaultEngine.loadedModel && (
+                <Typography variant="caption" color="text.secondary">
+                  • {t('engines.model')}: {defaultEngine.loadedModel}
+                </Typography>
+              )}
+            </Box>
             {defaultEngine.secondsUntilAutoStop != null && defaultEngine.secondsUntilAutoStop > 0 && (
               <Typography variant="caption" color="warning.main">
                 {t('engines.autoStopIn', {
@@ -339,11 +325,15 @@ const EngineDropdownCard = memo(({
 
           {/* Device & Port Info (when running) */}
           {defaultEngine.isRunning && (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1, flexWrap: 'wrap' }}>
               <DeviceIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
               <Typography variant="caption" color="text.secondary">
                 {defaultEngine.device?.toUpperCase()}
                 {defaultEngine.port && ` • Port ${defaultEngine.port}`}
+                {/* VRAM usage for CUDA engines */}
+                {defaultEngine.device === 'cuda' && defaultEngine.gpuMemoryUsedMb != null && (
+                  <> • VRAM: {defaultEngine.gpuMemoryUsedMb} MB{defaultEngine.gpuMemoryTotalMb && ` / ${defaultEngine.gpuMemoryTotalMb} MB`}</>
+                )}
               </Typography>
             </Box>
           )}
@@ -373,132 +363,139 @@ const EngineDropdownCard = memo(({
         }}
       >
         {hasOtherEngines ? [
-            <Typography key="select-title" variant="caption" color="text.secondary" sx={{ px: 2, py: 1, display: 'block' }}>
-              {t('engines.selectDefaultEngine')}
-            </Typography>,
-            <Divider key="divider" />,
-            ...otherEngines.map((engine) => {
-              const canSelect = engine.isEnabled
-              const canEngineStart = engine.isEnabled && !engine.isRunning
-              const canEngineStop = engine.isRunning
-              const showStartStop = engineType === 'tts'
+          <Typography key="select-title" variant="caption" color="text.secondary" sx={{ px: 2, py: 1, display: 'block' }}>
+            {t('engines.selectDefaultEngine')}
+          </Typography>,
+          <Divider key="top-divider" />,
 
-              return (
-                <MenuItem
-                  key={engine.name}
-                  onClick={() => canSelect && handleSelectEngine(engine.name)}
-                  disabled={isChangingDefault}
-                  sx={{
-                    cursor: canSelect ? 'pointer' : 'default',
-                    py: 1.5,
-                    '&:hover': !canSelect ? { backgroundColor: alpha(theme.palette.action.hover, 0.04) } : {},
-                  }}
-                >
+          /* Deactivated Option (disabled for TTS - must always have a default) */
+          <Tooltip key="deactivate-tooltip" title={t('engines.ttsRequiresDefault')} placement="right">
+            <span>
+              <MenuItem
+                disabled
+                sx={{ py: 1.5, opacity: 0.5 }}
+              >
+                <Stack direction="row" alignItems="center" spacing={1.5} sx={{ width: '100%' }}>
+                  <PowerOffIcon sx={{ fontSize: 20, color: 'text.disabled' }} />
                   <ListItemText
-                    primaryTypographyProps={{ component: 'div' }}
-                    secondaryTypographyProps={{ component: 'div' }}
-                    primary={
-                      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-                        <Box sx={{ flex: 1, minWidth: 0 }}>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              fontWeight: 500,
-                              color: engine.isEnabled ? 'text.primary' : 'text.disabled',
-                            }}
-                          >
-                            {engine.displayName}
-                          </Typography>
-                        </Box>
-                        {/* Action buttons */}
-                        <Stack direction="row" spacing={0.5} alignItems="center" onClick={(e) => e.stopPropagation()}>
-                          {/* Start/Stop for TTS engines */}
-                          {showStartStop && canEngineStart && (
-                            <Tooltip title={t('engines.actions.start')}>
-                              <span>
-                                <IconButton
-                                  size="small"
-                                  onClick={(e) => handleEngineStartClick(e, engine)}
-                                  disabled={startMutation.isPending}
-                                  color="primary"
-                                  sx={{ p: 0.5 }}
-                                >
-                                  {startMutation.isPending ? (
-                                    <CircularProgress size={14} />
-                                  ) : (
-                                    <PlayArrowIcon sx={{ fontSize: 16 }} />
-                                  )}
-                                </IconButton>
-                              </span>
-                            </Tooltip>
-                          )}
-                          {showStartStop && canEngineStop && (
-                            <Tooltip title={t('engines.actions.stop')}>
-                              <span>
-                                <IconButton
-                                  size="small"
-                                  onClick={(e) => handleEngineStopClick(e, engine)}
-                                  disabled={stopMutation.isPending}
-                                  color="error"
-                                  sx={{ p: 0.5 }}
-                                >
-                                  {stopMutation.isPending ? (
-                                    <CircularProgress size={14} />
-                                  ) : (
-                                    <StopIcon sx={{ fontSize: 16 }} />
-                                  )}
-                                </IconButton>
-                              </span>
-                            </Tooltip>
-                          )}
-                          {/* Settings button for TTS/STT */}
-                          {(engineType === 'tts' || engineType === 'stt') && onEngineSettingsClick && (
-                            <Tooltip title={t('engines.openSettings')}>
-                              <IconButton
-                                size="small"
-                                onClick={(e) => handleEngineSettingsClick(e, engine)}
-                                sx={{ p: 0.5 }}
-                              >
-                                <SettingsIcon sx={{ fontSize: 16 }} />
-                              </IconButton>
-                            </Tooltip>
-                          )}
-                          {/* Enable/Disable button */}
-                          <Tooltip title={engine.isEnabled ? t('engines.actions.disable') : t('engines.actions.enable')}>
-                            <span>
-                              <IconButton
-                                size="small"
-                                onClick={(e) => handleToggleEnabled(e, engine)}
-                                disabled={enableMutation.isPending || disableMutation.isPending}
-                                sx={{
-                                  p: 0.5,
-                                  color: engine.isEnabled ? 'success.main' : 'text.disabled',
-                                }}
-                              >
-                                {(enableMutation.isPending || disableMutation.isPending) ? (
-                                  <CircularProgress size={14} />
-                                ) : (
-                                  <PowerIcon sx={{ fontSize: 16 }} />
-                                )}
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                        </Stack>
-                      </Stack>
-                    }
-                    secondary={
-                      <Box sx={{ mt: 0.5 }}>
-                        <EngineStatusBadge
-                          status={engine.status}
-                          port={engine.port}
-                          errorMessage={engine.errorMessage}
-                        />
-                      </Box>
-                    }
+                    primary={t('engines.deactivated')}
+                    secondary={t('engines.ttsRequiresDefaultShort')}
+                    primaryTypographyProps={{ color: 'text.disabled' }}
+                    secondaryTypographyProps={{ color: 'text.disabled' }}
                   />
-                </MenuItem>
-              )
-            })
+                </Stack>
+              </MenuItem>
+            </span>
+          </Tooltip>,
+          <Divider key="deactivate-divider" />,
+
+          /* Available Engines */
+          ...otherEngines.map((engine) => {
+            const canSelect = engine.isEnabled
+            const canEngineStart = engine.isEnabled && !engine.isRunning
+            const canEngineStop = engine.isRunning
+            const showStartStop = engineType === 'tts'
+
+            // Check if THIS specific engine is being started/stopped
+            const isStartingThis = startMutation.isPending && startMutation.variables?.engineName === engine.variantId
+            const isStoppingThis = stopMutation.isPending && stopMutation.variables?.engineName === engine.variantId
+
+            // Determine icon based on runner type
+            const RunnerIcon = engine.runnerType === 'subprocess'
+              ? ComputerIcon
+              : engine.runnerHost === 'local'
+                ? DockerIcon
+                : CloudIcon
+
+            // Left border color based on engine status (same as card bottom border)
+            const leftBorderColor = getStatusBorderColor(engine.status, theme)
+
+            return (
+              <MenuItem
+                key={engine.variantId}
+                onClick={() => canSelect && handleSelectEngine(engine.variantId)}
+                disabled={isChangingDefault}
+                sx={{
+                  cursor: canSelect ? 'pointer' : 'default',
+                  py: 1.5,
+                  borderLeft: `3px solid ${leftBorderColor}`,
+                  '&:hover': !canSelect ? { backgroundColor: alpha(theme.palette.action.hover, 0.04) } : {},
+                }}
+              >
+                <Stack direction="row" alignItems="center" spacing={1.5} sx={{ width: '100%' }}>
+                  <RunnerIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+                  {/* Left side: Name + Variant ID */}
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontWeight: 500,
+                        color: engine.isEnabled ? 'text.primary' : 'text.disabled',
+                      }}
+                    >
+                      {engine.displayName}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {engine.variantId}
+                    </Typography>
+                  </Box>
+                  {/* Right side: Action buttons */}
+                  <Stack direction="row" spacing={0.5} alignItems="center" onClick={(e) => e.stopPropagation()}>
+                      {/* Start/Stop for TTS engines */}
+                      {showStartStop && canEngineStart && (
+                        <Tooltip title={t('engines.actions.start')}>
+                          <span>
+                            <IconButton
+                              size="small"
+                              onClick={(e) => handleEngineStartClick(e, engine)}
+                              disabled={isStartingThis}
+                              color="primary"
+                              sx={{ p: 0.5 }}
+                            >
+                              {isStartingThis ? (
+                                <CircularProgress size={14} />
+                              ) : (
+                                <PlayArrowIcon sx={{ fontSize: 16 }} />
+                              )}
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      )}
+                      {showStartStop && canEngineStop && (
+                        <Tooltip title={t('engines.actions.stop')}>
+                          <span>
+                            <IconButton
+                              size="small"
+                              onClick={(e) => handleEngineStopClick(e, engine)}
+                              disabled={isStoppingThis}
+                              sx={{ p: 0.5 }}
+                            >
+                              {isStoppingThis ? (
+                                <CircularProgress size={14} />
+                              ) : (
+                                <StopIcon sx={{ fontSize: 16 }} />
+                              )}
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      )}
+                      {/* Settings button for TTS/STT */}
+                      {(engineType === 'tts' || engineType === 'stt') && onEngineSettingsClick && (
+                        <Tooltip title={t('engines.openSettings')}>
+                          <IconButton
+                            size="small"
+                            onClick={(e) => handleEngineSettingsClick(e, engine)}
+                            sx={{ p: 0.5 }}
+                          >
+                            <SettingsIcon sx={{ fontSize: 16 }} />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                  </Stack>
+                </Stack>
+              </MenuItem>
+            )
+          }),
         ] : (
           // No other engines - show hint
           <Box sx={{ px: 2, py: 2 }}>

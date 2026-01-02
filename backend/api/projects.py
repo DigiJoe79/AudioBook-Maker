@@ -8,7 +8,7 @@ import sqlite3
 from loguru import logger
 
 from db.database import get_db
-from services.event_broadcaster import broadcaster, EventType
+from services.event_broadcaster import broadcaster, EventType, safe_broadcast
 from db.repositories import ProjectRepository, ChapterRepository, SegmentRepository
 from models.response_models import (
     ProjectResponse,
@@ -141,17 +141,16 @@ async def create_project(
         new_project = project_repo.create(project.title, project.description or "")
 
         # Emit SSE event
-        try:
-            await broadcaster.broadcast_project_update(
-                {
-                    "projectId": new_project['id'],
-                    "title": new_project['title'],
-                    "description": new_project['description']
-                },
-                event_type=EventType.PROJECT_CREATED
-            )
-        except Exception as sse_err:
-            logger.warning(f"Failed to broadcast project.created event: {sse_err}")
+        await safe_broadcast(
+            broadcaster.broadcast_project_update,
+            {
+                "projectId": new_project['id'],
+                "title": new_project['title'],
+                "description": new_project['description']
+            },
+            event_type=EventType.PROJECT_CREATED,
+            event_description="project.created"
+        )
 
         # Return with empty chapters list
         new_project['chapters'] = []
@@ -187,17 +186,16 @@ async def update_project(
             raise HTTPException(status_code=404, detail=f"[PROJECT_NOT_FOUND]projectId:{project_id}")
 
         # Emit SSE event
-        try:
-            await broadcaster.broadcast_project_update(
-                {
-                    "projectId": updated['id'],
-                    "title": updated['title'],
-                    "description": updated['description']
-                },
-                event_type=EventType.PROJECT_UPDATED
-            )
-        except Exception as sse_err:
-            logger.warning(f"Failed to broadcast project.updated event: {sse_err}")
+        await safe_broadcast(
+            broadcaster.broadcast_project_update,
+            {
+                "projectId": updated['id'],
+                "title": updated['title'],
+                "description": updated['description']
+            },
+            event_type=EventType.PROJECT_UPDATED,
+            event_description="project.updated"
+        )
 
         # Load chapters for response
         chapter_repo = ChapterRepository(conn)
@@ -274,16 +272,15 @@ async def delete_project(project_id: str, conn: sqlite3.Connection = Depends(get
             raise HTTPException(status_code=404, detail=f"[PROJECT_NOT_FOUND]projectId:{project_id}")
 
         # Emit SSE event
-        try:
-            await broadcaster.broadcast_project_update(
-                {
-                    "projectId": project_id,
-                    "title": project['title']
-                },
-                event_type=EventType.PROJECT_DELETED
-            )
-        except Exception as sse_err:
-            logger.warning(f"Failed to broadcast project.deleted event: {sse_err}")
+        await safe_broadcast(
+            broadcaster.broadcast_project_update,
+            {
+                "projectId": project_id,
+                "title": project['title']
+            },
+            event_type=EventType.PROJECT_DELETED,
+            event_description="project.deleted"
+        )
 
         # Build result message
         message_parts = [f"Project deleted (removed {deleted_files} audio files)"]
@@ -328,14 +325,13 @@ async def reorder_projects(
         project_repo.reorder_batch(data.project_ids)
 
         # Broadcast project.reordered event (CRUD consistency)
-        try:
-            logger.info(f"Broadcasting project.reordered event: projects={len(data.project_ids)}")
-            await broadcaster.broadcast_project_update(
-                {"projectIds": data.project_ids},
-                event_type=EventType.PROJECT_REORDERED
-            )
-        except Exception as sse_err:
-            logger.warning(f"Failed to broadcast project.reordered event: {sse_err}")
+        logger.debug(f"Broadcasting project.reordered event: projects={len(data.project_ids)}")
+        await safe_broadcast(
+            broadcaster.broadcast_project_update,
+            {"projectIds": data.project_ids},
+            event_type=EventType.PROJECT_REORDERED,
+            event_description="project.reordered"
+        )
 
         return ReorderResponse(
             success=True,

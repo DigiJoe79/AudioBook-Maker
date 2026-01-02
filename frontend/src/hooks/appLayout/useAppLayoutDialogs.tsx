@@ -19,8 +19,6 @@ interface UseAppLayoutDialogsOptions {
   selectedProjectId: string | null
   selectedProject: Project | undefined
   expandedProjects: Set<string>
-  defaultEngine: string
-  defaultModelName: string
   setSelectedProjectId: (id: string | null) => void
   setSelectedChapterId: (id: string | null) => void
   setExpandedProjects: React.Dispatch<React.SetStateAction<Set<string>>>
@@ -69,8 +67,6 @@ export function useAppLayoutDialogs({
   selectedProjectId,
   selectedProject,
   expandedProjects,
-  defaultEngine,
-  defaultModelName,
   setSelectedProjectId,
   setSelectedChapterId,
   setExpandedProjects,
@@ -233,7 +229,7 @@ export function useAppLayoutDialogs({
         { severity: 'error' }
       )
     }
-  }, [editingChapter, updateChapterMutation, createChapterMutation, selectedProjectId, projects, defaultEngine, defaultModelName, showSnackbar, t, setExpandedProjects, setSelectedChapterId])
+  }, [editingChapter, updateChapterMutation, createChapterMutation, selectedProjectId, projects, showSnackbar, t, setExpandedProjects, setSelectedChapterId])
 
   const handleDeleteChapter = useCallback(async (chapterId: string, chapterTitle: string) => {
     const confirmed = await confirm(

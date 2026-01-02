@@ -40,10 +40,6 @@ export default function AppLayout() {
   const { data: projects = [], isLoading, error, refetch } = useProjectsList()
   const { data: enginesStatus, isLoading: enginesLoading } = useAllEnginesStatus()
 
-  // TTS state from appStore (direct DB settings access)
-  const defaultEngine = useAppStore((state) => state.getDefaultTtsEngine())
-  const getDefaultTtsModel = useAppStore((state) => state.getDefaultTtsModel)
-  const defaultModelName = getDefaultTtsModel(defaultEngine)
 
   // Extract TTS engines from unified status
   const ttsEngines = enginesStatus?.tts ?? []
@@ -133,8 +129,6 @@ export default function AppLayout() {
     selectedProjectId,
     selectedProject,
     expandedProjects: expandedProjectsState,
-    defaultEngine,
-    defaultModelName,
     setSelectedProjectId,
     setSelectedChapterId,
     setExpandedProjects: setExpandedProjectsState,

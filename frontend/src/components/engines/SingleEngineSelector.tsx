@@ -19,7 +19,6 @@ import {
   CardContent,
   Box,
   Typography,
-  Chip,
   Stack,
   Menu,
   MenuItem,
@@ -39,13 +38,16 @@ import {
   Devices as DeviceIcon,
   PowerOff as PowerOffIcon,
   Check as CheckIcon,
+  Computer as ComputerIcon,
+  Storage as DockerIcon,
+  Cloud as CloudIcon,
 } from '@mui/icons-material'
 import { useTranslation } from 'react-i18next'
 import { useStartEngine, useStopEngine } from '@hooks/useEnginesQuery'
 import type { EngineStatusInfo, EngineType } from '@/types/engines'
-import EngineStatusBadge from './EngineStatusBadge'
+import { useStatusBorderColor } from './EngineStatusBadge'
 
-export interface SingleEngineSelectorProps {
+interface SingleEngineSelectorProps {
   /** Engine type (stt, text, audio) - NOT tts */
   engineType: Exclude<EngineType, 'tts'>
   /** Title for this engine type */
@@ -82,12 +84,19 @@ const SingleEngineSelector = memo(({
   const stopMutation = useStopEngine()
 
   // Find the active engine (if any)
-  const activeEngine = currentActive ? engines.find(e => e.name === currentActive) : null
+  const activeEngine = currentActive ? engines.find(e => e.variantId === currentActive) : null
   const isDeactivated = !activeEngine
+
+  // Status border color for the card
+  const statusBorderColor = useStatusBorderColor(activeEngine?.status ?? 'stopped')
 
   // Can start/stop logic
   const canStart = activeEngine && !activeEngine.isRunning
   const canStop = activeEngine?.isRunning
+
+  // Check if THIS specific engine is being started/stopped
+  const isStartingActive = startMutation.isPending && startMutation.variables?.engineName === activeEngine?.variantId
+  const isStoppingActive = stopMutation.isPending && stopMutation.variables?.engineName === activeEngine?.variantId
 
   const handleClick = useCallback((event: React.MouseEvent<HTMLElement>) => {
     setAnchorEl(event.currentTarget)
@@ -121,7 +130,7 @@ const SingleEngineSelector = memo(({
     if (activeEngine) {
       startMutation.mutate({
         engineType: activeEngine.engineType,
-        engineName: activeEngine.name,
+        engineName: activeEngine.variantId,
       })
     }
   }, [activeEngine, startMutation])
@@ -131,7 +140,7 @@ const SingleEngineSelector = memo(({
     if (activeEngine) {
       stopMutation.mutate({
         engineType: activeEngine.engineType,
-        engineName: activeEngine.name,
+        engineName: activeEngine.variantId,
       })
     }
   }, [activeEngine, stopMutation])
@@ -147,8 +156,10 @@ const SingleEngineSelector = memo(({
           transition: 'all 0.2s ease',
           cursor: 'pointer',
           opacity: isDeactivated ? 0.7 : 1,
+          borderLeft: `3px solid ${statusBorderColor}`,
           '&:hover': {
             borderColor: theme.palette.primary.main,
+            borderLeftColor: statusBorderColor,
             boxShadow: `0 0 0 1px ${alpha(theme.palette.primary.main, 0.2)}`,
           },
         }}
@@ -167,11 +178,11 @@ const SingleEngineSelector = memo(({
                     <IconButton
                       size="small"
                       onClick={handleStartClick}
-                      disabled={startMutation.isPending}
+                      disabled={isStartingActive}
                       color="primary"
                       sx={{ p: 0.5 }}
                     >
-                      {startMutation.isPending ? (
+                      {isStartingActive ? (
                         <CircularProgress size={16} />
                       ) : (
                         <PlayArrowIcon sx={{ fontSize: 18 }} />
@@ -188,11 +199,10 @@ const SingleEngineSelector = memo(({
                     <IconButton
                       size="small"
                       onClick={handleStopClick}
-                      disabled={stopMutation.isPending}
-                      color="error"
+                      disabled={isStoppingActive}
                       sx={{ p: 0.5 }}
                     >
-                      {stopMutation.isPending ? (
+                      {isStoppingActive ? (
                         <CircularProgress size={16} />
                       ) : (
                         <StopIcon sx={{ fontSize: 18 }} />
@@ -242,25 +252,25 @@ const SingleEngineSelector = memo(({
             </>
           ) : (
             <>
-              {/* Engine Name + Status Badge */}
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                <Typography variant="h6" component="div">
-                  {activeEngine.displayName}
-                </Typography>
-                <EngineStatusBadge
-                  status={activeEngine.status}
-                  port={activeEngine.port}
-                  errorMessage={activeEngine.errorMessage}
-                />
-              </Box>
+              {/* Engine Name */}
+              <Typography variant="h6" component="div" sx={{ mb: 0.5 }}>
+                {activeEngine.displayName}
+              </Typography>
 
-              {/* Version + Auto-Stop Countdown */}
+              {/* Version + Loaded Model + Auto-Stop Countdown */}
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-                {activeEngine.version && (
-                  <Typography variant="caption" color="text.secondary">
-                    {t('engines.version')}: {activeEngine.version}
-                  </Typography>
-                )}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {activeEngine.version && (
+                    <Typography variant="caption" color="text.secondary">
+                      {t('engines.version')}: {activeEngine.version}
+                    </Typography>
+                  )}
+                  {activeEngine.isRunning && activeEngine.loadedModel && (
+                    <Typography variant="caption" color="text.secondary">
+                      • {t('engines.model')}: {activeEngine.loadedModel}
+                    </Typography>
+                  )}
+                </Box>
                 {activeEngine.secondsUntilAutoStop != null && activeEngine.secondsUntilAutoStop > 0 && (
                   <Typography variant="caption" color="warning.main">
                     {t('engines.autoStopIn', {
@@ -272,11 +282,15 @@ const SingleEngineSelector = memo(({
 
               {/* Device & Port Info (when running) */}
               {activeEngine.isRunning && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1, flexWrap: 'wrap' }}>
                   <DeviceIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
                   <Typography variant="caption" color="text.secondary">
                     {activeEngine.device?.toUpperCase()}
                     {activeEngine.port && ` • Port ${activeEngine.port}`}
+                    {/* VRAM usage for CUDA engines */}
+                    {activeEngine.device === 'cuda' && activeEngine.gpuMemoryUsedMb != null && (
+                      <> • VRAM: {activeEngine.gpuMemoryUsedMb} MB{activeEngine.gpuMemoryTotalMb && ` / ${activeEngine.gpuMemoryTotalMb} MB`}</>
+                    )}
                   </Typography>
                 </Box>
               )}
@@ -329,47 +343,41 @@ const SingleEngineSelector = memo(({
           </Stack>
         </MenuItem>
 
-        <Divider />
+        {/* Only show divider if there are other engines to select */}
+        {engines.some((engine) => engine.variantId !== currentActive) && <Divider />}
 
-        {/* Available Engines */}
-        {engines.map((engine) => {
-          const isSelected = engine.name === currentActive
+        {/* Available Engines (excluding currently active one) */}
+        {engines
+          .filter((engine) => engine.variantId !== currentActive)
+          .map((engine) => {
+            // Determine icon based on runner type
+            const RunnerIcon = engine.runnerType === 'subprocess'
+              ? ComputerIcon
+              : engine.runnerHost === 'local'
+                ? DockerIcon
+                : CloudIcon
 
-          return (
-            <MenuItem
-              key={engine.name}
-              onClick={() => handleSelectEngine(engine.name)}
-              disabled={isChanging}
-              selected={isSelected}
-              sx={{ py: 1.5 }}
-            >
-              <ListItemText
-                primaryTypographyProps={{ component: 'div' }}
-                secondaryTypographyProps={{ component: 'div' }}
-                primary={
-                  <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-                    <Typography
-                      variant="body2"
-                      sx={{ fontWeight: isSelected ? 600 : 500 }}
-                    >
+            return (
+              <MenuItem
+                key={engine.variantId}
+                onClick={() => handleSelectEngine(engine.variantId)}
+                disabled={isChanging}
+                sx={{ py: 1.5 }}
+              >
+                <Stack direction="row" alignItems="center" spacing={1.5}>
+                  <RunnerIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+                  <Box>
+                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
                       {engine.displayName}
                     </Typography>
-                    {isSelected && <CheckIcon sx={{ fontSize: 18, color: 'primary.main' }} />}
-                  </Stack>
-                }
-                secondary={
-                  engine.version ? (
-                    <Box sx={{ mt: 0.5 }}>
-                      <Typography variant="caption" color="text.secondary">
-                        {t('engines.version')}: {engine.version}
-                      </Typography>
-                    </Box>
-                  ) : undefined
-                }
-              />
-            </MenuItem>
-          )
-        })}
+                    <Typography variant="caption" color="text.secondary">
+                      {engine.variantId}
+                    </Typography>
+                  </Box>
+                </Stack>
+              </MenuItem>
+            )
+          })}
 
         {isChanging && (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>

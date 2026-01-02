@@ -15,7 +15,7 @@
 import React from 'react'
 import { Box, type SxProps, type Theme } from '@mui/material'
 
-export interface ViewContainerProps {
+interface ViewContainerProps {
   /** View content (should include ViewHeader, ViewContent, etc.) */
   children: React.ReactNode
 

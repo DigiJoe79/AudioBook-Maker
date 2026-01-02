@@ -92,12 +92,3 @@ class TestSpeakerDeleteContract:
         response = client.delete(f"/api/speakers/{speaker_id}")
         assert response.status_code == 200
         DeleteResponse.model_validate(response.json())
-
-
-class TestSpeakerDefaultContract:
-    """Contract tests for default speaker endpoints."""
-
-    def test_get_default_speaker_returns_200(self):
-        response = client.get("/api/speakers/default/get")
-        # Can be 200 with speaker or 200 with null
-        assert response.status_code == 200

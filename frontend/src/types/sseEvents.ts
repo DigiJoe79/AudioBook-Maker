@@ -75,7 +75,8 @@ export interface SettingsResetData {
 // Pronunciation Events
 // ============================================================================
 
-export interface PronunciationRule {
+// Local type for SSE event data (matches index.ts PronunciationRule)
+interface PronunciationRule {
   id: string
   pattern: string
   replacement: string
@@ -146,7 +147,7 @@ export interface JobFailedData {
   failedSegmentId?: string
 }
 
-export interface JobCancellingData {
+interface JobCancellingData {
   jobId: string
   chapterId: string
 }
@@ -251,7 +252,7 @@ export interface ProjectReorderedData {
 // Export Job Events
 // ============================================================================
 
-export interface ExportJobCreatedData {
+interface ExportJobCreatedData {
   jobId: string
   chapterId: string
   format: 'mp3' | 'm4a' | 'wav'
@@ -284,7 +285,7 @@ export interface ExportJobFailedData {
   error: string
 }
 
-export interface ExportJobCancelledData {
+interface ExportJobCancelledData {
   jobId: string
   chapterId: string
 }
@@ -416,6 +417,14 @@ export interface EngineStartedData {
   status: 'running'
   port: number
   version?: string  // Package version from health check
+  variantId?: string  // Variant identifier for variant-aware frontends
+}
+
+export interface EngineModelLoadedData {
+  engineType: 'tts' | 'text' | 'stt' | 'audio'
+  engineName: string
+  loadedModel: string  // Currently loaded model name
+  variantId?: string  // Variant identifier for variant-aware frontends
 }
 
 export interface EngineStoppedData {
@@ -423,23 +432,34 @@ export interface EngineStoppedData {
   engineName: string
   status: 'stopped'
   reason: 'manual' | 'inactivity' | 'error'
+  variantId?: string  // Variant identifier for variant-aware frontends
 }
 
 export interface EngineEnabledData {
   engineType: 'tts' | 'text' | 'stt' | 'audio'
   engineName: string
   isEnabled: boolean
+  variantId?: string  // Variant identifier for variant-aware frontends
 }
 
-export interface EngineStartingData {
+interface EngineDisabledData {
   engineType: 'tts' | 'text' | 'stt' | 'audio'
   engineName: string
+  isEnabled: boolean
+  variantId?: string  // Variant identifier for variant-aware frontends
 }
 
-export interface EngineStoppingData {
+interface EngineStartingData {
+  engineType: 'tts' | 'text' | 'stt' | 'audio'
+  engineName: string
+  variantId?: string  // Variant identifier for variant-aware frontends
+}
+
+interface EngineStoppingData {
   engineType: 'tts' | 'text' | 'stt' | 'audio'
   engineName: string
   reason?: string
+  variantId?: string  // Variant identifier for variant-aware frontends
 }
 
 export interface EngineErrorData {
@@ -447,18 +467,87 @@ export interface EngineErrorData {
   engineName: string
   error: string
   details?: string
+  variantId?: string  // Variant identifier for variant-aware frontends
+}
+
+// ============================================================================
+// Docker Image Events
+// ============================================================================
+
+export interface DockerImageInstallingData {
+  variantId: string
+  imageName: string
+  hostId: string
+}
+
+export interface DockerImageProgressData {
+  variantId: string
+  status: 'downloading' | 'extracting' | 'pulling'
+  progressPercent: number
+  currentLayer: string
+  message: string
+}
+
+export interface DockerImageInstalledData {
+  variantId: string
+  imageName: string
+  hostId: string
+  isInstalled: boolean
+}
+
+interface DockerImageUninstallingData {
+  variantId: string
+  hostId: string
+}
+
+export interface DockerImageUninstalledData {
+  variantId: string
+  hostId: string
+  isInstalled: boolean
+}
+
+export interface DockerImageErrorData {
+  variantId: string
+  error: string
+  operation: 'install' | 'uninstall'
+}
+
+// ============================================================================
+// Docker Host Events
+// ============================================================================
+
+export interface DockerHostConnectedData {
+  hostId: string
+  dockerVersion: string
+  os: string
+  isAvailable: boolean
+  hasGpu: boolean
+}
+
+export interface DockerHostDisconnectedData {
+  hostId: string
+  reason: string
+  isAvailable: boolean
+}
+
+export interface DockerHostConnectingData {
+  hostId: string
+  attempt: number
 }
 
 /**
  * Engine status update (periodic, every 15s)
  * Contains full status of all engines with countdown timers
+ *
+ * Note: This is a reduced status update for SSE events.
+ * For full engine metadata, use EngineStatusInfo from engines.ts
  */
 export interface EngineStatusData {
   engines: {
-    tts: EngineStatusInfo[]
-    text: EngineStatusInfo[]
-    stt: EngineStatusInfo[]
-    audio: EngineStatusInfo[]
+    tts: SSEEngineStatusUpdate[]
+    text: SSEEngineStatusUpdate[]
+    stt: SSEEngineStatusUpdate[]
+    audio: SSEEngineStatusUpdate[]
   }
   hasTtsEngine: boolean
   hasTextEngine: boolean
@@ -466,8 +555,12 @@ export interface EngineStatusData {
   hasAudioEngine: boolean
 }
 
-interface EngineStatusInfo {
-  name: string
+/**
+ * Reduced engine status for SSE updates (sent every 15s)
+ * Only contains status fields that change, not full metadata
+ */
+export interface SSEEngineStatusUpdate {
+  variantId: string
   isEnabled: boolean
   isRunning: boolean
   status: 'running' | 'stopped' | 'disabled'

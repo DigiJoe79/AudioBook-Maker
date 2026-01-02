@@ -7,6 +7,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { produce } from 'immer';
 
 export interface UISettings {
   theme: 'light' | 'dark' | 'system';
@@ -35,29 +36,20 @@ export const useUISettingsStore = create<UISettingsState>()(
       settings: DEFAULT_SETTINGS,
 
       setTheme: (theme) => {
-        set((state) => ({
-          settings: {
-            ...state.settings,
-            theme
-          }
+        set(produce((draft) => {
+          draft.settings.theme = theme;
         }));
       },
 
       setLanguage: (uiLanguage) => {
-        set((state) => ({
-          settings: {
-            ...state.settings,
-            uiLanguage
-          }
+        set(produce((draft) => {
+          draft.settings.uiLanguage = uiLanguage;
         }));
       },
 
       updateSettings: (newSettings) => {
-        set((state) => ({
-          settings: {
-            ...state.settings,
-            ...newSettings
-          }
+        set(produce((draft) => {
+          Object.assign(draft.settings, newSettings);
         }));
       }
     }),

@@ -14,7 +14,7 @@
  * @param embedded - When true, renders without ViewContainer/ViewHeader (for MonitoringView tabs)
  */
 
-import React, { useCallback, useState, useEffect } from 'react'
+import React, { useCallback, useState, useEffect, useMemo } from 'react'
 import {
   Box,
   Grid,
@@ -26,7 +26,6 @@ import {
 } from '@mui/material'
 import { useTranslation } from 'react-i18next'
 import { useAllEnginesStatus, useSetDefaultEngine, useClearDefaultEngine } from '@hooks/useEnginesQuery'
-import { useSetEngineEnabled } from '@hooks/useTTSQuery'
 import { useSettings, useUpdateSettings } from '@hooks/useSettings'
 import { useAppStore } from '@store/appStore'
 import { useError } from '@hooks/useError'
@@ -40,7 +39,7 @@ import EngineSettingsDialog from '@components/engines/EngineSettingsDialog'
 import GlobalEngineSettingsCard from '@components/engines/GlobalEngineSettingsCard'
 import type { EngineType, EngineStatusInfo } from '@/types/engines'
 
-export interface EnginesViewProps {
+interface EnginesViewProps {
   embedded?: boolean
 }
 
@@ -59,7 +58,6 @@ export default function EnginesView({ embedded = false }: EnginesViewProps) {
   // Queries and mutations
   const { data: allEnginesData, isLoading, error } = useAllEnginesStatus()
   const setDefaultEngineMutation = useSetDefaultEngine()
-  const setEngineEnabledMutation = useSetEngineEnabled()
   const { refetch: refetchSettings } = useSettings()
   const updateSettingsMutation = useUpdateSettings()
 
@@ -203,35 +201,38 @@ export default function EnginesView({ embedded = false }: EnginesViewProps) {
 
   const allowedLanguages = settings?.languages?.allowedLanguages || ['de', 'en']
 
-  // Handle enable/disable toggle
-  const handleToggleEnabled = useCallback(async (engineName: string, enabled: boolean) => {
-    // Find the engine to get its type
-    const engine = allEnginesData?.tts?.find(e => e.name === engineName)
-      || allEnginesData?.stt?.find(e => e.name === engineName)
-      || allEnginesData?.text?.find(e => e.name === engineName)
-      || allEnginesData?.audio?.find(e => e.name === engineName)
+  // Filter engines: show only enabled engines that are installed
+  // Enable/disable is managed in EngineHostsTab (Settings > Hosts)
+  // Docker engines (runnerType starts with 'docker') must be installed
+  const isDockerEngine = (e: EngineStatusInfo) => e.runnerType?.startsWith('docker')
 
-    if (!engine) {
-      logger.error('[EnginesView] Engine not found for toggle:', engineName)
-      return
-    }
+  const filteredTtsEngines = useMemo(() => {
+    const engines = allEnginesData?.tts || []
+    return engines.filter(e =>
+      e.isEnabled && (!isDockerEngine(e) || e.isInstalled === true)
+    )
+  }, [allEnginesData?.tts])
 
-    try {
-      await setEngineEnabledMutation.mutateAsync({
-        engineType: engine.engineType,
-        engineName,
-        enabled,
-      })
-      logger.info(`[EnginesView] Engine ${engineName} ${enabled ? 'enabled' : 'disabled'}`)
-    } catch (err) {
-      logger.error('[EnginesView] Failed to toggle engine enabled:', err)
-      const errorMessage = translateBackendError(
-        err instanceof Error ? err.message : t('engines.toggleEnabledError'),
-        t
-      )
-      await showError(t('engines.toggleEnabledErrorTitle'), errorMessage)
-    }
-  }, [allEnginesData, setEngineEnabledMutation, t, showError])
+  const filteredTextEngines = useMemo(() => {
+    const engines = allEnginesData?.text || []
+    return engines.filter(e =>
+      e.isEnabled && (!isDockerEngine(e) || e.isInstalled === true)
+    )
+  }, [allEnginesData?.text])
+
+  const filteredSttEngines = useMemo(() => {
+    const engines = allEnginesData?.stt || []
+    return engines.filter(e =>
+      e.isEnabled && (!isDockerEngine(e) || e.isInstalled === true)
+    )
+  }, [allEnginesData?.stt])
+
+  const filteredAudioEngines = useMemo(() => {
+    const engines = allEnginesData?.audio || []
+    return engines.filter(e =>
+      e.isEnabled && (!isDockerEngine(e) || e.isInstalled === true)
+    )
+  }, [allEnginesData?.audio])
 
   // Content (shared between embedded and standalone)
   const content = (
@@ -275,19 +276,17 @@ export default function EnginesView({ embedded = false }: EnginesViewProps) {
           )}
 
           <Grid container spacing={3}>
-          {/* TTS Engine - Multi-engine support (uses EngineDropdownCard) */}
+          {/* TTS Engines - Dropdown Card with grouped engines */}
           <Grid size={{ xs: 12, sm: 6 }}>
             <EngineDropdownCard
               engineType="tts"
               title={t('engines.types.tts')}
-              engines={allEnginesData?.tts || []}
+              engines={filteredTtsEngines}
               currentDefault={defaultTtsEngine}
               onDefaultChange={(name) => handleDefaultEngineChange('tts', name)}
               isChangingDefault={setDefaultEngineMutation.isPending}
               onSettingsClick={handleSettingsClick}
               onEngineSettingsClick={handleSettingsClick}
-              onToggleEnabled={handleToggleEnabled}
-              isTogglingEnabled={setEngineEnabledMutation.isPending}
             />
           </Grid>
 
@@ -296,7 +295,7 @@ export default function EnginesView({ embedded = false }: EnginesViewProps) {
             <SingleEngineSelector
               engineType="text"
               title={t('engines.types.text')}
-              engines={allEnginesData?.text || []}
+              engines={filteredTextEngines}
               currentActive={defaultTextEngine}
               onActiveChange={(name) => handleSingleEngineChange('text', name)}
               isChanging={setDefaultEngineMutation.isPending || clearDefaultEngineMutation.isPending}
@@ -309,7 +308,7 @@ export default function EnginesView({ embedded = false }: EnginesViewProps) {
             <SingleEngineSelector
               engineType="stt"
               title={t('engines.types.stt')}
-              engines={allEnginesData?.stt || []}
+              engines={filteredSttEngines}
               currentActive={defaultSttEngine}
               onActiveChange={(name) => handleSingleEngineChange('stt', name)}
               isChanging={setDefaultEngineMutation.isPending || clearDefaultEngineMutation.isPending}
@@ -322,7 +321,7 @@ export default function EnginesView({ embedded = false }: EnginesViewProps) {
             <SingleEngineSelector
               engineType="audio"
               title={t('engines.types.audio')}
-              engines={allEnginesData?.audio || []}
+              engines={filteredAudioEngines}
               currentActive={defaultAudioEngine}
               onActiveChange={(name) => handleSingleEngineChange('audio', name)}
               isChanging={setDefaultEngineMutation.isPending || clearDefaultEngineMutation.isPending}

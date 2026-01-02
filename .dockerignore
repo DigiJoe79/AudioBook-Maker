@@ -1,0 +1,87 @@
+# =============================================================================
+# Docker Build Context Exclusions
+# =============================================================================
+# Reduces build context size and prevents sensitive/unnecessary files from
+# being sent to Docker daemon during build.
+# =============================================================================
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/.coverage
+**/htmlcov/
+**/*.egg-info/
+
+# Virtual environments (backend has local venv for development)
+**/venv/
+**/.venv/
+**/env/
+
+# Node.js / Frontend (not needed for backend container)
+**/node_modules/
+**/.npm/
+**/dist/
+**/.svelte-kit/
+
+# Tauri build artifacts
+src-tauri/target/
+
+# Development databases and media (mounted as volumes in Docker)
+backend/database/*.db
+backend/database/*.db-journal
+backend/database/*.db-wal
+backend/database/*.db-shm
+backend/database/ssh_keys/
+backend/media/
+
+# Logs
+**/*.log
+**/logs/
+
+# Environment files (secrets)
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Documentation (not needed in container)
+docs/
+*.md
+!database/schema.sql
+
+# Test files
+**/tests/
+**/test_*.py
+**/*_test.py
+**/conftest.py
+backend/requirements-dev.txt
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+**/*.tmp
+**/*.temp
+**/*.bak
+
+# Build artifacts from engines directory (subprocess engines not used in Docker)
+backend/engines/**/venv/
+backend/engines/**/models/
+backend/engines/**/__pycache__/

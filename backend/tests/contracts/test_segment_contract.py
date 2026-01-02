@@ -41,7 +41,7 @@ def test_chapter(test_project):
         "projectId": test_project["id"],
         "title": "Contract Test Chapter",
         "orderIndex": 0,
-        "defaultTtsEngine": "xtts",
+        "defaultTtsEngine": "xtts:local",
         "defaultTtsModelName": "v2"
     })
     assert response.status_code == 200, f"Chapter creation failed: {response.json()}"
@@ -59,7 +59,7 @@ def test_segment(test_chapter):
         "chapterId": test_chapter["id"],
         "text": "Dies ist ein Test-Segment für Contract Testing.",
         "orderIndex": 0,
-        "ttsEngine": "xtts",
+        "ttsEngine": "xtts:local",
         "ttsModelName": "v2",
         "ttsSpeakerName": None,
         "language": "de"
@@ -144,7 +144,7 @@ class TestSegmentCreateContract:
             "chapterId": test_chapter["id"],
             "text": "Neues Test-Segment",
             "orderIndex": 99,
-            "ttsEngine": "xtts",
+            "ttsEngine": "xtts:local",
             "ttsModelName": "v2",
             "language": "de"
         })
@@ -166,7 +166,7 @@ class TestSegmentCreateContract:
             "chapterId": test_chapter["id"],
             "text": "",
             "orderIndex": 1,
-            "ttsEngine": "xtts",
+            "ttsEngine": "xtts:local",
             "ttsModelName": "v2",
             "language": "de",
             "segmentType": "divider",
@@ -197,7 +197,7 @@ class TestSegmentDeleteContract:
             "chapterId": test_chapter["id"],
             "text": "Zu löschendes Segment",
             "orderIndex": 0,
-            "ttsEngine": "xtts",
+            "ttsEngine": "xtts:local",
             "ttsModelName": "v2",
             "language": "de"
         })

@@ -2,9 +2,23 @@
 Database repositories for CRUD operations
 """
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import sqlite3
 import uuid
+
+
+def utc_now_iso() -> str:
+    """
+    Generate UTC timestamp in ISO format with 'Z' suffix.
+
+    This ensures JavaScript's Date parser correctly interprets
+    the timestamp as UTC, avoiding timezone offset issues when
+    frontend (Windows) and backend (WSL2/Linux) are in different timezones.
+
+    Returns:
+        ISO 8601 string with 'Z' suffix, e.g., '2025-12-29T14:30:00.123456Z'
+    """
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
 def dict_from_row(row: sqlite3.Row) -> Dict[str, Any]:
@@ -917,8 +931,8 @@ class TTSJobRepository:
             if row:
                 job_id = row[0]
 
-                # Mark as running and set started_at
-                started_at = datetime.now().isoformat()
+                # Mark as running and set started_at (UTC with Z suffix for correct frontend parsing)
+                started_at = utc_now_iso()
                 cursor.execute("""
                     UPDATE tts_jobs
                     SET status = 'running',
@@ -1038,7 +1052,7 @@ class TTSJobRepository:
 
     def mark_completed(self, job_id: str):
         """Mark job as successfully completed"""
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         cursor = self.conn.cursor()
         cursor.execute("""
             UPDATE tts_jobs
@@ -1051,7 +1065,7 @@ class TTSJobRepository:
 
     def mark_failed(self, job_id: str, error_message: str):
         """Mark job as failed"""
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         cursor = self.conn.cursor()
         cursor.execute("""
             UPDATE tts_jobs
@@ -1213,7 +1227,7 @@ class TTSJobRepository:
         Args:
             job_id: Job identifier
         """
-        now = datetime.now().isoformat()
+        now = utc_now_iso()
         cursor = self.conn.cursor()
         cursor.execute("""
             UPDATE tts_jobs

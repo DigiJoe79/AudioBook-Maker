@@ -6,7 +6,7 @@
 import { EnhancedSegmentBoundary } from '@/types'
 import { logger } from '@/utils/logger'
 
-export interface WaveformRenderOptions {
+interface WaveformRenderOptions {
   width: number
   height: number
   waveColor: string

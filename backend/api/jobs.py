@@ -125,11 +125,11 @@ async def list_active_tts_jobs() -> TTSJobsListResponse:
 
         logger.debug(f"Retrieved {len(active_jobs)} active TTS jobs (including paused)")
 
-        return {
-            "success": True,
-            "jobs": active_jobs,
-            "count": len(active_jobs)
-        }
+        return TTSJobsListResponse(
+            success=True,
+            jobs=active_jobs,
+            count=len(active_jobs)
+        )
 
     except Exception as e:
         logger.error(f"Failed to list active TTS jobs: {e}")
@@ -215,10 +215,10 @@ async def cleanup_tts_jobs() -> CleanupJobsResponse:
 
         logger.info(f"Cleaned up {deleted_count} finished TTS jobs with segment cleanup")
 
-        return {
-            "success": True,
-            "deleted": deleted_count
-        }
+        return CleanupJobsResponse(
+            success=True,
+            deleted=deleted_count
+        )
 
     except Exception as e:
         logger.error(f"Failed to cleanup TTS jobs: {e}")
@@ -259,11 +259,11 @@ async def delete_tts_job(job_id: str) -> DeleteJobResponse:
 
         logger.info(f"Deleted TTS job {job_id} with segment cleanup")
 
-        return {
-            "success": True,
-            "deleted": True,
-            "job_id": job_id
-        }
+        return DeleteJobResponse(
+            success=True,
+            deleted=True,
+            job_id=job_id
+        )
 
     except HTTPException:
         raise
@@ -312,11 +312,11 @@ async def cancel_tts_job(job_id: str) -> CancelJobResponse:
                 except Exception as e:
                     logger.error(f"Failed to emit TTS job cancelled event: {e}")
 
-                return {
-                    "status": "cancelled",
-                    "job_id": job_id,
-                    "message": "Pending job cancelled"
-                }
+                return CancelJobResponse(
+                    status="cancelled",
+                    job_id=job_id,
+                    message="Pending job cancelled"
+                )
         elif job_status == 'running':
             # Request graceful cancellation
             if job_repo.request_cancellation(job_id):
@@ -330,25 +330,25 @@ async def cancel_tts_job(job_id: str) -> CancelJobResponse:
                 except Exception as e:
                     logger.error(f"Failed to emit TTS job cancelling event: {e}")
 
-                return {
-                    "status": "cancelling",
-                    "job_id": job_id,
-                    "message": "Cancellation requested - worker will stop after current segment"
-                }
+                return CancelJobResponse(
+                    status="cancelling",
+                    job_id=job_id,
+                    message="Cancellation requested - worker will stop after current segment"
+                )
         elif job_status in ('completed', 'failed', 'cancelled'):
             # Already finished
-            return {
-                "status": job_status,
-                "job_id": job_id,
-                "message": f"Job already {job_status}"
-            }
+            return CancelJobResponse(
+                status=job_status,
+                job_id=job_id,
+                message=f"Job already {job_status}"
+            )
 
         # Unexpected status
-        return {
-            "status": "error",
-            "job_id": job_id,
-            "message": f"Cannot cancel job with status '{job_status}'"
-        }
+        return CancelJobResponse(
+            status="error",
+            job_id=job_id,
+            message=f"Cannot cancel job with status '{job_status}'"
+        )
 
     except HTTPException:
         raise

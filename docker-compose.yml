@@ -1,0 +1,78 @@
+# =============================================================================
+# Audiobook Maker - Docker Compose
+# =============================================================================
+# Local development and deployment configuration.
+#
+# Usage:
+#   docker compose up -d              # Start backend
+#   docker compose logs -f backend    # View logs
+#   docker compose down               # Stop all services
+#
+# The backend container controls engine containers via Docker socket.
+# Engine containers are started/stopped dynamically by the backend.
+# =============================================================================
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: audiobook-maker/backend:latest
+    container_name: audiobook-maker-backend
+    # Restart on crashes (exit != 0), but not on graceful shutdown (exit 0)
+    restart: on-failure
+
+    # Expose backend API to host
+    ports:
+      - "8765:8765"
+
+    # Enable host.docker.internal on all platforms (auto on Docker Desktop, needs this on Linux)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    volumes:
+      # Docker socket for controlling engine containers
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # Persistent data
+      - ./backend/database:/app/data                    # Database
+      - ./backend/media:/app/media                      # Audio files, exports, samples
+
+    environment:
+      # Server configuration
+      - HOST=0.0.0.0
+      - PORT=8765
+
+      # Logging
+      - LOG_LEVEL=INFO
+      # - DEBUG=1                           # Uncomment for debug logging
+
+      # Engine runner mode (docker = use Docker containers for engines)
+      - DEFAULT_ENGINE_RUNNER=docker
+      # Backend reaches engine containers via host.docker.internal (works on all platforms)
+      - DOCKER_ENGINE_HOST=host.docker.internal
+
+      # Optional: Additional CORS origins (comma-separated)
+      # - CORS_ORIGINS=http://192.168.1.100:5173
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+# =============================================================================
+# Volume Configuration
+# =============================================================================
+# By default, data is stored in ./data and ./media relative to this file.
+# For production, you may want to use named volumes:
+#
+# volumes:
+#   audiobook-data:
+#   audiobook-media:
+#
+# And reference them as:
+#   - audiobook-data:/app/data
+#   - audiobook-media:/app/media
+# =============================================================================

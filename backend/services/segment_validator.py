@@ -60,7 +60,7 @@ class SegmentValidator:
 
         # Get max length for this language
         # Priority: language-specific > default
-        max_length_by_lang = constraints.get('max_text_length_by_lang', {})
+        max_length_by_lang = constraints.get('max_text_length_by_lang') or {}
         max_length = max_length_by_lang.get(language, constraints.get('max_text_length', 500))
 
         is_valid = text_length <= max_length
@@ -95,7 +95,7 @@ class SegmentValidator:
         try:
             engine_info = engine_manager.get_engine_info(engine_name)
             if engine_info and len(engine_info) > 0:
-                return engine_info[0].get('constraints', {})
+                return engine_info[0].get('constraints') or {}
             return None
         except Exception as e:
             logger.error(f"Failed to get constraints for engine '{engine_name}': {e}")

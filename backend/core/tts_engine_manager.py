@@ -37,12 +37,13 @@ Date: 2025-11-23
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Tuple
 import httpx
 from loguru import logger
 
 from core.base_engine_manager import BaseEngineManager
 from core.tts_engine_discovery import TTSEngineDiscovery
+from core.engine_exceptions import EngineClientError, EngineLoadingError, EngineServerError
 
 
 class TTSEngineManager(BaseEngineManager):
@@ -65,8 +66,7 @@ class TTSEngineManager(BaseEngineManager):
         Inherited from BaseEngineManager:
         - engine_type: 'tts'
         - engines_base_path: Path to engines/tts/ subdirectory
-        - _engine_metadata: Discovered TTS engines
-        - engine_processes: Running engine processes
+        - engine_endpoints: Running engine endpoints (subprocess and Docker)
         - engine_ports: Assigned ports
         - active_engine: Currently loaded engine
         - http_client: Async HTTP client
@@ -85,27 +85,31 @@ class TTSEngineManager(BaseEngineManager):
         engines_base_path = Path(BACKEND_ROOT) / 'engines' / 'tts'
         super().__init__(engines_base_path=engines_base_path, engine_type='tts')
 
-    def _discover_engines(self) -> None:
+    def discover_local_engines(self) -> Dict[str, Dict[str, Any]]:
         """
         Discover TTS engines from engines/tts/ directory
 
         Uses TTSEngineDiscovery to scan for engine servers.
-        Populates self._engine_metadata dictionary.
+        Returns discovered engine metadata directly.
+
+        Returns:
+            Dictionary mapping engine_name -> engine_metadata
         """
         try:
             discovery = TTSEngineDiscovery(self.engines_base_path)
-            self._engine_metadata = discovery.discover_all()
+            discovered = discovery.discover_all()
 
-            if not self._engine_metadata:
-                logger.warning("No TTS engines discovered! Check engines/tts/ directory.")
+            if not discovered:
+                logger.info("No local TTS engines found (subprocess)")
             else:
                 logger.debug(
-                    f"Auto-discovered {len(self._engine_metadata)} TTS engines: "
-                    f"{list(self._engine_metadata.keys())}"
+                    f"Auto-discovered {len(discovered)} subprocess TTS engines: "
+                    f"{list(discovered.keys())}"
                 )
+            return discovered
         except Exception as e:
             logger.error(f"TTS engine discovery failed: {e}")
-            self._engine_metadata = {}
+            return {}
 
     def get_engine_info(self, engine_name: Optional[str] = None) -> List[Dict[str, Any]]:
         """
@@ -148,24 +152,29 @@ class TTSEngineManager(BaseEngineManager):
 
         info_list = []
         for ename in engine_names:
-            if ename not in self._engine_metadata:
+            # Parse variant ID to get base engine name (e.g., 'xtts:local' -> 'xtts')
+            from core.base_engine_manager import parse_variant_id
+            base_name, runner_id = parse_variant_id(ename)
+
+            # Get metadata from DB (Single Source of Truth)
+            metadata = self.get_engine_metadata(ename)
+
+            if not metadata:
                 logger.warning(f"Unknown TTS engine: {ename}")
                 continue
-
-            metadata = self._engine_metadata[ename]
 
             # Filter supported languages based on allowed languages
             engine_languages = metadata.get('supported_languages', [])
             filtered_languages = list(set(engine_languages) & set(allowed_languages))
 
             info_list.append({
-                'name': metadata.get('name', ename),
-                'display_name': metadata.get('display_name', ename),
-                'capabilities': metadata.get('capabilities', {}),
-                'constraints': metadata.get('constraints', {}),
+                'name': metadata.get('name') or base_name,
+                'display_name': metadata.get('display_name') or base_name,
+                'capabilities': metadata.get('capabilities') or {},
+                'constraints': metadata.get('constraints') or {},
                 'supported_languages': filtered_languages,
                 'all_supported_languages': engine_languages,  # Unfiltered for Settings UI
-                'is_running': ename in self.engine_processes,
+                'is_running': self.is_engine_running(ename),
                 'port': self.engine_ports.get(ename)
             })
 
@@ -176,7 +185,7 @@ class TTSEngineManager(BaseEngineManager):
         Get list of available models for a specific TTS engine
 
         Args:
-            engine_name: Engine identifier (e.g., 'xtts')
+            engine_name: Engine identifier (e.g., 'xtts' or 'xtts:local')
 
         Returns:
             List of model dictionaries with metadata:
@@ -188,15 +197,104 @@ class TTSEngineManager(BaseEngineManager):
         Raises:
             ValueError: If engine_name is unknown
         """
-        if engine_name not in self._engine_metadata:
-            available = ', '.join(self._engine_metadata.keys())
+        # Parse variant ID to get base engine name (e.g., 'xtts:local' -> 'xtts')
+        from core.base_engine_manager import parse_variant_id
+        base_name, _ = parse_variant_id(engine_name)
+
+        # Get metadata from DB (Single Source of Truth)
+        metadata = self.get_engine_metadata(engine_name)
+        if not metadata:
+            available = ', '.join(self.list_installed_engines())
             raise ValueError(
                 f"Unknown TTS engine: '{engine_name}'. "
                 f"Available engines: {available}"
             )
 
-        metadata = self._engine_metadata[engine_name]
         return metadata.get('models', [])
+
+    async def ensure_samples_available(
+        self,
+        engine_name: str,
+        sample_files: List[Tuple[str, Path]]
+    ) -> List[str]:
+        """
+        Ensure speaker samples are available in the engine.
+
+        Checks which samples exist in the engine and uploads missing ones.
+        This replaces the old path transformation approach and works with
+        both local subprocess and remote Docker engines.
+
+        Args:
+            engine_name: Target engine variant_id (e.g., 'xtts:local', 'xtts:docker')
+            sample_files: List of (sample_uuid, host_path) tuples where:
+                - sample_uuid: UUID of the sample (without .wav extension)
+                - host_path: Full path to sample file on host
+
+        Returns:
+            List of sample filenames for use in generate request
+            (e.g., ["uuid1.wav", "uuid2.wav"])
+
+        Raises:
+            RuntimeError: If engine not running or sample operations fail
+        """
+        if not sample_files:
+            return []
+
+        base_url = self.get_engine_base_url(engine_name)
+
+        # 1. Check which samples exist in the engine
+        sample_ids = [uuid for uuid, _ in sample_files]
+
+        try:
+            response = await self.http_client.post(
+                f"{base_url}/samples/check",
+                json={"sampleIds": sample_ids}
+            )
+            response.raise_for_status()
+            check_result = response.json()
+            missing = set(check_result.get("missing", []))
+        except httpx.RequestError as e:
+            raise RuntimeError(f"Failed to check samples on {engine_name}: {e}")
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(
+                f"Sample check failed on {engine_name}: "
+                f"{e.response.status_code} - {e.response.text[:200]}"
+            )
+
+        # 2. Upload missing samples
+        if missing:
+            logger.debug(
+                f"Uploading {len(missing)} missing samples to {engine_name}"
+            )
+
+            for sample_uuid, host_path in sample_files:
+                if sample_uuid in missing:
+                    try:
+                        with open(host_path, "rb") as f:
+                            wav_bytes = f.read()
+                            upload_response = await self.http_client.post(
+                                f"{base_url}/samples/upload/{sample_uuid}",
+                                content=wav_bytes,
+                                headers={"Content-Type": "audio/wav"}
+                            )
+                            upload_response.raise_for_status()
+                            logger.debug(f"Uploaded sample {sample_uuid} to {engine_name}")
+                    except FileNotFoundError:
+                        raise RuntimeError(f"Sample file not found: {host_path}")
+                    except httpx.RequestError as e:
+                        raise RuntimeError(
+                            f"Failed to upload sample {sample_uuid} to {engine_name}: {e}"
+                        )
+                    except httpx.HTTPStatusError as e:
+                        raise RuntimeError(
+                            f"Sample upload failed on {engine_name}: "
+                            f"{e.response.status_code} - {e.response.text[:200]}"
+                        )
+        else:
+            logger.debug(f"All {len(sample_ids)} samples already exist in {engine_name}")
+
+        # 3. Return filenames for generate request
+        return [f"{uuid}.wav" for uuid, _ in sample_files]
 
     async def generate_with_engine(
         self,
@@ -210,10 +308,11 @@ class TTSEngineManager(BaseEngineManager):
         Call TTS engine's /generate endpoint to synthesize audio
 
         Args:
-            engine_name: Engine identifier (e.g., 'xtts')
+            engine_name: Engine variant_id (e.g., 'xtts:local', 'xtts:docker')
             text: Text to synthesize
             language: Language code (e.g., 'en', 'de')
-            speaker_wav: Path(s) to speaker sample audio file(s)
+            speaker_wav: Filename(s) of speaker sample(s) in engine's samples_dir
+                         (e.g., "uuid.wav" or ["uuid1.wav", "uuid2.wav"])
             parameters: Engine-specific generation parameters
 
         Returns:
@@ -222,11 +321,15 @@ class TTSEngineManager(BaseEngineManager):
         Raises:
             RuntimeError: If engine not running or generation fails
         """
-        port = self.engine_ports.get(engine_name)
-        if not port:
+        try:
+            base_url = self.get_engine_base_url(engine_name)
+        except RuntimeError:
             raise RuntimeError(f"TTS engine {engine_name} not running")
 
-        url = f"http://127.0.0.1:{port}/generate"
+        url = f"{base_url}/generate"
+
+        # speaker_wav is now a filename (e.g., "uuid.wav") - no transformation needed
+        # The engine server resolves filenames to full paths in its samples_dir
 
         payload = {
             "text": text,
@@ -241,9 +344,20 @@ class TTSEngineManager(BaseEngineManager):
             response = await self.http_client.post(url, json=payload)
             response.raise_for_status()
         except httpx.RequestError as e:
-            raise RuntimeError(f"HTTP request to {engine_name} failed: {e}")
+            raise EngineServerError(f"HTTP request to {engine_name} failed: {e}")
         except httpx.HTTPStatusError as e:
-            raise RuntimeError(f"Engine {engine_name} returned error {e.response.status_code}: {e.response.text[:200]}")
+            status_code = e.response.status_code
+            detail = e.response.text[:200]
+
+            if status_code in (400, 404):
+                # Client error - request is invalid, don't retry
+                raise EngineClientError(f"{engine_name} rejected request ({status_code}): {detail}")
+            elif status_code == 503:
+                # Engine loading - retry without restart
+                raise EngineLoadingError(f"{engine_name} is loading: {detail}")
+            else:
+                # Server error (500, etc.) - restart and retry
+                raise EngineServerError(f"{engine_name} error ({status_code}): {detail}")
 
         audio_bytes = response.content
         logger.debug(f"Generated {len(audio_bytes)} bytes")
@@ -252,33 +366,6 @@ class TTSEngineManager(BaseEngineManager):
         self.record_activity(engine_name)
 
         return audio_bytes
-
-    def rediscover_engines(self) -> Dict[str, Any]:
-        """
-        Re-discover TTS engines from engines/tts/ directory (Hot-Reload)
-
-        Use Case: User installs new TTS engine while backend is running
-
-        Returns:
-            Dictionary of newly discovered engines
-        """
-        logger.info("Re-discovering TTS engines...")
-
-        try:
-            discovery = TTSEngineDiscovery(self.engines_base_path)
-            new_engines = discovery.discover_all()
-
-            # Update metadata
-            self._engine_metadata.update(new_engines)
-
-            logger.info(
-                f"Re-discovered {len(new_engines)} TTS engines: {list(new_engines.keys())}"
-            )
-
-            return new_engines
-        except Exception as e:
-            logger.error(f"TTS engine re-discovery failed: {e}")
-            return {}
 
 
 # ==================== Singleton Factory ====================

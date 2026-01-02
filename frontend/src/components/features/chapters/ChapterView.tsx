@@ -15,7 +15,7 @@ import { EditSegmentDialog } from '@components/dialogs/EditSegmentDialog'
 import { EditSegmentSettingsDialog } from '@components/dialogs/EditSegmentSettingsDialog'
 import { GenerateAudioDialog } from '@components/dialogs/GenerateAudioDialog'
 import { ExportDialog } from '@components/dialogs/ExportDialog'
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useChapter, useSegmentText } from '@hooks/useChaptersQuery'
 import { useDeleteSegment, useUpdateSegment } from '@hooks/useSegmentsQuery'
 import {
@@ -83,11 +83,6 @@ export default function ChapterView({
   const [editSettingsDialogOpen, setEditSettingsDialogOpen] = useState(false)
   const [editingSegment, setEditingSegment] = useState<Segment | null>(null)
 
-  // TTS state from appStore (DB defaults) - currently unused but kept for potential future use
-  const defaultEngine = useAppStore((state) => state.getDefaultTtsEngine())
-  const getDefaultTtsModel = useAppStore((state) => state.getDefaultTtsModel)
-  const defaultModelName = getDefaultTtsModel(defaultEngine)
-  const defaultLanguage = useAppStore((state) => state.getDefaultLanguage())
 
   // Default speaker from speakers table (single source of truth)
   const { data: defaultSpeakerData } = useDefaultSpeaker()
@@ -132,7 +127,7 @@ export default function ChapterView({
   const segmentTextMutation = useSegmentText()
 
   // Text upload handler
-  const handleTextUpload = async (data: {
+  const handleTextUpload = useCallback(async (data: {
     text: string
     textLanguage: string
     ttsEngine: string
@@ -198,10 +193,10 @@ export default function ChapterView({
       throw err
     }
     // No manual refresh needed - React Query auto-updates!
-  }
+  }, [chapter, speakers, segmentTextMutation, showSnackbar, t])
 
   // Generate audio for all segments
-  const handleGenerateAllAudio = async (config: {
+  const handleGenerateAllAudio = useCallback(async (config: {
     forceRegenerate: boolean
     overrideSegmentSettings?: boolean
     speaker?: string
@@ -264,31 +259,31 @@ export default function ChapterView({
         errorMessage
       )
     }
-  }
+  }, [chapter, queryClient, generateChapterMutation, showSnackbar, showError, t])
 
   // Edit segment text
-  const handleSegmentEdit = (segment: Segment) => {
+  const handleSegmentEdit = useCallback((segment: Segment) => {
     setEditingSegment(segment)
     setEditDialogOpen(true)
-  }
+  }, [])
 
   // Edit segment settings (Engine, Model, Language, Speaker)
-  const handleSegmentEditSettings = (segment: Segment) => {
+  const handleSegmentEditSettings = useCallback((segment: Segment) => {
     setEditingSegment(segment)
     setEditSettingsDialogOpen(true)
-  }
+  }, [])
 
   // Navigate between segments in edit dialog
-  const handleSegmentChange = (segmentId: string) => {
+  const handleSegmentChange = useCallback((segmentId: string) => {
     if (!chapter) return
     const newSegment = chapter.segments.find(s => s.id === segmentId)
     if (newSegment) {
       setEditingSegment(newSegment)
     }
-  }
+  }, [chapter])
 
   // Save edited segment text
-  const handleSaveSegment = async (segmentId: string, newText: string) => {
+  const handleSaveSegment = useCallback(async (segmentId: string, newText: string) => {
     if (!chapter) return
 
     try {
@@ -308,10 +303,10 @@ export default function ChapterView({
       showSnackbar(errorMessage, { severity: 'error' })
       throw err
     }
-  }
+  }, [chapter, updateSegmentMutation, showSnackbar, t])
 
   // Save edited segment settings
-  const handleSaveSegmentSettings = async (
+  const handleSaveSegmentSettings = useCallback(async (
     segmentId: string,
     updates: {
       ttsEngine?: string
@@ -339,10 +334,10 @@ export default function ChapterView({
       showSnackbar(errorMessage, { severity: 'error' })
       throw err
     }
-  }
+  }, [chapter, updateSegmentMutation, showSnackbar, t])
 
   // Delete segment
-  const handleDeleteSegment = async (segment: Segment) => {
+  const handleDeleteSegment = useCallback(async (segment: Segment) => {
     const confirmed = await confirm(
       t('segments.delete'),
       t('segments.messages.deleteConfirm'),
@@ -371,10 +366,10 @@ export default function ChapterView({
         errorMessage
       )
     }
-  }
+  }, [chapter, confirm, deleteSegmentMutation, showSnackbar, showError, t])
 
   // Regenerate single segment
-  const handleRegenerateSegment = async (segment: Segment) => {
+  const handleRegenerateSegment = useCallback(async (segment: Segment) => {
     if (!chapter) return
 
     // Backend automatically creates job in tts_jobs table
@@ -397,10 +392,10 @@ export default function ChapterView({
         errorMessage
       )
     }
-  }
+  }, [chapter, generateSegmentMutation, showError, t])
 
   // Analyze chapter with Quality system
-  const handleAnalyzeChapter = async () => {
+  const handleAnalyzeChapter = useCallback(async () => {
     if (!chapter) return
 
     try {
@@ -420,7 +415,12 @@ export default function ChapterView({
         errorMessage
       )
     }
-  }
+  }, [chapter, analyzeChapterMutation, showSnackbar, showError, t])
+
+  // Handle segment click - memoized to prevent SegmentList re-renders
+  const handleSegmentClick = useCallback((segment: Segment) => {
+    onSegmentClick?.(segment.id)
+  }, [onSegmentClick])
 
   // No project selected
   if (!project) {
@@ -507,7 +507,7 @@ export default function ChapterView({
           chapterId={displayChapter.id}
           segments={displayChapter.segments}
           currentTime={currentTime}
-          onSegmentClick={(segment) => onSegmentClick?.(segment.id)}
+          onSegmentClick={handleSegmentClick}
           onSegmentPlay={onPlaySegment}
           onSegmentEdit={handleSegmentEdit}
           onSegmentEditSettings={handleSegmentEditSettings}

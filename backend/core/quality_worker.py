@@ -25,6 +25,7 @@ from db.quality_job_repository import QualityJobRepository
 from db.repositories import SegmentRepository
 from db.segments_analysis_repository import SegmentsAnalysisRepository
 from services.settings_service import SettingsService
+from core.engine_exceptions import EngineClientError, EngineLoadingError, EngineServerError
 
 T = TypeVar('T')
 
@@ -88,7 +89,7 @@ class QualityWorker:
             daemon=True
         )
         self.thread.start()
-        logger.debug("[QualityWorker] ✓ Quality Worker started polling_interval={:.1f}s", self.poll_interval)
+        logger.debug("[QualityWorker] [OK] Quality Worker started polling_interval={:.1f}s", self.poll_interval)
 
     def stop(self, timeout: float = None):
         """Stop worker gracefully"""
@@ -107,7 +108,7 @@ class QualityWorker:
             if self.thread.is_alive():
                 logger.warning(f"[QualityWorker] Worker did not stop within timeout timeout={timeout}s")
             else:
-                logger.info("[QualityWorker] ✓ Quality Worker stopped gracefully")
+                logger.info("[QualityWorker] [OK] Quality Worker stopped gracefully")
 
     def _emit_event_sync(self, coro):
         """Emit event from synchronous worker thread."""
@@ -372,6 +373,103 @@ class QualityWorker:
         finally:
             conn.close()
 
+    async def _analyze_with_retry(
+        self,
+        engine_manager,
+        engine_name: str,
+        engine_type: str,
+        analyze_func,
+        model_name: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Call engine analysis with retry logic for engine exceptions.
+
+        Retry behavior:
+        - EngineClientError (400/404): No retry, request is invalid
+        - EngineLoadingError (503): Retry without restart, wait up to 5 min
+        - EngineServerError (500): Restart engine and retry, max 3 attempts
+
+        Args:
+            engine_manager: The engine manager instance (STT or Audio)
+            engine_name: Engine variant ID
+            engine_type: 'stt' or 'audio' for logging
+            analyze_func: Async function that performs the analysis
+            model_name: Model name for engine restart
+
+        Returns:
+            Analysis result dict or None if all retries failed
+        """
+        max_server_attempts = 3
+        max_loading_wait_seconds = 300  # 5 minutes
+        server_attempt = 0
+        loading_wait_total = 0
+
+        while server_attempt < max_server_attempts:
+            try:
+                return await analyze_func()
+
+            except EngineClientError as e:
+                # 400/404 - Request invalid, don't retry
+                logger.error(f"[QualityWorker] {engine_type.upper()} client error: {e}")
+                return None
+
+            except EngineLoadingError:
+                # 503 - Engine loading, wait and retry without restart
+                loading_wait_total += 1
+                if loading_wait_total >= max_loading_wait_seconds:
+                    logger.error(
+                        f"[QualityWorker] {engine_type.upper()} loading timeout "
+                        f"after {loading_wait_total}s"
+                    )
+                    return None
+
+                logger.warning(
+                    f"[QualityWorker] {engine_type.upper()} engine loading - "
+                    f"waiting 1s ({loading_wait_total}/{max_loading_wait_seconds}s)"
+                )
+                await asyncio.sleep(1.0)
+                continue  # Retry without incrementing server_attempt
+
+            except EngineServerError as e:
+                # 500 or connection error - restart engine and retry
+                server_attempt += 1
+                logger.error(
+                    f"[QualityWorker] {engine_type.upper()} server error "
+                    f"(attempt {server_attempt}/{max_server_attempts}): {e}"
+                )
+
+                if server_attempt < max_server_attempts:
+                    logger.warning(
+                        f"[QualityWorker] Restarting {engine_type} engine {engine_name}"
+                    )
+                    try:
+                        await engine_manager.stop_engine_server(engine_name)
+                        await engine_manager.start_engine_server(engine_name, model_name)
+                    except Exception as restart_err:
+                        logger.error(
+                            f"[QualityWorker] {engine_type.upper()} engine restart failed: "
+                            f"{restart_err}"
+                        )
+                else:
+                    logger.error(
+                        f"[QualityWorker] {engine_type.upper()} analysis failed "
+                        f"after {max_server_attempts} attempts"
+                    )
+                    return None
+
+            except Exception as e:
+                # Unexpected error - treat like server error
+                server_attempt += 1
+                logger.error(
+                    f"[QualityWorker] {engine_type.upper()} unexpected error "
+                    f"(attempt {server_attempt}/{max_server_attempts}): {e}"
+                )
+
+                if server_attempt >= max_server_attempts:
+                    return None
+
+        return None
+
     async def _analyze_segment(
         self,
         segment: dict,
@@ -391,36 +489,36 @@ class QualityWorker:
         audio_path = Path(OUTPUT_DIR) / segment['audio_path']
         engine_results = []
 
-        # STT Analysis
+        # STT Analysis with retry logic
         if stt_manager and job.get('stt_engine'):
+            # Get expected text from segment
+            expected_text = segment.get('text') or segment.get('content', '')
+
+            # Load pronunciation rules for text comparison
+            pronunciation_rules = []
             try:
-                # Get expected text from segment
-                expected_text = segment.get('text') or segment.get('content', '')
+                from db.pronunciation_repository import PronunciationRulesRepository
+                pron_repo = PronunciationRulesRepository(conn)
+                # Get rules for this segment's context (engine, language, project)
+                rules = pron_repo.get_rules_for_context(
+                    engine_name=segment.get('tts_engine', ''),
+                    language=segment.get('language', 'en'),
+                    project_id=job.get('project_id')
+                )
+                pronunciation_rules = [
+                    {
+                        'pattern': r.pattern,
+                        'replacement': r.replacement,
+                        'isRegex': r.is_regex,
+                        'isActive': r.is_active
+                    }
+                    for r in rules if r.is_active
+                ]
+            except Exception as e:
+                logger.warning(f"Failed to load pronunciation rules: {e}")
 
-                # Load pronunciation rules for text comparison
-                pronunciation_rules = []
-                try:
-                    from db.pronunciation_repository import PronunciationRulesRepository
-                    pron_repo = PronunciationRulesRepository(conn)
-                    # Get rules for this segment's context (engine, language, project)
-                    rules = pron_repo.get_rules_for_context(
-                        engine_name=segment.get('tts_engine', ''),
-                        language=segment.get('language', 'en'),
-                        project_id=job.get('project_id')
-                    )
-                    pronunciation_rules = [
-                        {
-                            'pattern': r.pattern,
-                            'replacement': r.replacement,
-                            'isRegex': r.is_regex,
-                            'isActive': r.is_active
-                        }
-                        for r in rules if r.is_active
-                    ]
-                except Exception as e:
-                    logger.warning(f"Failed to load pronunciation rules: {e}")
-
-                stt_result = await stt_manager.analyze_generic(
+            async def do_stt_analysis():
+                return await stt_manager.analyze_generic(
                     engine_name=job['stt_engine'],
                     audio_path=str(audio_path),
                     language=segment.get('language', 'en'),
@@ -428,25 +526,46 @@ class QualityWorker:
                     expected_text=expected_text,
                     pronunciation_rules=pronunciation_rules
                 )
+
+            stt_result = await self._analyze_with_retry(
+                engine_manager=stt_manager,
+                engine_name=job['stt_engine'],
+                engine_type='stt',
+                analyze_func=do_stt_analysis,
+                model_name=job.get('stt_model_name')
+            )
+            if stt_result:
                 engine_results.append(stt_result)
-            except Exception as e:
-                logger.error(f"STT analysis failed: {e}")
 
-        # Audio Analysis
+        # Audio Analysis with retry logic
         if audio_manager and job.get('audio_engine'):
-            try:
-                # Load thresholds from settings
-                engine_config = settings_service.get_setting(f"audio.engines.{job['audio_engine']}") or {}
-                thresholds = engine_config.get('parameters', {})
+            # Load thresholds from DB (audio engine parameters)
+            from db.engine_repository import EngineRepository
+            engine_repo = EngineRepository(conn)
+            engine = engine_repo.get_by_id(job['audio_engine'])
+            thresholds = (engine.get('parameters') or {}) if engine else {}
 
-                audio_result = await audio_manager.analyze_generic(
+            # Get audio model name for restart
+            audio_model_name = settings_service.get_default_model_for_engine(
+                job['audio_engine'], 'audio'
+            )
+
+            async def do_audio_analysis():
+                return await audio_manager.analyze_generic(
                     engine_name=job['audio_engine'],
                     audio_path=str(audio_path),
                     thresholds=thresholds
                 )
+
+            audio_result = await self._analyze_with_retry(
+                engine_manager=audio_manager,
+                engine_name=job['audio_engine'],
+                engine_type='audio',
+                analyze_func=do_audio_analysis,
+                model_name=audio_model_name
+            )
+            if audio_result:
                 engine_results.append(audio_result)
-            except Exception as e:
-                logger.error(f"Audio analysis failed: {e}")
 
         # Aggregate results
         return self._aggregate_results(engine_results)

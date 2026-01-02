@@ -200,10 +200,12 @@ class MarkdownParser:
             from services.settings_service import SettingsService
             with get_db_connection() as conn:
                 settings_service = SettingsService(conn)
-                engine_name = settings_service.get_setting('text.defaultTextEngine') or ""
+                engine_name = settings_service.get_default_engine('text') or ""
 
-        if not engine_name and text_manager._engine_metadata:
-            engine_name = next(iter(text_manager._engine_metadata.keys()))
+        if not engine_name:
+            installed = text_manager.list_installed_engines()
+            if installed:
+                engine_name = installed[0]
 
         if not engine_name:
             raise ValueError("No text processing engine available")

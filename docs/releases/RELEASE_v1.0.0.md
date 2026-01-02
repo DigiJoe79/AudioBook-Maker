@@ -263,7 +263,7 @@ backend/engines/
 
 ### Adding Custom Engines
 
-See the updated **[Engine Development Guide](../ENGINE_DEVELOPMENT_GUIDE.md)** for complete documentation.
+See the updated **[Engine Development Guide](../engine-development-guide.md)** for complete documentation.
 
 **Quick Start:**
 1. Choose engine type (TTS, STT, Text, Audio)

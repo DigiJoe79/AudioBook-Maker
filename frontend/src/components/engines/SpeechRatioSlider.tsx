@@ -15,7 +15,7 @@ import React, { memo } from 'react'
 import { Box, Slider, Typography, Paper } from '@mui/material'
 import { useTranslation } from 'react-i18next'
 
-export interface SpeechRatioValues {
+interface SpeechRatioValues {
   speech_ratio_ideal_min: number
   speech_ratio_ideal_max: number
   speech_ratio_warning_min: number

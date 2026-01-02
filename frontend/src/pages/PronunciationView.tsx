@@ -440,7 +440,7 @@ const PronunciationView = memo(() => {
   }, [projects])
 
   const getEngineDisplayName = useCallback((engineName: string): string => {
-    const engine = engines.find(e => e.name === engineName)
+    const engine = engines.find(e => e.variantId === engineName)
     return engine?.displayName || engineName
   }, [engines])
 
@@ -463,7 +463,7 @@ const PronunciationView = memo(() => {
     })
     const engineOptions = Array.from(engineCombos).map(key => {
       const [engineName, lang] = key.split('|')
-      const engine = engines.find(e => e.name === engineName)
+      const engine = engines.find(e => e.variantId === engineName)
       return {
         type: 'engine' as const,
         value: `engine:${key}`,
@@ -720,10 +720,10 @@ const PronunciationView = memo(() => {
       filterEngine = key.split('|')[0]
     }
     const selectedEngine = filterEngine || defaultEngine
-    const engineConfig = settings?.tts.engines[selectedEngine]
-    const defaultLanguage = engineConfig?.defaultLanguage
+    // Get default language directly from engine status (Single Source of Truth)
+    const engineInfo = engines.find(e => e.variantId === selectedEngine)
+    const defaultLanguage = engineInfo?.defaultLanguage
 
-    const engineInfo = engines.find(e => e.name === selectedEngine)
     const validLanguage =
       defaultLanguage && engineInfo?.supportedLanguages?.includes(defaultLanguage)
         ? defaultLanguage
@@ -740,7 +740,7 @@ const PronunciationView = memo(() => {
       isActive: true,
     })
     setShowAddDialog(true)
-  }, [contextFilter, defaultEngine, settings, engines])
+  }, [contextFilter, defaultEngine, engines])
 
   const handleOpenEditDialog = useCallback((rule: PronunciationRule) => {
     setFormData({
@@ -1072,7 +1072,7 @@ const PronunciationView = memo(() => {
                 <InputLabel>{t('pronunciation.dialog.form.ttsEngine')}</InputLabel>
                 <Select value={formData.engineName} label={t('pronunciation.dialog.form.ttsEngine')} onChange={(e) => setFormData({ ...formData, engineName: e.target.value })}>
                   {engines.map((engine) => (
-                    <MenuItem key={engine.name} value={engine.name}>
+                    <MenuItem key={engine.variantId} value={engine.variantId}>
                       {engine.displayName}
                     </MenuItem>
                   ))}

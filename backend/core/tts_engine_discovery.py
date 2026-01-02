@@ -42,11 +42,3 @@ class TTSEngineDiscovery(BaseEngineDiscovery):
             engines_base_path: Path to TTS engines directory (e.g., backend/engines/tts/)
         """
         super().__init__(engines_base_path)
-
-    # Future: Override _discover_engine() for TTS-specific validation
-    # def _discover_engine(self, engine_dir: Path, engine_name: str):
-    #     metadata = super()._discover_engine(engine_dir, engine_name)
-    #     if metadata:
-    #         # Add TTS-specific validation here
-    #         pass
-    #     return metadata

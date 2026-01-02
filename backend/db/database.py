@@ -9,66 +9,23 @@ from loguru import logger
 
 from config import DATABASE_PATH, DATA_DIR
 
-# Schema path (relative to project root)
-SCHEMA_PATH = Path(__file__).parent.parent.parent / "database" / "schema.sql"
+# Schema path - check multiple locations for Docker vs development
+# Development: project_root/database/schema.sql (3 levels up from db/database.py)
+# Docker: /app/database/schema.sql (2 levels up, since backend/ contents are in /app/)
+_schema_candidates = [
+    Path(__file__).parent.parent.parent / "database" / "schema.sql",  # Development
+    Path(__file__).parent.parent / "database" / "schema.sql",         # Docker container
+]
+SCHEMA_PATH = next((p for p in _schema_candidates if p.exists()), _schema_candidates[0])
 DB_PATH = Path(DATABASE_PATH)
 DB_DIR = Path(DATA_DIR)
 
 
-def _apply_migrations(conn: sqlite3.Connection) -> None:
-    """Apply database migrations for existing databases"""
+def _database_has_schema(conn: sqlite3.Connection) -> bool:
+    """Check if the database has the required schema tables"""
     cursor = conn.cursor()
-
-    # Check if is_frozen column exists in segments table
-    cursor.execute("PRAGMA table_info(segments)")
-    columns = [col[1] for col in cursor.fetchall()]
-
-    if 'is_frozen' not in columns:
-        logger.info("Applying migration: Adding is_frozen column to segments table")
-        cursor.execute("ALTER TABLE segments ADD COLUMN is_frozen BOOLEAN DEFAULT FALSE")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_segments_frozen ON segments(is_frozen)")
-        conn.commit()
-        logger.info("Migration applied successfully: is_frozen column added")
-
-    # Migration: Remove default_tts_engine and default_tts_model_name from chapters table
-    # SQLite doesn't support DROP COLUMN directly, so we need to recreate the table
-    cursor.execute("PRAGMA table_info(chapters)")
-    chapter_columns = [col[1] for col in cursor.fetchall()]
-
-    if 'default_tts_engine' in chapter_columns or 'default_tts_model_name' in chapter_columns:
-        logger.info("Applying migration: Removing default_tts_engine and default_tts_model_name from chapters table")
-
-        # Create new chapters table without the unused columns
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS chapters_new (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                order_index INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-            )
-        """)
-
-        # Copy data from old table to new table
-        cursor.execute("""
-            INSERT INTO chapters_new (id, project_id, title, order_index, created_at, updated_at)
-            SELECT id, project_id, title, order_index, created_at, updated_at
-            FROM chapters
-        """)
-
-        # Drop old table
-        cursor.execute("DROP TABLE chapters")
-
-        # Rename new table to original name
-        cursor.execute("ALTER TABLE chapters_new RENAME TO chapters")
-
-        # Recreate index
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_chapters_project ON chapters(project_id)")
-
-        conn.commit()
-        logger.info("Migration applied successfully: default_tts_engine and default_tts_model_name columns removed")
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='projects'")
+    return cursor.fetchone() is not None
 
 
 def init_database() -> None:
@@ -76,44 +33,38 @@ def init_database() -> None:
     # Create data directory if it doesn't exist
     DB_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Check if database exists
-    if not DB_PATH.exists():
-        logger.info(f"Creating new database at {DB_PATH}")
+    from config import DB_CONNECTION_TIMEOUT
+    conn = sqlite3.connect(DB_PATH, timeout=DB_CONNECTION_TIMEOUT)
 
-        # Create database and apply schema
-        from config import DB_CONNECTION_TIMEOUT
-        conn = sqlite3.connect(DB_PATH, timeout=DB_CONNECTION_TIMEOUT)
-        try:
-            # Enable WAL mode immediately for new databases
-            conn.execute("PRAGMA journal_mode = WAL")
+    try:
+        # Use DELETE journal mode (not WAL) for Docker volume mount compatibility
+        # This is persisted in the database file, so only needs to be set once
+        conn.execute("PRAGMA journal_mode = DELETE")
+
+        # Check if database has schema (not just if file exists)
+        # This handles the case where the DB file was created but schema wasn't applied
+        if not _database_has_schema(conn):
+            logger.info(f"Initializing database schema at {DB_PATH}")
+            logger.debug(f"Using schema from: {SCHEMA_PATH}")
+
+            if not SCHEMA_PATH.exists():
+                raise FileNotFoundError(f"Schema file not found: {SCHEMA_PATH}")
 
             with open(SCHEMA_PATH, 'r', encoding='utf-8') as f:
                 schema_sql = f.read()
 
             conn.executescript(schema_sql)
             conn.commit()
-            logger.info("Schema applied successfully (WAL mode enabled)")
+            logger.info("Schema applied successfully")
+        else:
+            logger.debug(f"Using existing database at {DB_PATH}")
+            # Note: Schema migrations are handled by migration_runner.py (db/migrations/*.py)
 
-        except Exception as e:
-            logger.error(f"Error applying schema: {e}")
-            raise
-        finally:
-            conn.close()
-    else:
-        logger.debug(f"Using existing database at {DB_PATH}")
-
-        # Apply migrations for existing databases
-        from config import DB_CONNECTION_TIMEOUT
-        conn = sqlite3.connect(DB_PATH, timeout=DB_CONNECTION_TIMEOUT)
-        try:
-            # Enable WAL mode for existing databases
-            conn.execute("PRAGMA journal_mode = WAL")
-            _apply_migrations(conn)
-        except Exception as e:
-            logger.error(f"Error applying migrations: {e}")
-            raise
-        finally:
-            conn.close()
+    except Exception as e:
+        logger.error(f"Error initializing database: {e}")
+        raise
+    finally:
+        conn.close()
 
 
 @contextmanager
@@ -134,7 +85,7 @@ def get_db_connection() -> Generator[sqlite3.Connection, None, None]:
         conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=DB_CONNECTION_TIMEOUT)
         conn.row_factory = sqlite3.Row  # Enable row access by column name
         conn.execute("PRAGMA foreign_keys = ON")  # Enable foreign key constraints
-        conn.execute("PRAGMA journal_mode = WAL")  # Enable WAL mode for better concurrency
+        conn.execute("PRAGMA journal_mode = DELETE")  # Docker volume mount compatibility
         yield conn
     except Exception:
         if conn:
@@ -163,7 +114,7 @@ def get_db() -> Generator[sqlite3.Connection, None, None]:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")  # Enable foreign key constraints
-    conn.execute("PRAGMA journal_mode = WAL")  # Enable WAL mode for better concurrency
+    conn.execute("PRAGMA journal_mode = DELETE")  # Docker volume mount compatibility
     try:
         yield conn
         conn.commit()
@@ -179,5 +130,5 @@ def get_db_connection_simple() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")  # Enable foreign key constraints
-    conn.execute("PRAGMA journal_mode = WAL")  # Enable WAL mode for better concurrency
+    conn.execute("PRAGMA journal_mode = DELETE")  # Docker volume mount compatibility
     return conn

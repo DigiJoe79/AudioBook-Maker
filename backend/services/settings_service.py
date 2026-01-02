@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from loguru import logger
 from db.default_settings import DEFAULT_GLOBAL_SETTINGS
+from core.base_engine_manager import parse_variant_id
 
 
 class SettingsService:
@@ -59,6 +60,10 @@ class SettingsService:
         """
         Get all global settings with engine defaults merged
 
+        Uses the new per-variant settings structure:
+        - variants: Per-variant settings (enabled, defaultModelName, keepRunning)
+        - engineDefaults: Shared settings per base engine (defaultLanguage, parameters)
+
         Returns:
             Dictionary with all settings organized by category
         """
@@ -77,287 +82,10 @@ class SettingsService:
                 logger.warning(f"[SETTINGS] Missing category '{category}' in DB, using default")
                 settings[category] = DEFAULT_GLOBAL_SETTINGS[category]
 
-        # Merge engine parameter defaults from engine.yaml into TTS settings
-        # AND add discovered engines that are not yet in DB
-        if 'tts' in settings:
-            from core.tts_engine_manager import get_tts_engine_manager
-            tts_manager = get_tts_engine_manager()
-
-            # Ensure engines dict exists
-            if 'engines' not in settings['tts']:
-                settings['tts']['engines'] = {}
-
-            #logger.info(f"[SETTINGS] Engines in DB: {list(settings['tts']['engines'].keys())}")
-            #logger.info(f"[SETTINGS] Discovered engines: {list(tts_manager._engine_metadata.keys())}")
-
-            # Add all discovered engines (if not already in DB)
-            for engine_name in tts_manager._engine_metadata.keys():
-                if engine_name not in settings['tts']['engines']:
-                    # Get default language from engine metadata
-                    metadata = tts_manager._engine_metadata[engine_name]
-                    yaml_config = metadata.get('config', {})
-                    supported_languages = yaml_config.get('supported_languages', ['en'])
-
-                    # Filter by allowed languages to ensure default is valid
-                    # Priority: Use first language from allowedLanguages that engine supports
-                    allowed_langs = self.get_setting('languages.allowedLanguages') or ['en']
-                    default_language = None
-                    for lang in allowed_langs:
-                        if lang in supported_languages:
-                            default_language = lang
-                            break
-
-                    # Fallback if no overlap
-                    if not default_language:
-                        default_language = 'en'
-
-                    # Get default model from available models (runtime detection)
-                    # This handles engines like XTTS where models are auto-discovered from filesystem
-                    default_model = None
-                    try:
-                        available_models = tts_manager.get_available_models(engine_name)
-                        if available_models:
-                            # Use engine_model_name (v0.4.1+ standard format from discovery)
-                            default_model = available_models[0].get('engine_model_name')
-                    except Exception as e:
-                        logger.warning(f"[SETTINGS] Could not get models for {engine_name}: {e}")
-                        # Fallback to static models in yaml (for engines that define them)
-                        models = yaml_config.get('models', [])
-                        if models:
-                            first_model = models[0]
-                            if isinstance(first_model, dict):
-                                # YAML uses 'name', discovery converts to 'engine_model_name'
-                                default_model = first_model.get('name')
-                            else:
-                                default_model = first_model
-
-                    # Get enabled state from engine.yaml (default: True if not specified)
-                    default_enabled = yaml_config.get('enabled', True)
-
-                    settings['tts']['engines'][engine_name] = {
-                        'enabled': default_enabled,
-                        'defaultLanguage': default_language,
-                        'defaultModelName': default_model,  # Per-engine default model
-                        'parameters': {},
-                        'keepRunning': False  # Default: allow auto-stop
-                    }
-
-            # Now merge defaults for all engines
-            for engine_name in list(settings['tts']['engines'].keys()):
-                # Skip engines that no longer exist (removed/disabled)
-                if engine_name not in tts_manager._engine_metadata:
-                    # logger.warning(f"[SETTINGS] Engine '{engine_name}' in DB but not discovered, keeping in settings")
-                    continue
-
-                # Get default parameters from engine metadata
-                metadata = tts_manager._engine_metadata[engine_name]
-
-                # Extract defaults from parameter_schema
-                # Note: metadata['config'] contains the entire engine.yaml,
-                # which itself has a 'config' field with 'parameter_schema'
-                yaml_config = metadata.get('config', {})
-                parameter_schema = yaml_config.get('config', {}).get('parameter_schema', {})
-                #logger.info(f"[SETTINGS] Parameter schema for {engine_name}: {parameter_schema}")
-
-                default_parameters = {}
-                for param_name, param_config in parameter_schema.items():
-                    if 'default' in param_config:
-                        default_parameters[param_name] = param_config['default']
-                        #logger.info(f"[SETTINGS] Found default for {param_name}: {param_config['default']}")
-
-                #logger.info(f"[SETTINGS] Extracted default parameters for {engine_name}: {default_parameters}")
-
-                # Merge: DB parameters override defaults
-                db_parameters = settings['tts']['engines'][engine_name].get('parameters', {})
-                #logger.info(f"[SETTINGS] DB parameters for {engine_name}: {db_parameters}")
-
-                merged_parameters = {**default_parameters, **db_parameters}
-                #logger.info(f"[SETTINGS] Merged parameters for {engine_name}: {merged_parameters}")
-
-                # Update settings with merged parameters
-                settings['tts']['engines'][engine_name]['parameters'] = merged_parameters
-
-                # Ensure keepRunning exists (for existing DB entries without it)
-                if 'keepRunning' not in settings['tts']['engines'][engine_name]:
-                    settings['tts']['engines'][engine_name]['keepRunning'] = False
-
-                # Ensure defaultModelName exists (for existing DB entries without it)
-                if not settings['tts']['engines'][engine_name].get('defaultModelName'):
-                    try:
-                        available_models = tts_manager.get_available_models(engine_name)
-                        if available_models:
-                            # Use engine_model_name (v0.4.1+ standard format from discovery)
-                            settings['tts']['engines'][engine_name]['defaultModelName'] = available_models[0].get('engine_model_name')
-                    except Exception as e:
-                        logger.warning(f"[SETTINGS] Could not get models for {engine_name}: {e}")
-                        # Fallback to static models in yaml
-                        models = yaml_config.get('models', [])
-                        if models:
-                            first_model = models[0]
-                            if isinstance(first_model, dict):
-                                # YAML uses 'name', discovery converts to 'engine_model_name'
-                                settings['tts']['engines'][engine_name]['defaultModelName'] = first_model.get('name')
-                            else:
-                                settings['tts']['engines'][engine_name]['defaultModelName'] = first_model
-
-        # Merge STT engine discovery (similar to TTS)
-        if 'stt' in settings:
-            from core.stt_engine_manager import get_stt_engine_manager
-            stt_manager = get_stt_engine_manager()
-
-            # Ensure engines dict exists
-            if 'engines' not in settings['stt']:
-                settings['stt']['engines'] = {}
-
-            # Add all discovered STT engines
-            for engine_name in stt_manager._engine_metadata.keys():
-                if engine_name not in settings['stt']['engines']:
-                    metadata = stt_manager._engine_metadata[engine_name]
-                    yaml_config = metadata.get('config', {})
-
-                    # Get default model from engine metadata
-                    models = yaml_config.get('models', [])
-                    default_model = None
-                    if models:
-                        first_model = models[0]
-                        if isinstance(first_model, dict):
-                            default_model = first_model.get('name') or first_model.get('model_name')
-                        else:
-                            default_model = first_model
-
-                    # Get enabled state from engine.yaml (default: True if not specified)
-                    default_enabled = yaml_config.get('enabled', True)
-
-                    settings['stt']['engines'][engine_name] = {
-                        'enabled': default_enabled,
-                        'defaultModelName': default_model,
-                        'parameters': {},
-                        'keepRunning': False  # Default: allow auto-stop
-                    }
-
-            # Merge parameters for all STT engines (similar to TTS)
-            for engine_name in list(settings['stt']['engines'].keys()):
-                if engine_name not in stt_manager._engine_metadata:
-                    continue
-
-                metadata = stt_manager._engine_metadata[engine_name]
-                yaml_config = metadata.get('config', {})
-                parameter_schema = yaml_config.get('config', {}).get('parameter_schema', {})
-
-                # Extract defaults from parameter_schema
-                default_parameters = {}
-                for param_name, param_config in parameter_schema.items():
-                    if 'default' in param_config:
-                        default_parameters[param_name] = param_config['default']
-
-                # Merge: DB parameters override defaults
-                if 'parameters' not in settings['stt']['engines'][engine_name]:
-                    settings['stt']['engines'][engine_name]['parameters'] = {}
-                db_parameters = settings['stt']['engines'][engine_name].get('parameters', {})
-                merged_parameters = {**default_parameters, **db_parameters}
-                settings['stt']['engines'][engine_name]['parameters'] = merged_parameters
-
-                # Ensure keepRunning exists (for existing DB entries without it)
-                if 'keepRunning' not in settings['stt']['engines'][engine_name]:
-                    settings['stt']['engines'][engine_name]['keepRunning'] = False
-
-                # Ensure defaultModelName exists
-                if not settings['stt']['engines'][engine_name].get('defaultModelName'):
-                    models = yaml_config.get('models', [])
-                    if models:
-                        first_model = models[0]
-                        if isinstance(first_model, dict):
-                            settings['stt']['engines'][engine_name]['defaultModelName'] = first_model.get('name') or first_model.get('model_name')
-                        else:
-                            settings['stt']['engines'][engine_name]['defaultModelName'] = first_model
-
-        # Merge Text engine discovery
-        if 'text' in settings:
-            from core.text_engine_manager import get_text_engine_manager
-            text_manager = get_text_engine_manager()
-
-            # Ensure engines dict exists
-            if 'engines' not in settings['text']:
-                settings['text']['engines'] = {}
-
-            # Add all discovered Text engines
-            for engine_name in text_manager._engine_metadata.keys():
-                if engine_name not in settings['text']['engines']:
-                    metadata = text_manager._engine_metadata[engine_name]
-                    yaml_config = metadata.get('config', {})
-                    # Get enabled state from engine.yaml (default: True if not specified)
-                    default_enabled = yaml_config.get('enabled', True)
-
-                    settings['text']['engines'][engine_name] = {
-                        'enabled': default_enabled,
-                        'keepRunning': False  # Default: allow auto-stop
-                    }
-                else:
-                    # Ensure keepRunning exists for existing DB entries
-                    if 'keepRunning' not in settings['text']['engines'][engine_name]:
-                        settings['text']['engines'][engine_name]['keepRunning'] = False
-
-        # Merge Audio engine discovery
-        if 'audio' not in settings:
-            settings['audio'] = {'engines': {}}
-        if 'engines' not in settings['audio']:
-            settings['audio']['engines'] = {}
-
-        from core.audio_engine_manager import get_audio_engine_manager
-        audio_manager = get_audio_engine_manager()
-
-        for engine_name in audio_manager._engine_metadata.keys():
-            if engine_name not in settings['audio'].get('engines', {}):
-                metadata = audio_manager._engine_metadata[engine_name]
-                yaml_config = metadata.get('config', {})
-
-                # Get default model from engine.yaml
-                default_model = yaml_config.get('default_model')
-                if not default_model:
-                    # Fallback to first model in models list
-                    models = yaml_config.get('models', [])
-                    if models:
-                        first_model = models[0]
-                        if isinstance(first_model, dict):
-                            default_model = first_model.get('name')
-                        else:
-                            default_model = first_model
-
-                # Get enabled state from engine.yaml (default: True if not specified)
-                default_enabled = yaml_config.get('enabled', True)
-
-                settings['audio']['engines'][engine_name] = {
-                    'enabled': default_enabled,
-                    'defaultModelName': default_model,
-                    'parameters': {},
-                    'keepRunning': False  # Default: allow auto-stop
-                }
-
-        # Merge parameters for all Audio engines (similar to TTS)
-        for engine_name in list(settings['audio']['engines'].keys()):
-            if engine_name not in audio_manager._engine_metadata:
-                continue
-
-            metadata = audio_manager._engine_metadata[engine_name]
-            yaml_config = metadata.get('config', {})
-            parameter_schema = yaml_config.get('config', {}).get('parameter_schema', {})
-
-            # Extract defaults from parameter_schema
-            default_parameters = {}
-            for param_name, param_config in parameter_schema.items():
-                if 'default' in param_config:
-                    default_parameters[param_name] = param_config['default']
-
-            # Merge: DB parameters override defaults
-            if 'parameters' not in settings['audio']['engines'][engine_name]:
-                settings['audio']['engines'][engine_name]['parameters'] = {}
-            db_parameters = settings['audio']['engines'][engine_name].get('parameters', {})
-            merged_parameters = {**default_parameters, **db_parameters}
-            settings['audio']['engines'][engine_name]['parameters'] = merged_parameters
-
-            # Ensure keepRunning exists (for existing DB entries without it)
-            if 'keepRunning' not in settings['audio']['engines'][engine_name]:
-                settings['audio']['engines'][engine_name]['keepRunning'] = False
+        # NOTE: Engine-specific settings (variants, engineDefaults) are NO LONGER merged here.
+        # Engine settings are now in the 'engines' table (Single Source of Truth).
+        # The _merge_*_engine_settings() methods are kept for backwards compatibility
+        # but should NOT be called from get_all_settings().
 
         # Ensure quality settings exist (new key added in v0.4.2)
         if 'quality' not in settings:
@@ -368,14 +96,19 @@ class SettingsService:
                 'maxRegenerateAttempts': 5
             })
 
-        # Persist merged settings back to DB so they're available on next read
-        # This ensures discovered engines are saved and don't need to be re-merged
-        for category in ['engines', 'tts', 'stt', 'text', 'audio', 'quality']:
+        # Persist app-wide settings back to DB (NOT engine-specific settings)
+        # Engine settings are in the 'engines' table, not global_settings
+        for category in ['engines', 'quality', 'languages']:
             if category in settings:
                 self._insert_setting(category, settings[category])
         self.db.commit()
 
         return settings
+
+    # NOTE: _merge_tts_engine_settings, _merge_stt_engine_settings, _merge_text_engine_settings,
+    # and _merge_audio_engine_settings have been REMOVED.
+    # Engine settings are now stored in the 'engines' table (Single Source of Truth).
+    # Use EngineRepository for reading/writing engine settings.
 
     def get_setting(self, key: str) -> Optional[Any]:
         """
@@ -478,66 +211,77 @@ class SettingsService:
         except Exception as e:
             logger.warning(f"Could not sync engine settings to managers: {e}")
 
-    def get_engine_parameters(self, engine: str) -> Dict[str, Any]:
+    def get_engine_parameters(self, engine: str, engine_type: str = 'tts') -> Dict[str, Any]:
         """
-        Get TTS engine-specific parameters with defaults
+        Get engine-specific parameters
 
-        Loads parameters from settings.tts.engines[engine].parameters
-        and merges with engine's default parameters as fallback.
+        Reads from the engines table (Single Source of Truth).
+        Falls back to engine.yaml defaults if not in engines table.
 
         Args:
-            engine: Engine identifier
+            engine: Engine identifier (variantId like 'xtts:local' or base name like 'xtts')
+            engine_type: Type of engine ('tts', 'stt', 'audio', 'text')
 
         Returns:
             Dictionary of engine parameters (temperature, speed, etc.)
-            NOTE: Keys are snake_case (backend-consumed, from engine.yaml)
+            NOTE: Keys are snake_case (backend-consumed)
         """
-        from core.tts_engine_manager import get_tts_engine_manager
+        from db.engine_repository import EngineRepository
+        import json
 
-        # Get TTS settings from database
-        tts_settings = self.get_setting('tts')
-        if not tts_settings:
-            logger.warning(f"No TTS settings found in database, using engine defaults for {engine}")
-            # Fallback to engine defaults from metadata
-            tts_manager = get_tts_engine_manager()
-            if engine in tts_manager._engine_metadata:
-                metadata = tts_manager._engine_metadata[engine]
-                return metadata.get('config', {}).get('default_parameters', {})
-            return {}
+        engine_repo = EngineRepository(self.db)
 
-        # Navigate to engine-specific parameters
-        engines = self.get_setting('tts.engines') or {}
-        engine_config = engines.get(engine, {})
-        db_parameters = engine_config.get('parameters', {})
+        # Normalize to variant_id
+        variant_id = engine
 
-        # Get engine's default parameters from metadata
-        tts_manager = get_tts_engine_manager()
+        # Primary: Read from engines table (SSOT)
+        db_engine = engine_repo.get_by_id(variant_id)
+        db_parameters = {}
+        if db_engine and db_engine.get('parameters'):
+            params = db_engine['parameters']
+            if isinstance(params, str):
+                db_parameters = json.loads(params)
+            else:
+                db_parameters = params
+
+        # Fallback: Get defaults from engine.yaml metadata
+        manager = self._get_engine_manager(engine_type)
         default_parameters = {}
 
-        if engine in tts_manager._engine_metadata:
-            metadata = tts_manager._engine_metadata[engine]
+        if manager:
+            # Get metadata from DB (Single Source of Truth)
+            metadata = manager.get_engine_metadata(engine)
 
-            # Try to get from default_parameters (legacy format)
-            # Note: metadata['config'] contains the entire engine.yaml
-            yaml_config = metadata.get('config', {})
-            default_parameters = yaml_config.get('config', {}).get('default_parameters', {})
+            if metadata:
+                yaml_config = metadata.get('config') or {}
 
-            # If not found, extract defaults from parameter_schema
-            if not default_parameters:
-                parameter_schema = yaml_config.get('config', {}).get('parameter_schema', {})
-                for param_name, param_config in parameter_schema.items():
-                    if 'default' in param_config:
+                # Extract defaults from parameters schema (new format: config.parameters)
+                parameters_schema = yaml_config.get('parameters') or {}
+                for param_name, param_config in parameters_schema.items():
+                    if isinstance(param_config, dict) and 'default' in param_config:
                         default_parameters[param_name] = param_config['default']
-
-            logger.debug(f"Loaded default parameters for engine {engine}: {default_parameters}")
-        else:
-            logger.warning(f"Engine {engine} not found in metadata, using DB parameters only")
 
         # Merge: DB parameters override defaults
         final_parameters = {**default_parameters, **db_parameters}
 
         logger.debug(f"Loaded parameters for engine {engine}: {final_parameters}")
         return final_parameters
+
+    def _get_engine_manager(self, engine_type: str):
+        """Get the appropriate engine manager for the given type"""
+        if engine_type == 'tts':
+            from core.tts_engine_manager import get_tts_engine_manager
+            return get_tts_engine_manager()
+        elif engine_type == 'stt':
+            from core.stt_engine_manager import get_stt_engine_manager
+            return get_stt_engine_manager()
+        elif engine_type == 'text':
+            from core.text_engine_manager import get_text_engine_manager
+            return get_text_engine_manager()
+        elif engine_type == 'audio':
+            from core.audio_engine_manager import get_audio_engine_manager
+            return get_audio_engine_manager()
+        return None
 
     def update_nested_setting(self, key: str, value: Any) -> Dict[str, Any]:
         """
@@ -617,14 +361,30 @@ class SettingsService:
             from core.tts_engine_manager import get_tts_engine_manager
             tts_manager = get_tts_engine_manager()
 
-            # Get engine metadata (contains config from engine.yaml)
-            if engine in tts_manager._engine_metadata:
-                metadata = tts_manager._engine_metadata[engine]
-                # Check if constraints are defined in engine.yaml
-                constraints = metadata.get('constraints', {})
+            constraints = None
+
+            # Check DB first (Single Source of Truth)
+            metadata = tts_manager.get_engine_metadata(engine)
+            if metadata:
+                constraints = metadata.get('constraints') or {}
+            else:
+                # Check database for other variants
+                try:
+                    from db.engine_repository import EngineRepository
+                    engine_repo = EngineRepository(self.db)
+                    db_engines = engine_repo.get_by_base_name(engine)
+                    if db_engines:
+                        # Use first found (constraints are same for all variants)
+                        # Docker engines don't have constraints yet, use default
+                        constraints = {}
+                        logger.debug(f"Found Docker engine '{engine}' in DB")
+                except Exception as db_err:
+                    logger.debug(f"DB lookup for engine '{engine}' failed: {db_err}")
+
+            if constraints is not None:
                 engine_max = constraints.get('max_text_length', 500)  # Default to 500
             else:
-                logger.warning(f"Engine '{engine}' not found in metadata, using default limit")
+                logger.warning(f"Engine '{engine}' not found in metadata or DB, using default limit")
                 engine_max = 500  # Fallback to generous limit
         except Exception as e:
             logger.warning(f"Could not get engine max length: {e}")
@@ -638,74 +398,178 @@ class SettingsService:
 
     def get_enabled_engines(self, engine_type: str = 'tts') -> list[str]:
         """
-        Get list of enabled engine names for given type
+        Get list of enabled engine variant IDs for given type
 
         Args:
             engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
 
         Returns:
-            List of enabled engine names
+            List of enabled variant IDs (e.g., ['xtts:local', 'chatterbox:local'])
         """
-        settings_key = engine_type
-        settings = self.get_setting(settings_key)
+        settings = self.get_setting(engine_type)
 
         if not settings:
             return []
 
-        engines = self.get_setting(f'{settings_key}.engines') or {}
+        variants = settings.get('variants', {})
         enabled = []
 
-        for engine_name, engine_config in engines.items():
+        for variant_id, variant_config in variants.items():
             # Default to True if 'enabled' key missing (engines are enabled by default)
-            if engine_config.get('enabled', True):
-                enabled.append(engine_name)
+            if variant_config.get('enabled', True):
+                enabled.append(variant_id)
 
         return enabled
 
     def is_engine_enabled(self, engine_name: str, engine_type: str = 'tts') -> bool:
         """
-        Check if specific engine is enabled
+        Check if specific engine variant is enabled
 
-        Engines are enabled by default. Returns True unless explicitly disabled
-        in settings ({engine_type}.engines.{engine_name}.enabled = false).
+        Reads from the engines table (Single Source of Truth).
+        Engines are enabled by default if not found in DB.
 
         Args:
-            engine_name: Engine identifier
+            engine_name: Variant ID (e.g., 'xtts:local') or base name for backwards compatibility
             engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
 
         Returns:
-            True if enabled (or no settings exist), False only if explicitly disabled
+            True if enabled (or not found in DB), False if explicitly disabled
         """
-        settings_key = engine_type
-        settings = self.get_setting(settings_key)
+        from db.engine_repository import EngineRepository
 
-        if not settings:
-            # No settings for this engine type - default to enabled
-            # (engines are enabled by default per docstring)
-            return True
+        engine_repo = EngineRepository(self.db)
 
-        engines = self.get_setting(f'{settings_key}.engines') or {}
-        engine_config = engines.get(engine_name, {})
+        # Try direct lookup first (for variant IDs like 'xtts:local')
+        engine = engine_repo.get_by_id(engine_name)
+        if engine:
+            return engine.get('enabled', True)
 
-        # Default to True if 'enabled' key missing (engines are enabled by default)
-        return engine_config.get('enabled', True)
+        # For backwards compatibility: if engine_name is a base name,
+        # try with ':local' suffix
+        base_name, _ = parse_variant_id(engine_name)
+        variant_id = f"{base_name}:local"
+        engine = engine_repo.get_by_id(variant_id)
+        if engine:
+            return engine.get('enabled', True)
+
+        # Default to True if not found (engines are enabled by default)
+        return True
+
+    def is_variant_enabled(self, variant_id: str, engine_type: str = 'tts') -> bool:
+        """
+        Check if specific engine variant is enabled
+
+        Reads from the engines table (Single Source of Truth).
+
+        Args:
+            variant_id: Variant ID (e.g., 'xtts:local', 'xtts:docker:local')
+            engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
+
+        Returns:
+            True if enabled, False if disabled
+        """
+        # Delegate to is_engine_enabled which reads from engines table
+        return self.is_engine_enabled(variant_id, engine_type)
 
     def set_engine_enabled(self, engine_name: str, enabled: bool, engine_type: str = 'tts') -> bool:
         """
-        Enable or disable an engine
+        Enable or disable an engine variant
 
-        Validates that default engine cannot be disabled.
+        Writes to the engines table (Single Source of Truth).
+
+        Behavior:
+        - Disabling a default engine: clears the default (no default for this type)
+        - Enabling when no default exists: sets this engine as default
 
         Args:
-            engine_name: Engine identifier
+            engine_name: Variant ID (e.g., 'xtts:local') or base name
             enabled: True to enable, False to disable
             engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
 
         Returns:
-            True if successful, False if validation failed
+            True if successful
 
         Raises:
-            ValueError: If trying to disable default TTS engine
+            ValueError: If engine not found
+        """
+        from db.engine_repository import EngineRepository
+
+        engine_repo = EngineRepository(self.db)
+
+        # Check if engine exists
+        engine = engine_repo.get_by_id(engine_name)
+        if not engine:
+            raise ValueError(f"Engine '{engine_name}' not found in database")
+
+        was_default = engine.get('is_default', False)
+
+        if not enabled:
+            # DISABLING: If this is the default, clear the default
+            if was_default:
+                engine_repo.clear_default(engine_type)
+                logger.info(f"Cleared default {engine_type} engine (was '{engine_name}')")
+
+        # Update enabled flag in engines table
+        engine_repo.set_enabled(engine_name, enabled)
+
+        if enabled:
+            # ENABLING: If no default exists, set this as default
+            current_default = engine_repo.get_default(engine_type)
+            if not current_default:
+                engine_repo.set_default(engine_name)
+                logger.info(f"Auto-set '{engine_name}' as default {engine_type} engine (first enabled)")
+
+        logger.info(f"Variant '{engine_name}' ({engine_type}) {'enabled' if enabled else 'disabled'}")
+        return True
+
+    def set_variant_enabled(self, variant_id: str, enabled: bool, engine_type: str = 'tts') -> bool:
+        """
+        Enable or disable an engine variant
+
+        Args:
+            variant_id: Variant ID (e.g., 'xtts:local', 'xtts:docker:local')
+            enabled: True to enable, False to disable
+            engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
+
+        Returns:
+            True if successful
+
+        Raises:
+            ValueError: If trying to disable default engine
+        """
+        return self.set_engine_enabled(variant_id, enabled, engine_type)
+
+    def get_engine_runner(self, engine_name: str, engine_type: str = 'tts') -> str:
+        """
+        Get the runner assignment for a specific engine.
+
+        Args:
+            engine_name: Engine identifier
+            engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
+
+        Returns:
+            Runner ID (e.g., 'local', 'docker:local'), defaults to 'local'
+        """
+        settings = self.get_setting(engine_type)
+        if not settings:
+            return 'local'
+
+        engines = settings.get('engines', {})
+        engine_config = engines.get(engine_name, {})
+
+        return engine_config.get('runner', 'local')
+
+    def set_engine_runner(self, engine_name: str, runner_id: str, engine_type: str = 'tts') -> bool:
+        """
+        Set the runner for a specific engine.
+
+        Args:
+            engine_name: Engine identifier
+            runner_id: Runner ID (e.g., 'local', 'docker:local')
+            engine_type: Type of engine ('tts', 'text', 'stt', 'audio')
+
+        Returns:
+            True if successful
         """
         settings_key = engine_type
         settings = self.get_setting(settings_key)
@@ -714,93 +578,90 @@ class SettingsService:
             logger.error(f"Settings for '{settings_key}' not found")
             return False
 
-        # Get or create engines dict - use settings['engines'] directly to avoid reference issues
+        # Get or create engines dict
         if 'engines' not in settings:
             settings['engines'] = {}
         engines = settings['engines']
 
         # Create engine entry if it doesn't exist
         if engine_name not in engines:
-            logger.info(f"Creating engine entry for '{engine_name}' in {settings_key} settings")
-            engines[engine_name] = {'enabled': True}  # Default to enabled
+            engines[engine_name] = {'enabled': True}
 
-        # Validation: Cannot disable default TTS engine
-        if engine_type == 'tts' and not enabled:
-            default_engine = settings.get('defaultTtsEngine')
-            if engine_name == default_engine:
-                raise ValueError(f"Cannot disable default TTS engine '{engine_name}'. Please select a different default engine first.")
-
-        # Update enabled flag
-        engines[engine_name]['enabled'] = enabled
+        # Update runner
+        engines[engine_name]['runner'] = runner_id
 
         # Save settings
         self.update_setting(settings_key, settings)
 
-        logger.info(f"Engine '{engine_name}' ({engine_type}) {'enabled' if enabled else 'disabled'}")
+        logger.info(f"Engine '{engine_name}' ({engine_type}) runner set to '{runner_id}'")
         return True
 
     def get_default_engine(self, engine_type: str) -> str:
         """
         Get the default engine name for a given type
 
+        Reads from engines table (Single Source of Truth).
+
         Args:
             engine_type: Type of engine ('tts', 'stt', 'text', 'audio')
 
         Returns:
-            Default engine name or empty string if not found
+            Default engine variant_id or empty string if not found
         """
-        settings = self.get_setting(engine_type)
-        if not settings:
-            return ''
+        from db.engine_repository import EngineRepository
 
-        # Map engine type to settings key
-        key_map = {
-            'tts': 'defaultTtsEngine',
-            'stt': 'defaultSttEngine',
-            'text': 'defaultTextEngine',
-            'audio': 'defaultAudioEngine'
-        }
+        engine_repo = EngineRepository(self.db)
 
-        key = key_map.get(engine_type)
-        if not key:
-            logger.warning(f"Unknown engine type: {engine_type}")
-            return ''
+        # Get default engine from engines table
+        default_engine = engine_repo.get_default(engine_type)
+        if default_engine:
+            return default_engine['variant_id']
 
-        return settings.get(key, '')
+        return ''
 
     def get_default_model_for_engine(self, engine_name: str, engine_type: str) -> str:
         """
-        Get the default model for a specific engine
+        Get the default model for a specific engine variant
 
-        Uses get_all_settings() to ensure engine defaults are merged from
-        engine.yaml files (including runtime-discovered models like XTTS).
+        Reads from the engines table (Single Source of Truth).
 
         Args:
-            engine_name: Engine identifier
-            engine_type: Type of engine ('tts', 'stt')
+            engine_name: Variant ID (e.g., 'xtts:local') or base name
+            engine_type: Type of engine ('tts', 'stt', 'audio')
 
         Returns:
             Default model name or empty string if not found
         """
-        # Use get_all_settings() to get merged settings with discovered engines
-        all_settings = self.get_all_settings()
+        from db.engine_model_repository import EngineModelRepository
 
-        settings = all_settings.get(engine_type, {})
-        if not settings:
-            return ''
+        model_repo = EngineModelRepository(self.db)
 
-        engines = self.get_setting(f'{engine_type}.engines') or {}
-        engine_config = engines.get(engine_name, {})
+        # Get default model from engine_models table (SSOT for models)
+        default_model = model_repo.get_default_model(engine_name)
+        return default_model or ''
 
-        return engine_config.get('defaultModelName', '')
+    def get_variant_model(self, variant_id: str, engine_type: str) -> str:
+        """
+        Get the default model for a specific engine variant
+
+        Args:
+            variant_id: Variant ID (e.g., 'xtts:local', 'xtts:docker:local')
+            engine_type: Type of engine ('tts', 'stt', 'audio')
+
+        Returns:
+            Default model name or empty string if not found
+        """
+        return self.get_default_model_for_engine(variant_id, engine_type)
 
     def set_default_engine(self, engine_type: str, engine_name: str) -> bool:
         """
         Set the default engine for a given type
 
+        Uses engines table (Single Source of Truth) via EngineRepository.
+
         Args:
             engine_type: Type of engine ('tts', 'stt', 'text', 'audio')
-            engine_name: Engine identifier to set as default (empty string to clear default)
+            engine_name: Variant ID to set as default (empty string to clear default)
 
         Returns:
             True if successful
@@ -808,118 +669,180 @@ class SettingsService:
         Raises:
             ValueError: If engine is not enabled or not found
         """
-        settings = self.get_setting(engine_type)
-        if not settings:
-            settings = {'engines': {}}
+        from db.engine_repository import EngineRepository
 
-        # Ensure engines dict exists
-        if 'engines' not in settings:
-            settings['engines'] = {}
-
-        engines = settings['engines']
+        engine_repo = EngineRepository(self.db)
 
         # Allow clearing the default engine (empty string or None)
         if not engine_name:
             # For TTS, we don't allow clearing the default (must always have one)
             if engine_type == 'tts':
                 raise ValueError("TTS must have a default engine configured")
+
             # For other types (STT, Audio, Text), allow clearing the default
-            # Also disable all engines of this type since none is active
-            for other_engine_name, other_config in engines.items():
-                other_config['enabled'] = False
-            logger.info(f"Clearing default {engine_type} engine and disabling all engines")
+            # Clear default in engines table (engines remain enabled for selection)
+            engine_repo.clear_default(engine_type)
+            logger.info(f"Cleared default {engine_type} engine")
         else:
-            # If engine not in settings, check if it exists in the engine manager and add it
-            if engine_name not in engines:
-                # Verify engine exists in the actual engine manager
-                engine_exists = False
-                try:
-                    if engine_type == 'tts':
-                        from core.tts_engine_manager import get_tts_engine_manager
-                        engine_exists = engine_name in get_tts_engine_manager()._engine_metadata
-                    elif engine_type == 'stt':
-                        from core.stt_engine_manager import get_stt_engine_manager
-                        engine_exists = engine_name in get_stt_engine_manager()._engine_metadata
-                    elif engine_type == 'text':
-                        from core.text_engine_manager import get_text_engine_manager
-                        engine_exists = engine_name in get_text_engine_manager()._engine_metadata
-                    elif engine_type == 'audio':
-                        from core.audio_engine_manager import get_audio_engine_manager
-                        engine_exists = engine_name in get_audio_engine_manager()._engine_metadata
-                except Exception as e:
-                    logger.warning(f"Could not verify engine existence: {e}")
+            # Check if engine exists in DB
+            engine = engine_repo.get_by_id(engine_name)
+            if not engine:
+                # Engine not in database - raise error
+                raise ValueError(f"Variant '{engine_name}' not found in {engine_type} engines")
 
-                if not engine_exists:
-                    raise ValueError(f"Engine '{engine_name}' not found in {engine_type} engines")
-
-                # Add the engine to settings with default enabled=True
-                logger.info(f"Adding engine '{engine_name}' to {engine_type} settings")
-                engines[engine_name] = {'enabled': True}
-
-            # For single-engine types (STT, Audio, Text), selecting an engine
-            # automatically enables it and disables all others - only ONE can be active
+            # For single-engine types (STT, Audio, Text), ensure selected engine is enabled
+            # Other engines remain enabled (selectable) but won't be default
+            # The set_default() call below handles the is_default flag
             if engine_type in ('stt', 'audio', 'text'):
-                for other_engine_name, other_config in engines.items():
-                    if other_engine_name == engine_name:
-                        # Enable the selected engine
-                        other_config['enabled'] = True
-                    else:
-                        # Disable all other engines of this type
-                        other_config['enabled'] = False
-                logger.info(f"Single-engine mode: enabled '{engine_name}', disabled others for {engine_type}")
+                if not engine.get('enabled', True):
+                    engine_repo.set_enabled(engine_name, True)
+                    logger.info(f"Single-engine mode: enabled '{engine_name}' for {engine_type}")
             else:
-                # For TTS (multi-engine), check if engine is enabled before setting as default
-                engine_config = engines.get(engine_name, {})
-                if not engine_config.get('enabled', True):
-                    raise ValueError(f"Cannot set disabled engine '{engine_name}' as default")
+                # For TTS (multi-engine), check if variant is enabled before setting as default
+                if engine and not engine.get('enabled', True):
+                    raise ValueError(f"Cannot set disabled variant '{engine_name}' as default")
 
-        # Map engine type to settings key
-        key_map = {
-            'tts': 'defaultTtsEngine',
-            'stt': 'defaultSttEngine',
-            'text': 'defaultTextEngine',
-            'audio': 'defaultAudioEngine'
-        }
-
-        key = key_map.get(engine_type)
-        if not key:
-            raise ValueError(f"Unknown engine type: {engine_type}")
-
-        # Update default engine
-        settings[key] = engine_name
-        self.update_setting(engine_type, settings)
+            # Set as default in engines table (Single Source of Truth)
+            if engine:
+                engine_repo.set_default(engine_name)
 
         logger.info(f"Set default {engine_type} engine to '{engine_name}'")
         return True
 
     def set_default_model_for_engine(self, engine_name: str, model_name: str, engine_type: str) -> bool:
         """
-        Set the default model for a specific engine
+        Set the default model for a specific engine variant
+
+        Writes to the engine_models table (Single Source of Truth for models).
 
         Args:
-            engine_name: Engine identifier
+            engine_name: Variant ID (e.g., 'xtts:local') or base name
             model_name: Model name to set as default
-            engine_type: Type of engine ('tts', 'stt')
+            engine_type: Type of engine ('tts', 'stt', 'audio')
 
         Returns:
             True if successful
 
         Raises:
-            ValueError: If engine not found
+            ValueError: If engine not found or model doesn't exist
         """
-        settings = self.get_setting(engine_type)
-        if not settings:
-            raise ValueError(f"Settings for '{engine_type}' not found")
+        from db.engine_model_repository import EngineModelRepository
+        from db.engine_repository import EngineRepository
 
-        engines = self.get_setting(f'{engine_type}.engines') or {}
-        if engine_name not in engines:
-            raise ValueError(f"Engine '{engine_name}' not found in {engine_type} settings")
+        engine_repo = EngineRepository(self.db)
+        model_repo = EngineModelRepository(self.db)
 
-        # Update default model
-        engines[engine_name]['defaultModelName'] = model_name
-        self.update_setting(engine_type, settings)
+        # Check if engine exists
+        engine = engine_repo.get_by_id(engine_name)
+        if not engine:
+            raise ValueError(f"Engine '{engine_name}' not found in database")
 
-        logger.info(f"Set default model for {engine_type} engine '{engine_name}' to '{model_name}'")
+        # Set default model in engine_models table (SSOT for models)
+        if not model_repo.set_default_model(engine_name, model_name):
+            raise ValueError(f"Model '{model_name}' not found for engine '{engine_name}'")
+
+        logger.info(f"Set default model for {engine_type} variant '{engine_name}' to '{model_name}'")
+        return True
+
+    def set_variant_model(self, variant_id: str, model_name: str, engine_type: str) -> bool:
+        """
+        Set the default model for a specific engine variant
+
+        Args:
+            variant_id: Variant ID (e.g., 'xtts:local', 'xtts:docker:local')
+            model_name: Model name to set as default
+            engine_type: Type of engine ('tts', 'stt', 'audio')
+
+        Returns:
+            True if successful
+        """
+        return self.set_default_model_for_engine(variant_id, model_name, engine_type)
+
+    def get_engine_language(self, engine_name: str, engine_type: str = 'tts') -> str:
+        """
+        Get the default language for an engine variant
+
+        Reads from the engines table (Single Source of Truth).
+
+        Args:
+            engine_name: Variant ID (e.g., 'xtts:local') or base name
+            engine_type: Type of engine (currently only 'tts' uses language)
+
+        Returns:
+            Default language code or 'en' if not found
+        """
+        from db.engine_repository import EngineRepository
+
+        engine_repo = EngineRepository(self.db)
+
+        engine = engine_repo.get_by_id(engine_name)
+        if engine and engine.get('default_language'):
+            return engine['default_language']
+
+        return 'en'
+
+    def set_engine_language(self, engine_name: str, language: str, engine_type: str = 'tts') -> bool:
+        """
+        Set the default language for an engine variant
+
+        Writes to the engines table (Single Source of Truth).
+
+        Args:
+            engine_name: Variant ID (e.g., 'xtts:local') or base name
+            language: Language code (e.g., 'de', 'en')
+            engine_type: Type of engine (currently only 'tts' uses language)
+
+        Returns:
+            True if successful
+
+        Raises:
+            ValueError: If engine not found in database
+        """
+        from db.engine_repository import EngineRepository
+
+        engine_repo = EngineRepository(self.db)
+
+        # Check if engine exists
+        engine = engine_repo.get_by_id(engine_name)
+        if not engine:
+            raise ValueError(f"Engine '{engine_name}' not found in database")
+
+        # Update language in engines table
+        engine_repo.update_settings(engine_name, default_language=language)
+
+        logger.info(f"Set default language for {engine_type} engine '{engine_name}' to '{language}'")
+        return True
+
+    def set_engine_parameters(self, engine_name: str, parameters: Dict[str, Any], engine_type: str = 'tts') -> bool:
+        """
+        Set parameters for an engine variant
+
+        Writes to the engines table (Single Source of Truth).
+
+        Args:
+            engine_name: Variant ID (e.g., 'xtts:local') or base name
+            parameters: Parameters dict to set
+            engine_type: Type of engine
+
+        Returns:
+            True if successful
+
+        Raises:
+            ValueError: If engine not found in database
+        """
+        from db.engine_repository import EngineRepository
+
+        engine_repo = EngineRepository(self.db)
+
+        # Check if engine exists
+        engine = engine_repo.get_by_id(engine_name)
+        if not engine:
+            raise ValueError(f"Engine '{engine_name}' not found in database")
+
+        # Update parameters in engines table
+        engine_repo.update_settings(engine_name, parameters=parameters)
+
+        logger.info(f"Set parameters for {engine_type} engine '{engine_name}'")
         return True
 
     def get_inactivity_timeout(self) -> int:
@@ -1002,82 +925,86 @@ class SettingsService:
 
     def get_engine_keep_running(self, engine_name: str, engine_type: str) -> bool:
         """
-        Check if engine should be kept running (exempt from auto-stop)
+        Check if engine variant should be kept running (exempt from auto-stop)
+
+        Reads from the engines table (Single Source of Truth).
 
         Args:
-            engine_name: Engine identifier
+            engine_name: Variant ID (e.g., 'xtts:local') or base name
             engine_type: Type of engine ('tts', 'stt', 'text', 'audio')
 
         Returns:
             True if engine should stay running, False otherwise
         """
-        settings = self.get_setting(engine_type)
-        if not settings:
-            return False
+        from db.engine_repository import EngineRepository
 
-        engines = self.get_setting(f'{engine_type}.engines') or {}
-        engine_config = engines.get(engine_name, {})
+        engine_repo = EngineRepository(self.db)
 
-        # Default to False if 'keepRunning' key missing
-        return engine_config.get('keepRunning', False)
+        engine = engine_repo.get_by_id(engine_name)
+        if engine:
+            return engine.get('keep_running', False)
+
+        return False
+
+    def get_variant_keep_running(self, variant_id: str, engine_type: str) -> bool:
+        """
+        Check if engine variant should be kept running
+
+        Args:
+            variant_id: Variant ID (e.g., 'xtts:local', 'xtts:docker:local')
+            engine_type: Type of engine ('tts', 'stt', 'text', 'audio')
+
+        Returns:
+            True if variant should stay running, False otherwise
+        """
+        return self.get_engine_keep_running(variant_id, engine_type)
 
     def set_engine_keep_running(self, engine_name: str, keep_running: bool, engine_type: str) -> None:
         """
-        Set keepRunning flag for a specific engine
+        Set keepRunning flag for a specific engine variant
 
+        Writes to the engines table (Single Source of Truth).
         Notifies the appropriate engine manager to sync the runtime state.
 
         Args:
-            engine_name: Engine identifier
+            engine_name: Variant ID (e.g., 'xtts:local') or base name
             keep_running: True to keep engine running, False to allow auto-stop
             engine_type: Type of engine ('tts', 'stt', 'audio', 'text')
 
         Raises:
-            ValueError: If engine not found
+            ValueError: If engine not found in database
         """
-        settings = self.get_setting(engine_type)
-        if not settings:
-            raise ValueError(f"Settings for '{engine_type}' not found")
+        from db.engine_repository import EngineRepository
 
-        # Get or create engines dict
-        engines = self.get_setting(f'{engine_type}.engines') or {}
-        if 'engines' not in settings:
-            settings['engines'] = engines
+        engine_repo = EngineRepository(self.db)
 
-        # Create engine entry if it doesn't exist
-        if engine_name not in engines:
-            logger.info(f"Creating engine entry for '{engine_name}' in {engine_type} settings")
-            engines[engine_name] = {'enabled': True, 'keepRunning': False}
+        # Check if engine exists
+        engine = engine_repo.get_by_id(engine_name)
+        if not engine:
+            raise ValueError(f"Engine '{engine_name}' not found in database")
 
-        # Update keepRunning flag
-        engines[engine_name]['keepRunning'] = keep_running
-
-        # Save settings
-        self.update_setting(engine_type, settings)
+        # Update keep_running in engines table
+        engine_repo.set_keep_running(engine_name, keep_running)
 
         # Notify engine manager to sync runtime state
-        try:
-            if engine_type == 'tts':
-                from core.tts_engine_manager import get_tts_engine_manager
-                manager = get_tts_engine_manager()
-            elif engine_type == 'stt':
-                from core.stt_engine_manager import get_stt_engine_manager
-                manager = get_stt_engine_manager()
-            elif engine_type == 'audio':
-                from core.audio_engine_manager import get_audio_engine_manager
-                manager = get_audio_engine_manager()
-            elif engine_type == 'text':
-                from core.text_engine_manager import get_text_engine_manager
-                manager = get_text_engine_manager()
-            else:
-                raise ValueError(f"Unknown engine type: {engine_type}")
-
-            # Sync the keepRunning state in the manager
-            # Manager will update its internal _keep_running dict
-            if hasattr(manager, 'sync_keep_running_state'):
+        manager = self._get_engine_manager(engine_type)
+        if manager and hasattr(manager, 'sync_keep_running_state'):
+            try:
+                # Pass full variant_id - manager tracks exemptions by variant_id
                 manager.sync_keep_running_state(engine_name, keep_running)
                 logger.info(f"Synced keepRunning state for '{engine_name}' ({engine_type}) to {keep_running}")
-        except Exception as e:
-            logger.warning(f"Could not sync keepRunning state to manager: {e}")
+            except Exception as e:
+                logger.warning(f"Could not sync keepRunning state to manager: {e}")
 
-        logger.info(f"Engine '{engine_name}' ({engine_type}) keepRunning set to {keep_running}")
+        logger.info(f"Variant '{engine_name}' ({engine_type}) keepRunning set to {keep_running}")
+
+    def set_variant_keep_running(self, variant_id: str, keep_running: bool, engine_type: str) -> None:
+        """
+        Set keepRunning flag for a specific engine variant
+
+        Args:
+            variant_id: Variant ID (e.g., 'xtts:local', 'xtts:docker:local')
+            keep_running: True to keep variant running, False to allow auto-stop
+            engine_type: Type of engine ('tts', 'stt', 'audio', 'text')
+        """
+        self.set_engine_keep_running(variant_id, keep_running, engine_type)

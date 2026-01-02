@@ -13,7 +13,7 @@
 import React from 'react'
 import { Box, Typography, type SxProps, type Theme } from '@mui/material'
 
-export interface EmptyStateProps {
+interface EmptyStateProps {
   /** Icon to display (SVG or MUI Icon) */
   icon?: React.ReactNode
 

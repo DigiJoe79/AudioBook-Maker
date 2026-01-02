@@ -2,4 +2,4 @@
 Version information for Audiobook Maker Backend
 """
 
-__version__ = "1.0.2"
+__version__ = "1.1.0"

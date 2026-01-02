@@ -99,6 +99,42 @@ CREATE TABLE IF NOT EXISTS export_jobs (
     FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
 );
 
+-- Quality Jobs Table (for audio quality analysis)
+CREATE TABLE IF NOT EXISTS quality_jobs (
+    id TEXT PRIMARY KEY,
+    job_type TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+
+    -- Engine configuration
+    stt_engine TEXT,
+    stt_model_name TEXT,
+    audio_engine TEXT,
+
+    -- Context
+    chapter_id TEXT,
+    segment_id TEXT,
+    language TEXT DEFAULT 'en',
+
+    -- Segment tracking (like TTS jobs)
+    segment_ids TEXT,
+
+    -- Progress
+    total_segments INTEGER DEFAULT 0,
+    processed_segments INTEGER DEFAULT 0,
+    failed_segments INTEGER DEFAULT 0,
+    current_segment_id TEXT,
+
+    -- Metadata
+    trigger_source TEXT DEFAULT 'manual',
+    error_message TEXT,
+
+    -- Timestamps
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP
+);
+
 -- Pronunciation Rules Table (language-specific text transformations)
 CREATE TABLE IF NOT EXISTS pronunciation_rules (
     id TEXT PRIMARY KEY,
@@ -174,7 +210,101 @@ CREATE TABLE IF NOT EXISTS speaker_samples (
     FOREIGN KEY (speaker_id) REFERENCES speakers(id) ON DELETE CASCADE
 );
 
+-- ============================================================================
+-- Engine System Tables (v1.1.0+)
+-- ============================================================================
+
+-- Engine Hosts Table (Docker/Remote hosts)
+CREATE TABLE IF NOT EXISTS engine_hosts (
+    host_id TEXT PRIMARY KEY,
+    host_type TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    ssh_url TEXT,
+    is_available BOOLEAN DEFAULT TRUE,
+    has_gpu BOOLEAN DEFAULT NULL,
+    last_checked_at TEXT,
+    docker_volumes TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Default engine host (subprocess)
+-- Note: docker:local is added by migration with OS-specific URL
+INSERT OR IGNORE INTO engine_hosts (host_id, host_type, display_name)
+VALUES ('local', 'subprocess', 'Local Machine');
+
+-- Docker Image Catalog (available images from online catalog)
+CREATE TABLE IF NOT EXISTS docker_image_catalog (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    base_engine_name TEXT NOT NULL,
+    image_name TEXT NOT NULL,
+    engine_type TEXT NOT NULL,
+    display_name TEXT,
+    description TEXT DEFAULT '',
+    requires_gpu BOOLEAN DEFAULT FALSE,
+    default_tag TEXT DEFAULT 'latest',
+    tags TEXT,
+    supported_languages TEXT,
+    constraints TEXT DEFAULT '{}',
+    capabilities TEXT DEFAULT '{}',
+    parameters TEXT DEFAULT '{}',
+    models TEXT DEFAULT '[]',
+    default_model TEXT DEFAULT '',
+    catalog_version TEXT DEFAULT '',
+    source TEXT DEFAULT 'builtin',
+    repo_url TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(base_engine_name, image_name)
+);
+
+-- Engines Table (Single Source of Truth for all engine variants)
+CREATE TABLE IF NOT EXISTS engines (
+    variant_id TEXT PRIMARY KEY,
+    base_engine_name TEXT NOT NULL,
+    engine_type TEXT NOT NULL,
+    host_id TEXT NOT NULL,
+    source TEXT DEFAULT 'local',
+    is_installed BOOLEAN DEFAULT FALSE,
+    installed_at TEXT,
+    display_name TEXT,
+    is_default BOOLEAN DEFAULT FALSE,
+    enabled BOOLEAN DEFAULT FALSE,
+    keep_running BOOLEAN DEFAULT FALSE,
+    default_language TEXT,
+    parameters TEXT,
+    supported_languages TEXT,
+    requires_gpu BOOLEAN DEFAULT FALSE,
+    constraints TEXT,
+    capabilities TEXT,
+    config TEXT,
+    config_hash TEXT,
+    venv_path TEXT,
+    server_script TEXT,
+    docker_image TEXT,
+    docker_tag TEXT DEFAULT 'latest',
+    is_pulling BOOLEAN DEFAULT FALSE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (host_id) REFERENCES engine_hosts(host_id)
+);
+
+-- Engine Models Table (discovered models per engine)
+CREATE TABLE IF NOT EXISTS engine_models (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    variant_id TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    model_info TEXT,
+    is_default INTEGER NOT NULL DEFAULT 0,
+    is_available INTEGER NOT NULL DEFAULT 1,
+    source TEXT DEFAULT 'discovered',
+    discovered_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(variant_id, model_name),
+    FOREIGN KEY (variant_id) REFERENCES engines(variant_id) ON DELETE CASCADE
+);
+
+-- ============================================================================
 -- Indexes for Performance
+-- ============================================================================
 CREATE INDEX IF NOT EXISTS idx_chapters_project ON chapters(project_id);
 CREATE INDEX IF NOT EXISTS idx_segments_chapter ON segments(chapter_id);
 CREATE INDEX IF NOT EXISTS idx_segments_order ON segments(chapter_id, order_index);
@@ -189,6 +319,9 @@ CREATE INDEX IF NOT EXISTS idx_tts_jobs_chapter ON tts_jobs(chapter_id);
 CREATE INDEX IF NOT EXISTS idx_tts_jobs_created ON tts_jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_export_jobs_chapter ON export_jobs(chapter_id);
 CREATE INDEX IF NOT EXISTS idx_export_jobs_status ON export_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_quality_jobs_status ON quality_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_quality_jobs_chapter ON quality_jobs(chapter_id);
+CREATE INDEX IF NOT EXISTS idx_quality_jobs_created ON quality_jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_pronunciation_rules_engine ON pronunciation_rules(engine_name, language);
 CREATE INDEX IF NOT EXISTS idx_pronunciation_rules_project ON pronunciation_rules(project_id);
 CREATE INDEX IF NOT EXISTS idx_pronunciation_rules_scope ON pronunciation_rules(scope);
@@ -199,3 +332,12 @@ CREATE INDEX IF NOT EXISTS idx_segments_analysis_quality_score ON segments_analy
 CREATE INDEX IF NOT EXISTS idx_speaker_samples_speaker ON speaker_samples(speaker_id);
 CREATE INDEX IF NOT EXISTS idx_speakers_default ON speakers(is_default);
 CREATE INDEX IF NOT EXISTS idx_speakers_active ON speakers(is_active);
+
+-- Engine System Indexes (v1.1.0+)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_engines_default_per_type ON engines(engine_type) WHERE is_default = TRUE;
+CREATE INDEX IF NOT EXISTS idx_engines_type ON engines(engine_type);
+CREATE INDEX IF NOT EXISTS idx_engines_host ON engines(host_id);
+CREATE INDEX IF NOT EXISTS idx_engines_installed ON engines(is_installed);
+CREATE INDEX IF NOT EXISTS idx_engines_enabled ON engines(enabled);
+CREATE INDEX IF NOT EXISTS idx_engine_models_variant ON engine_models(variant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_engine_models_default_per_variant ON engine_models(variant_id) WHERE is_default = 1;

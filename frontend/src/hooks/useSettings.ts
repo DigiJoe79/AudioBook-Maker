@@ -15,8 +15,8 @@ import {
 } from '@services/settingsApi';
 import { queryKeys } from '@services/queryKeys';
 
-// Valid settings categories
-type SettingsCategory = 'tts' | 'audio' | 'text' | 'stt' | 'quality' | 'languages' | 'engines';
+// Valid settings categories (excluding removed tts/stt - now in engines.is_default)
+type SettingsCategory = 'audio' | 'text' | 'quality' | 'languages' | 'engines';
 type SettingsValue<K extends SettingsCategory> = GlobalSettings[K];
 
 // Fetch all settings

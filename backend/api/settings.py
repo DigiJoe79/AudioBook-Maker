@@ -12,6 +12,7 @@ from loguru import logger
 from db.database import get_db
 from services.settings_service import SettingsService
 from services.event_broadcaster import broadcaster, EventType
+from core.base_engine_manager import parse_variant_id
 from models.response_models import (
     MessageResponse,
     AllSettingsResponse,
@@ -163,7 +164,7 @@ async def get_segment_limits(engine: str, db: sqlite3.Connection = Depends(get_d
     Combines user preference with engine constraints to determine the actual limit to use.
 
     Args:
-        engine: Engine name 
+        engine: Engine name or variant_id (e.g., 'xtts' or 'xtts:local')
 
     Returns:
         {
@@ -173,6 +174,8 @@ async def get_segment_limits(engine: str, db: sqlite3.Connection = Depends(get_d
         }
     """
     try:
+        # Pass full variant_id to get_segment_limits (not base_engine_name)
+        # get_engine_metadata requires the full variant_id to find the engine in DB
         service = SettingsService(db)
         limits = service.get_segment_limits(engine)
 
@@ -194,12 +197,15 @@ async def get_engine_parameter_schema_by_type(engine_type: str, engine: str) -> 
 
     Args:
         engine_type: Type of engine ('tts', 'stt', 'text', 'audio')
-        engine: Engine name
+        engine: Engine name or variant_id (e.g., 'xtts' or 'xtts:local')
 
     Returns:
         Parameter schema dictionary
     """
     try:
+        # Parse variant_id to get base engine name
+        base_engine_name, _ = parse_variant_id(engine)
+
         # Get the appropriate engine manager based on type
         if engine_type == 'tts':
             from core.tts_engine_manager import get_tts_engine_manager
@@ -216,17 +222,18 @@ async def get_engine_parameter_schema_by_type(engine_type: str, engine: str) -> 
         else:
             raise HTTPException(status_code=400, detail=f"[SETTINGS_INVALID_ENGINE_TYPE]type:{engine_type}")
 
-        if engine not in manager._engine_metadata:
+        # Get metadata from DB (Single Source of Truth)
+        metadata = manager.get_engine_metadata(engine)
+        if not metadata:
             raise HTTPException(status_code=404, detail=f"[SETTINGS_ENGINE_NOT_FOUND]engine:{engine};type:{engine_type}")
 
         # Get parameter schema from engine metadata (engine.yaml)
         # Note: metadata['config'] contains the entire engine.yaml,
-        # which itself has a 'config' field with 'parameter_schema'
-        metadata = manager._engine_metadata[engine]
-        yaml_config = metadata.get('config', {})
-        schema = yaml_config.get('config', {}).get('parameter_schema', {})
+        # which has 'parameters' with the schema definition
+        yaml_config = metadata.get('config') or {}
+        schema = yaml_config.get('parameters') or {}
 
-        logger.debug(f"Retrieved parameter schema for {engine_type} engine '{engine}': {len(schema)} parameters")
+        logger.debug(f"Retrieved parameter schema for {engine_type} engine '{engine}' (base: {base_engine_name}): {len(schema)} parameters")
 
         return EngineSchemaResponse(parameters=schema)
 
@@ -246,27 +253,31 @@ async def get_engine_parameter_schema(engine: str) -> EngineSchemaResponse:
     DEPRECATED: Use /engine-schema/{engine_type}/{engine} instead.
 
     Args:
-        engine: Engine name
+        engine: Engine name or variant_id (e.g., 'xtts' or 'xtts:local')
 
     Returns:
         Parameter schema dictionary
     """
     try:
+        # Parse variant_id to get base engine name
+        base_engine_name, _ = parse_variant_id(engine)
+
         from core.tts_engine_manager import get_tts_engine_manager
 
         tts_manager = get_tts_engine_manager()
 
-        if engine not in tts_manager._engine_metadata:
+        # Get metadata from DB (Single Source of Truth)
+        metadata = tts_manager.get_engine_metadata(engine)
+        if not metadata:
             raise HTTPException(status_code=404, detail=f"[SETTINGS_ENGINE_NOT_FOUND]engine:{engine}")
 
         # Get parameter schema from engine metadata (engine.yaml)
         # Note: metadata['config'] contains the entire engine.yaml,
-        # which itself has a 'config' field with 'parameter_schema'
-        metadata = tts_manager._engine_metadata[engine]
-        yaml_config = metadata.get('config', {})
-        schema = yaml_config.get('config', {}).get('parameter_schema', {})
+        # which has 'parameters' with the schema definition
+        yaml_config = metadata.get('config') or {}
+        schema = yaml_config.get('parameters') or {}
 
-        logger.debug(f"Retrieved parameter schema for engine '{engine}': {len(schema)} parameters")
+        logger.debug(f"Retrieved parameter schema for engine '{engine}' (base: {base_engine_name}): {len(schema)} parameters")
 
         return EngineSchemaResponse(parameters=schema)
 

@@ -61,41 +61,45 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
 
   // TTS state from appStore (DB defaults)
   const defaultEngine = useAppStore((state) => state.getDefaultTtsEngine());
-  const getDefaultTtsModel = useAppStore((state) => state.getDefaultTtsModel);
-  const defaultLanguage = useAppStore((state) => state.getDefaultLanguage());
   const settings = useAppStore((state) => state.settings);
 
   // Default speaker from speakers table (single source of truth)
   const { data: defaultSpeakerData } = useDefaultSpeaker();
   const defaultSpeaker = defaultSpeakerData?.name || '';
-  const defaultModelName = getDefaultTtsModel(defaultEngine);
-
-  // Local state (initialized from appStore DB defaults)
-  const [overrideSettings, setOverrideSettings] = useState(false);
-  const [selectedEngine, setSelectedEngine] = useState(defaultEngine);
-  const [selectedModel, setSelectedModel] = useState(defaultModelName);
-  const [selectedSpeaker, setSelectedSpeaker] = useState(defaultSpeaker);
-  const [selectedLanguage, setSelectedLanguage] = useState(defaultLanguage);
-  const [forceRegenerate, setForceRegenerate] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
 
   // Extract TTS engines and models from unified status (only enabled engines)
   const engines = (enginesStatus?.tts ?? []).filter(e => e.isEnabled);
+
+  // Get default engine info for default model/language (Single Source of Truth)
+  const defaultEngineInfo = engines.find((e) => e.variantId === defaultEngine);
+  const defaultModelName = defaultEngineInfo?.defaultModelName || '';
+  const defaultLanguage = defaultEngineInfo?.defaultLanguage || 'de';
+
+  // Local state (initialized from engine info - Single Source of Truth)
+  const [overrideSettings, setOverrideSettings] = useState(false);
+  const [selectedEngine, setSelectedEngine] = useState(defaultEngine);
+  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedSpeaker, setSelectedSpeaker] = useState(defaultSpeaker);
+  const [selectedLanguage, setSelectedLanguage] = useState('de');
+  const [forceRegenerate, setForceRegenerate] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // Get active engine info (for override mode)
   const activeEngine = overrideSettings ? selectedEngine : defaultEngine;
-  const engineInfo = engines.find((e) => e.name === activeEngine);
+  const engineInfo = engines.find((e) => e.variantId === activeEngine);
   const models = engineInfo?.availableModels ?? [];
   const isLoading = enginesLoading || speakersLoading;
 
   // Filter speakers - only show active speakers (those with samples)
   const availableSpeakers = speakers?.filter(speaker => speaker.isActive) || [];
 
-  // Calculate available languages: supportedLanguages + defaultLanguage from DB (if not already included)
+  // Calculate available languages: supportedLanguages + defaultLanguage from engine (if not already included)
   const availableLanguages = React.useMemo(() => {
     if (!engineInfo) return [];
 
     const supported = engineInfo.supportedLanguages || [];
-    const engineConfig = settings?.tts.engines[activeEngine];
-    const dbDefaultLanguage = engineConfig?.defaultLanguage;
+    // Get default language directly from engine status (Single Source of Truth)
+    const dbDefaultLanguage = engineInfo.defaultLanguage;
 
     // Add DB default language if it's not already in supported languages
     if (dbDefaultLanguage && !supported.includes(dbDefaultLanguage)) {
@@ -103,44 +107,53 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
     }
 
     return supported;
-  }, [engineInfo, settings, activeEngine]);
+  }, [engineInfo]);
 
   // Note: constraints removed from EngineStatusInfo - using defaults
   const maxLength = 250;
   const minLength = 10;
 
-  // Initialize state from appStore DB defaults when dialog opens
+  // Initialize state when dialog opens
   useEffect(() => {
     if (open) {
-      // Use DB defaults as initial values
       setOverrideSettings(false);
       setSelectedEngine(defaultEngine);
-      setSelectedModel(defaultModelName);
       setSelectedSpeaker(defaultSpeaker);
-      setSelectedLanguage(defaultLanguage);
       setForceRegenerate(false);
       setIsGenerating(false);
+      // Model and language will be set by the defaultEngineInfo useEffect below
     }
-  }, [open, defaultEngine, defaultModelName, defaultSpeaker, defaultLanguage]);
+  }, [open, defaultEngine, defaultSpeaker]);
+
+  // Update model and language from defaultEngineInfo when it loads (async data)
+  useEffect(() => {
+    if (open && defaultEngineInfo) {
+      if (defaultEngineInfo.defaultModelName && !selectedModel) {
+        setSelectedModel(defaultEngineInfo.defaultModelName);
+      }
+      if (defaultEngineInfo.defaultLanguage && selectedLanguage === 'de') {
+        setSelectedLanguage(defaultEngineInfo.defaultLanguage);
+      }
+    }
+  }, [open, defaultEngineInfo, selectedModel, selectedLanguage]);
 
   // Update selected language and model when selected engine changes
   useEffect(() => {
     if (overrideSettings && engineInfo && availableLanguages.length > 0) {
-      // Get default language from engine settings
-      const engineConfig = settings?.tts.engines[selectedEngine];
-      const dbDefaultLanguage = engineConfig?.defaultLanguage;
+      // Get default language from engine status (Single Source of Truth)
+      const dbDefaultLanguage = engineInfo.defaultLanguage;
 
-      // Use DB default if available, otherwise use first available language
+      // Use default if available, otherwise use first available language
       if (dbDefaultLanguage && availableLanguages.includes(dbDefaultLanguage)) {
         setSelectedLanguage(dbDefaultLanguage);
 
         logger.group(
           '🌍 Language Auto-Select',
-          'Using engine default language from DB settings',
+          'Using engine default language from engine status',
           {
             'Engine': selectedEngine,
             'Selected Language': dbDefaultLanguage,
-            'Source': 'settings.tts.engines.defaultLanguage',
+            'Source': 'engineInfo.defaultLanguage',
             'Available Languages': availableLanguages
           },
           '#4CAF50'
@@ -162,11 +175,10 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
         );
       }
 
-      // Select model: use per-engine default if available, otherwise use first model
+      // Select model: use per-variant default if available, otherwise use first model
       if (models.length > 0) {
-        // Try per-engine default model first
-        const engineConfig = settings?.tts.engines[selectedEngine];
-        const perEngineDefaultModel = engineConfig?.defaultModelName;
+        // Try per-variant default model from engine status (Single Source of Truth)
+        const perEngineDefaultModel = engineInfo.defaultModelName;
         const perEngineModelAvailable = perEngineDefaultModel && models.includes(perEngineDefaultModel);
 
         if (perEngineModelAvailable) {
@@ -174,11 +186,11 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
 
           logger.group(
             '🔧 Model Auto-Select',
-            'Using per-engine default model from settings',
+            'Using per-engine default model from engine status',
             {
               'Engine': selectedEngine,
               'Selected Model': perEngineDefaultModel,
-              'Source': 'settings.tts.engines.defaultModelName',
+              'Source': 'engineInfo.defaultModelName',
               'Available Models': models
             },
             '#4CAF50'
@@ -356,15 +368,15 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
                   <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
                     {/* Engine Selection */}
                     <FormControl fullWidth>
-                      <InputLabel>Engine</InputLabel>
+                      <InputLabel>{t('tts.engine')}</InputLabel>
                       <Select
-                        value={engines.some((e) => e.name === selectedEngine) ? selectedEngine : ''}
-                        label="Engine"
+                        value={engines.some((e) => e.variantId === selectedEngine) ? selectedEngine : ''}
+                        label={t('tts.engine')}
                         onChange={(e) => setSelectedEngine(e.target.value)}
                         disabled={isGenerating}
                       >
                         {engines.map((engine) => (
-                          <MenuItem key={engine.name} value={engine.name}>
+                          <MenuItem key={engine.variantId} value={engine.variantId}>
                             {engine.displayName}
                           </MenuItem>
                         ))}
@@ -373,10 +385,10 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
 
                     {/* Model Selection */}
                     <FormControl fullWidth>
-                      <InputLabel>Model</InputLabel>
+                      <InputLabel>{t('tts.model')}</InputLabel>
                       <Select
                         value={models.includes(selectedModel) ? selectedModel : ''}
-                        label="Model"
+                        label={t('tts.model')}
                         onChange={(e) => setSelectedModel(e.target.value)}
                         disabled={isGenerating || models.length === 0}
                       >
@@ -464,9 +476,9 @@ export const GenerateAudioDialog: React.FC<GenerateAudioDialogProps> = ({
                   <Typography variant="caption" component="div" sx={{ mt: 0.5 }}>
                     {t('audioGeneration.regenerateWithFrozen', {
                       completed: completedSegments - frozenSegments,
-                      completedPlural: (completedSegments - frozenSegments) === 1 ? 'Segment' : 'Segmente',
+                      completedPlural: (completedSegments - frozenSegments) === 1 ? t('common.segment') : t('common.segments'),
                       frozen: frozenSegments,
-                      frozenPlural: frozenSegments === 1 ? 'Segment' : 'Segmente'
+                      frozenPlural: frozenSegments === 1 ? t('common.segment') : t('common.segments')
                     })}
                   </Typography>
                 )}

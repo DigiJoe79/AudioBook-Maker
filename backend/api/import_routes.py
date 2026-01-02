@@ -68,15 +68,23 @@ async def get_import_preview(
         user_pref = settings_service.get_setting('text.preferredMaxSegmentLength') or 250
         default_divider_duration = settings_service.get_setting('audio.defaultDividerDuration') or 2000
 
-        # For preview, use conservative estimate (smallest common engine limit)
-        # This prevents false positives in preview that don't appear in actual import
-        # Common engine limits: XTTS=250, Chatterbox=300 → use 250 as safe default
-        conservative_engine_max = 250
-        max_length = min(user_pref, conservative_engine_max)
+        # Get default TTS engine's constraints for accurate preview
+        # This ensures preview matches actual import behavior
+        tts_manager = get_tts_engine_manager()
+        default_engine = settings_service.get_default_engine('tts')
+        engine_max = 500  # Fallback if no engine found
+
+        if default_engine:
+            metadata = tts_manager.get_engine_metadata(default_engine)
+            if metadata:
+                constraints = metadata.get('constraints') or {}
+                engine_max = constraints.get('max_text_length', 500)
+
+        max_length = min(user_pref, engine_max)
 
         logger.debug(
             f"Preview segmentation limits - User pref: {user_pref}, "
-            f"Conservative engine max: {conservative_engine_max}, Using max: {max_length}"
+            f"Engine max ({default_engine}): {engine_max}, Using max: {max_length}"
         )
 
         # Parse with segmentation
@@ -91,7 +99,7 @@ async def get_import_preview(
         except ValueError as ve:
             # Catch parsing/structure errors (missing headings, etc.)
             logger.error(f"Markdown parsing failed: {str(ve)}")
-            raise HTTPException(status_code=400, detail=str(ve))
+            raise HTTPException(status_code=400, detail=f"[IMPORT_VALIDATION_ERROR]error:{str(ve)}")
         except Exception as e:
             # Catch spaCy model loading errors or segmentation failures
             logger.error(f"Segmentation failed: {str(e)}")
@@ -120,25 +128,11 @@ async def get_import_preview(
         for chapter in parsed["chapters"]:
             # Segments are generated internally but not sent to frontend for performance
             # Preview now shows only stats (segmentCount, totalChars, dividerCount, failedCount)
-            # Uncomment below if detailed segment preview is needed in the future:
-            # segment_previews = [
-            #     SegmentPreview(
-            #         id=seg["id"],
-            #         type=seg["type"],
-            #         content=seg.get("content"),
-            #         char_count=seg.get("char_count"),
-            #         pause_duration=seg.get("pause_duration"),
-            #         order_index=seg["order_index"]
-            #     )
-            #     for seg in chapter["segments"]
-            # ]
-
             chapter_previews.append(ChapterPreview(
                 id=f"temp-ch-{chapter['order_index']}",
                 title=chapter["title"],
                 original_title=chapter["original_title"],
                 order_index=chapter["order_index"],
-                # segments=segment_previews,  # Commented out - only stats in preview
                 stats=chapter["stats"],
                 warnings=chapter_warning_map.get(chapter["title"], [])
             ))
@@ -263,6 +257,18 @@ async def execute_import(
         if mode == 'merge' and not merge_target_id:
             raise HTTPException(status_code=400, detail="[IMPORT_MISSING_TARGET_ID]")
 
+        # Early validation: Check merge target exists BEFORE expensive parsing
+        # This gives faster feedback if the target project doesn't exist
+        merge_target_project = None
+        if mode == 'merge':
+            project_repo = ProjectRepository(conn)
+            merge_target_project = project_repo.get_by_id(merge_target_id)
+            if not merge_target_project:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"[IMPORT_PROJECT_NOT_FOUND]projectId:{merge_target_id}"
+                )
+
         # Read file content
         content = await file.read()
         md_content = content.decode('utf-8')
@@ -297,9 +303,9 @@ async def execute_import(
                 detail=f"[IMPORT_UNKNOWN_ENGINE]engine:{tts_engine}"
             )
 
-        # Get engine constraints from metadata
-        metadata = tts_manager._engine_metadata[tts_engine]
-        constraints = metadata.get('constraints', {})
+        # Get engine constraints from metadata (Single Source of Truth)
+        metadata = tts_manager.get_engine_metadata(tts_engine)
+        constraints = (metadata.get('constraints') or {}) if metadata else {}
 
         engine_max = constraints.get('max_text_length', 500)
 
@@ -329,7 +335,7 @@ async def execute_import(
         except ValueError as ve:
             # Catch parsing/structure errors (missing headings, etc.)
             logger.error(f"Markdown parsing failed during import: {str(ve)}")
-            raise HTTPException(status_code=400, detail=str(ve))
+            raise HTTPException(status_code=400, detail=f"[IMPORT_VALIDATION_ERROR]error:{str(ve)}")
         except Exception as e:
             # Catch spaCy model loading errors or segmentation failures
             logger.error(f"Segmentation failed during import: {str(e)}")
@@ -441,10 +447,8 @@ async def execute_import(
             )
 
         elif mode == 'merge':
-            # Fetch existing project
-            project = project_repo.get_by_id(merge_target_id)
-            if not project:
-                raise HTTPException(status_code=404, detail=f"[IMPORT_PROJECT_NOT_FOUND]projectId:{merge_target_id}")
+            # Use pre-validated project from early check
+            project = merge_target_project
 
             logger.info(f"Merging into existing project: {project['id']} - {project['title']}")
 

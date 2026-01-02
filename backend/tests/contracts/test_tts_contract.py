@@ -40,7 +40,7 @@ def test_chapter(test_project):
         "projectId": test_project["id"],
         "title": "TTS Contract Test Chapter",
         "orderIndex": 0,
-        "defaultTtsEngine": "xtts",
+        "defaultTtsEngine": "xtts:local",
         "defaultTtsModelName": "v2"
     })
     assert response.status_code == 200
@@ -54,7 +54,7 @@ def test_segment_with_tts_params(test_chapter):
         "chapterId": test_chapter["id"],
         "text": "Dies ist ein Test-Segment für TTS Contract Testing.",
         "orderIndex": 0,
-        "ttsEngine": "xtts",
+        "ttsEngine": "xtts:local",
         "ttsModelName": "v2",
         "ttsSpeakerName": "test-speaker",
         "language": "de"
@@ -70,7 +70,7 @@ def test_segment_without_tts_params(test_chapter):
         "chapterId": test_chapter["id"],
         "text": "Segment ohne TTS Parameter.",
         "orderIndex": 1,
-        "ttsEngine": "xtts",
+        "ttsEngine": "xtts:local",
         "ttsModelName": "v2",
         "ttsSpeakerName": None,  # Missing speaker
         "language": "de"
@@ -87,7 +87,7 @@ def test_frozen_segment(test_chapter):
         "chapterId": test_chapter["id"],
         "text": "Frozen Segment.",
         "orderIndex": 2,
-        "ttsEngine": "xtts",
+        "ttsEngine": "xtts:local",
         "ttsModelName": "v2",
         "ttsSpeakerName": "test-speaker",
         "language": "de"
@@ -255,7 +255,7 @@ class TestTTSRequestSchemaContract:
             "chapterId": test_chapter["id"],
             "forceRegenerate": True,
             "overrideSegmentSettings": True,
-            "ttsEngine": "xtts",
+            "ttsEngine": "xtts:local",
             "ttsModelName": "v2",
             "ttsSpeakerName": "test-speaker",
             "language": "de",

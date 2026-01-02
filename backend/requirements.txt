@@ -38,6 +38,15 @@ ebooklib>=0.18
 beautifulsoup4>=4.12
 markdownify>=0.13
 
+# Docker support (for containerized engine execution)
+docker>=7.0.0
+
+# SSH support for remote Docker hosts
+# paramiko: Required by Docker SDK to enable ssh:// URL support
+# cryptography: SSH key generation
+paramiko>=3.0.0
+cryptography>=41.0.0
+
 # Testing - see requirements-dev.txt for test dependencies
 
 

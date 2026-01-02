@@ -27,7 +27,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useTauriFileDrop } from '@/hooks/useTauriFileDrop'
 
-export interface FileToUpload {
+interface FileToUpload {
   file: File
   id: string
   status: 'pending' | 'uploading' | 'success' | 'error'

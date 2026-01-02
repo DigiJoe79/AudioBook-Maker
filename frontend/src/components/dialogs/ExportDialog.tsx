@@ -274,6 +274,7 @@ export function ExportDialog({
       onClose={handleClose}
       maxWidth="sm"
       fullWidth
+      data-testid="export-dialog"
       PaperProps={{
         sx: {
           bgcolor: 'background.paper',
@@ -296,16 +297,17 @@ export function ExportDialog({
 
           {/* Export in progress */}
           {isExporting && (
-            <Box>
+            <Box data-testid="export-progress-container">
               <Box display="flex" alignItems="center" mb={1}>
                 {getStatusIcon()}
-                <Typography variant="body2" sx={{ ml: 1 }}>
+                <Typography variant="body2" sx={{ ml: 1 }} data-testid="export-progress-message">
                   {getProgressMessage()}
                 </Typography>
               </Box>
               <LinearProgress
                 variant={currentProgress ? 'determinate' : 'indeterminate'}
                 value={currentProgress ? getProgressPercentage() : undefined}
+                data-testid="export-progress-bar"
                 sx={{
                   // FIX BUG 1: Disable CSS transitions to prevent 100→0 animation when switching exports
                   '& .MuiLinearProgress-bar': {
@@ -314,7 +316,7 @@ export function ExportDialog({
                 }}
               />
               {currentProgress && (
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }} data-testid="export-progress-detail">
                   {t('export.progress.segmentsProcessed', { current: currentProgress.currentSegment, total: currentProgress.totalSegments })}
                 </Typography>
               )}
@@ -357,6 +359,7 @@ export function ExportDialog({
                 InputLabelProps={{ shrink: true }}
                 placeholder={t('export.filenamePlaceholder')}
                 helperText={t('export.filenameHint')}
+                data-testid="export-filename-input"
               />
 
               {/* Format selection */}
@@ -370,10 +373,11 @@ export function ExportDialog({
                   onChange={(e) => setFormat(e.target.value as typeof format)}
                   displayEmpty
                   notched
+                  data-testid="export-format-select"
                 >
-                  <MenuItem value="mp3">{t('export.formats.mp3')}</MenuItem>
-                  <MenuItem value="m4a">{t('export.formats.m4a')}</MenuItem>
-                  <MenuItem value="wav">{t('export.formats.wav')}</MenuItem>
+                  <MenuItem value="mp3" data-testid="export-format-mp3">{t('export.formats.mp3')}</MenuItem>
+                  <MenuItem value="m4a" data-testid="export-format-m4a">{t('export.formats.m4a')}</MenuItem>
+                  <MenuItem value="wav" data-testid="export-format-wav">{t('export.formats.wav')}</MenuItem>
                 </Select>
                 <FormHelperText>
                   {t('export.formatHint')}
@@ -391,10 +395,11 @@ export function ExportDialog({
                   onChange={(e) => setQuality(e.target.value as QualityLevel)}
                   displayEmpty
                   notched
+                  data-testid="export-quality-select"
                 >
-                  <MenuItem value="low">{QUALITY_PRESETS[format].low.label}</MenuItem>
-                  <MenuItem value="medium">{QUALITY_PRESETS[format].medium.label}</MenuItem>
-                  <MenuItem value="high">{QUALITY_PRESETS[format].high.label}</MenuItem>
+                  <MenuItem value="low" data-testid="export-quality-low">{QUALITY_PRESETS[format].low.label}</MenuItem>
+                  <MenuItem value="medium" data-testid="export-quality-medium">{QUALITY_PRESETS[format].medium.label}</MenuItem>
+                  <MenuItem value="high" data-testid="export-quality-high">{QUALITY_PRESETS[format].high.label}</MenuItem>
                 </Select>
                 <FormHelperText>
                   {t('export.qualityHint')}
@@ -420,11 +425,12 @@ export function ExportDialog({
             color="error"
             variant="contained"
             startIcon={<CancelIcon />}
+            data-testid="export-cancel-button"
           >
             {t('export.cancelExport')}
           </Button>
         ) : (
-          <Button onClick={handleClose}>
+          <Button onClick={handleClose} data-testid="export-close-button">
             {currentProgress?.status === 'completed' ? t('common.close') : t('common.cancel')}
           </Button>
         )}
@@ -436,6 +442,7 @@ export function ExportDialog({
             variant="contained"
             startIcon={<DownloadIcon />}
             color="success"
+            data-testid="export-download-button"
           >
             {t('export.download')}
           </Button>
@@ -448,6 +455,7 @@ export function ExportDialog({
             variant="contained"
             disabled={!canExport || !customFilename}
             startIcon={<DownloadIcon />}
+            data-testid="export-start-button"
           >
             {t('export.startExport')}
           </Button>
