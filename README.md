@@ -2,10 +2,12 @@
 
 > A modern desktop application for creating audiobooks with advanced text-to-speech and voice cloning capabilities
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/DigiJoe79/audiobook-maker/releases)
+[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](https://github.com/DigiJoe79/audiobook-maker/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://tauri.app)
 
+> **v1.1.1** - Hotfix for remote backend connectivity. See [Release Notes](docs/releases/RELEASE_v1.1.1.md).
+>
 > **v1.1.0** - Docker-based deployment, Remote GPU hosts, Engine variants. See [Release Notes](docs/releases/RELEASE_v1.1.0.md).
 
 ## Overview
@@ -95,7 +97,7 @@
 
 Download the latest Windows release from [GitHub Releases](https://github.com/DigiJoe79/audiobook-maker/releases):
 
-- **Windows:** `Audiobook-Maker_1.1.0_x64-setup.exe`
+- **Windows:** `Audiobook-Maker_1.1.1_x64-setup.exe`
 
 > **Linux/macOS:** No prebuilt binaries available. See [Development Setup](#development-setup) to build from source.
 

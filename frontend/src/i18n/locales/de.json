@@ -129,7 +129,7 @@
       "sshUrlHelp": "SSH-Verbindungs-URL für den Remote Docker Host",
       "generateKey": "SSH-Schlüssel generieren",
       "installInstructions": "Führen Sie diesen Befehl auf Ihrem Remote-Host aus, um den SSH-Schlüssel zu autorisieren:",
-      "securityNote": "Dieser Schlüssel ist auf Docker-Operationen beschränkt. Selbst bei Kompromittierung kann kein Shell-Zugang hergestellt werden.",
+      "securityNote": "Dieser Schlüssel gewährt Docker-Zugang auf dem Remote-Host. Behandeln Sie ihn wie andere SSH-Zugangsdaten.",
       "testConnection": "Verbindung testen",
       "connectionSuccess": "Verbindung erfolgreich!",
       "connectionFailed": "Verbindung fehlgeschlagen",

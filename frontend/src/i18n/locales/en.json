@@ -129,7 +129,7 @@
       "sshUrlHelp": "SSH connection URL for the remote Docker host",
       "generateKey": "Generate SSH Key",
       "installInstructions": "Run this command on your remote host to authorize the SSH key:",
-      "securityNote": "This key is restricted to Docker operations only. Even if compromised, it cannot open a shell on the remote host.",
+      "securityNote": "This key grants Docker access on the remote host. Treat it like other SSH credentials.",
       "testConnection": "Test Connection",
       "connectionSuccess": "Connection successful!",
       "connectionFailed": "Connection failed",
