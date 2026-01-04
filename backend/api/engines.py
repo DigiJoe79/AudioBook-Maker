@@ -4,11 +4,12 @@ Engine Management API Endpoints
 Provides endpoints for engine enable/disable, start/stop, and status monitoring.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 import sqlite3
 from typing import List, Dict, Any, Optional
 from loguru import logger
 
+from core.exceptions import ApplicationError
 from db.database import get_db
 from services.settings_service import SettingsService
 from services.event_broadcaster import (
@@ -175,6 +176,7 @@ async def get_all_engines_status(conn: sqlite3.Connection = Depends(get_db)):
                 gpu_memory_total_mb = None
                 if is_running and status == "running":  # Only check if fully running, not starting
                     try:
+                        logger.debug("build_status_info: invoking health check", variant_id=variant_id, engine_type=engine_type)
                         health_data = await manager.health_check(variant_id)
                         device = health_data.get("device", device)
                         loaded_model = health_data.get("currentEngineModel")
@@ -200,6 +202,13 @@ async def get_all_engines_status(conn: sqlite3.Connection = Depends(get_db)):
                 # Filter languages by allowedLanguages for TTS and text processing engines
                 if engine_type in ("tts", "text"):
                     filtered_languages = [lang for lang in engine_languages if lang in allowed_languages]
+                    logger.debug(
+                        "build_status_info: language filtering applied",
+                        variant_id=variant_id,
+                        engine_languages=engine_languages,
+                        allowed_languages=allowed_languages,
+                        filtered_languages=filtered_languages
+                    )
                 else:
                     # Other engine types (stt, audio) use unfiltered languages
                     filtered_languages = engine_languages
@@ -221,6 +230,13 @@ async def get_all_engines_status(conn: sqlite3.Connection = Depends(get_db)):
                     runner_id = host_id
                     runner_type = "unknown"
                     runner_host = None
+                logger.debug(
+                    "build_status_info: runner type determined",
+                    variant_id=variant_id,
+                    host_id=host_id,
+                    runner_type=runner_type,
+                    runner_host=runner_host
+                )
 
                 # Use source from database (local/catalog/custom)
                 source = engine.get("source", "local")
@@ -344,7 +360,7 @@ async def get_all_engines_status(conn: sqlite3.Connection = Depends(get_db)):
 
     except Exception as e:
         logger.error(f"Failed to get engine status: {e}")
-        raise HTTPException(status_code=500, detail=f"[ENGINE_STATUS_FAILED]error:{str(e)}")
+        raise ApplicationError("ENGINE_STATUS_FAILED", status_code=500, error=str(e))
 
 
 @router.get("/catalog", response_model=DockerCatalogResponse)
@@ -400,7 +416,7 @@ async def get_docker_image_catalog(conn: sqlite3.Connection = Depends(get_db)):
 
     except Exception as e:
         logger.error(f"Failed to get catalog: {e}")
-        raise HTTPException(status_code=500, detail=f"[CATALOG_LOAD_FAILED]error:{str(e)}")
+        raise ApplicationError("CATALOG_LOAD_FAILED", status_code=500, error=str(e))
 
 
 @router.post("/catalog/sync", response_model=CatalogSyncResponse)
@@ -443,7 +459,7 @@ async def sync_online_catalog(conn: sqlite3.Connection = Depends(get_db)):
 
     except Exception as e:
         logger.error(f"Failed to sync catalog: {e}")
-        raise HTTPException(status_code=500, detail=f"[CATALOG_SYNC_FAILED]error:{str(e)}")
+        raise ApplicationError("CATALOG_SYNC_FAILED", status_code=500, error=str(e))
 
 
 @router.post("/docker/{variant_id}/install", response_model=DockerInstallResponse)
@@ -476,16 +492,16 @@ async def install_docker_image(
         try:
             variant = parse_variant_id(variant_id)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"[INVALID_VARIANT_ID]variantId:{variant_id};error:{str(e)}")
+            raise ApplicationError("INVALID_VARIANT_ID", status_code=400, variantId=variant_id, error=str(e))
 
         if variant.source != "docker":
-            raise HTTPException(status_code=400, detail=f"[NOT_DOCKER_VARIANT]variantId:{variant_id}")
+            raise ApplicationError("NOT_DOCKER_VARIANT", status_code=400, variantId=variant_id)
 
         # Get image info from catalog
         catalog_repo = DockerImageCatalogRepository(conn)
         image_info = catalog_repo.get_by_engine_name(variant.engine_name)
         if not image_info:
-            raise HTTPException(status_code=404, detail=f"[VARIANT_NOT_FOUND]variantId:{variant_id}")
+            raise ApplicationError("VARIANT_NOT_FOUND", status_code=404, variantId=variant_id)
 
         # Ensure the Docker host exists in engine_hosts table
         host_repo = EngineHostRepository(conn)
@@ -496,16 +512,13 @@ async def install_docker_image(
                 host_repo.ensure_docker_local_exists()
             else:
                 # For remote hosts, they should already exist
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"[HOST_NOT_FOUND]hostId:{db_host_id}"
-                )
+                raise ApplicationError("HOST_NOT_FOUND", status_code=400, hostId=db_host_id)
 
         # Check if already installed in engines table (skip check if force=True for updates)
         engine_repo = EngineRepository(conn)
         existing_engine = engine_repo.get_by_id(variant_id)
         if not force and existing_engine and existing_engine.get("is_installed"):
-            raise HTTPException(status_code=409, detail=f"[IMAGE_ALREADY_INSTALLED]variantId:{variant_id}")
+            raise ApplicationError("IMAGE_ALREADY_INSTALLED", status_code=409, variantId=variant_id)
 
         # Get metadata from catalog (use 'or' to handle NULL values from DB)
         models = image_info.get("models") or []  # Full model objects with metadata
@@ -522,6 +535,16 @@ async def install_docker_image(
         # Use provided tag or fall back to default_tag from catalog
         image_tag = tag or image_info.get("default_tag", "latest")
 
+        logger.debug(
+            "install_docker_image: pre-install state check",
+            variant_id=variant_id,
+            image=f"{image_name}:{image_tag}",
+            force=force,
+            existing_engine=bool(existing_engine),
+            is_installed=existing_engine.get("is_installed") if existing_engine else None,
+            is_enabled=existing_engine.get("enabled") if existing_engine else None
+        )
+
         # Actually pull the Docker image with progress events
         from services.docker_service import (
             pull_image_with_progress, is_docker_available, PullCancelledException,
@@ -533,10 +556,7 @@ async def install_docker_image(
         docker_host_id = get_host_id_from_variant(variant)
 
         if not is_docker_available(docker_host_id):
-            raise HTTPException(
-                status_code=503,
-                detail=f"[DOCKER_NOT_AVAILABLE]hostId:{docker_host_id or 'local'}"
-            )
+            raise ApplicationError("DOCKER_NOT_AVAILABLE", status_code=503, hostId=docker_host_id or "local")
 
         # Use db_host_id for database and SSE events (consistent with engine_hosts table)
         engine_type = image_info["engine_type"]
@@ -577,6 +597,15 @@ async def install_docker_image(
             if old_image_id:
                 new_image_id = pull_result.get('image_id')
                 if new_image_id and new_image_id != old_image_id:
+                    # Stop running engine before removing old image (container uses the image)
+                    try:
+                        manager = _get_engine_manager(engine_type)
+                        if manager.is_engine_running(variant_id):
+                            logger.info(f"Stopping running engine '{variant_id}' before image cleanup")
+                            await manager.stop_by_variant(variant_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to stop engine before image cleanup: {e}")
+
                     removed = remove_dangling_image(old_image_id, docker_host_id)
                     if removed:
                         logger.info(f"Cleaned up old image after update: {old_image_id[:19]}")
@@ -590,10 +619,7 @@ async def install_docker_image(
             else:
                 engine_repo.set_pulling(variant_id, False)
             await emit_docker_image_cancelled(variant_id)
-            raise HTTPException(
-                status_code=499,  # Client Closed Request
-                detail=f"[DOCKER_PULL_CANCELLED]variantId:{variant_id}"
-            )
+            raise ApplicationError("DOCKER_PULL_CANCELLED", status_code=499, variantId=variant_id)
         except DockerException as e:
             logger.error(f"Failed to pull Docker image: {e}")
             # If this was a new install (not an update), remove the engine entry
@@ -603,10 +629,7 @@ async def install_docker_image(
             else:
                 engine_repo.set_pulling(variant_id, False)
             await emit_docker_image_error(variant_id, str(e), operation="install")
-            raise HTTPException(
-                status_code=500,
-                detail=f"[DOCKER_PULL_FAILED]image:{image_name}:{image_tag};error:{str(e)}"
-            )
+            raise ApplicationError("DOCKER_PULL_FAILED", status_code=500, image=f"{image_name}:{image_tag}", error=str(e))
 
         # Auto-enable first installed engine of this type as default
         # But preserve existing enabled/default state when updating (force=True)
@@ -615,11 +638,24 @@ async def install_docker_image(
             # Preserve current state when updating
             preserve_enabled = existing_engine.get("enabled", False)
             preserve_default = existing_engine.get("is_default", False)
+            logger.debug(
+                "install_docker_image: preserving state on update",
+                variant_id=variant_id,
+                preserve_enabled=preserve_enabled,
+                preserve_default=preserve_default
+            )
         else:
             # New installation: auto-enable if first of type
             enabled_engines = engine_repo.get_enabled(engine_type)
             preserve_enabled = len(enabled_engines) == 0
             preserve_default = preserve_enabled
+            logger.debug(
+                "install_docker_image: auto-enable logic",
+                variant_id=variant_id,
+                engine_type=engine_type,
+                enabled_count=len(enabled_engines),
+                will_auto_enable=preserve_enabled
+            )
 
         # Register/update in engines table (Single Source of Truth)
         engine_repo.upsert(
@@ -671,11 +707,11 @@ async def install_docker_image(
             is_installed=True
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to install Docker image: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[IMAGE_INSTALL_FAILED]variantId:{variant_id};error:{str(e)}")
+        raise ApplicationError("IMAGE_INSTALL_FAILED", status_code=500, variantId=variant_id, error=str(e))
 
 
 @router.delete("/docker/{variant_id}/pull", response_model=MessageResponse)
@@ -703,10 +739,10 @@ async def cancel_docker_pull(
         existing_engine = engine_repo.get_by_id(variant_id)
 
         if not existing_engine:
-            raise HTTPException(status_code=404, detail=f"[VARIANT_NOT_FOUND]variantId:{variant_id}")
+            raise ApplicationError("VARIANT_NOT_FOUND", status_code=404, variantId=variant_id)
 
         if not existing_engine.get("is_pulling"):
-            raise HTTPException(status_code=404, detail=f"[NO_ACTIVE_PULL]variantId:{variant_id}")
+            raise ApplicationError("NO_ACTIVE_PULL", status_code=404, variantId=variant_id)
 
         # Request cancellation
         cancelled = cancel_pull(variant_id)
@@ -720,11 +756,11 @@ async def cancel_docker_pull(
 
         return MessageResponse(success=True, message=f"Cancellation requested for {variant_id}")
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Error cancelling Docker pull for {variant_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[CANCEL_FAILED]variantId:{variant_id};error:{str(e)}")
+        raise ApplicationError("CANCEL_FAILED", status_code=500, variantId=variant_id, error=str(e))
 
 
 @router.delete("/docker/{variant_id}/uninstall", response_model=DockerInstallResponse)
@@ -750,10 +786,10 @@ async def uninstall_docker_image(
         existing_engine = engine_repo.get_by_id(variant_id)
 
         if not existing_engine:
-            raise HTTPException(status_code=404, detail=f"[VARIANT_NOT_FOUND]variantId:{variant_id}")
+            raise ApplicationError("VARIANT_NOT_FOUND", status_code=404, variantId=variant_id)
 
         if not existing_engine.get("is_installed"):
-            raise HTTPException(status_code=404, detail=f"[IMAGE_NOT_INSTALLED]variantId:{variant_id}")
+            raise ApplicationError("IMAGE_NOT_INSTALLED", status_code=404, variantId=variant_id)
 
         # Get image info before uninstalling
         docker_image = existing_engine.get("docker_image")
@@ -763,9 +799,17 @@ async def uninstall_docker_image(
         engine_type = existing_engine.get("engine_type", "tts")
         try:
             manager = _get_engine_manager(engine_type)
-            if manager.is_engine_running(variant_id):
+            was_running = manager.is_engine_running(variant_id)
+            logger.debug(
+                "uninstall_docker_image: checking engine state",
+                variant_id=variant_id,
+                engine_type=engine_type,
+                was_running=was_running
+            )
+            if was_running:
                 logger.info(f"Stopping running engine {variant_id} before uninstall")
                 await manager.stop_engine_server(variant_id)
+                logger.debug("uninstall_docker_image: engine stop completed", variant_id=variant_id)
         except Exception as e:
             logger.warning(f"Could not stop engine before uninstall: {e}")
 
@@ -790,10 +834,7 @@ async def uninstall_docker_image(
                     # If container is still using the image, fail the uninstall
                     error_msg = str(e)
                     if "container" in error_msg.lower() and "using" in error_msg.lower():
-                        raise HTTPException(
-                            status_code=409,
-                            detail=f"[IMAGE_IN_USE]variantId:{variant_id};error:Container still using image. Stop the engine first."
-                        )
+                        raise ApplicationError("IMAGE_IN_USE", status_code=409, variantId=variant_id, error="Container still using image. Stop the engine first.")
                     # For other errors (image not found, etc.), log and continue
                     logger.warning(f"Could not remove Docker image: {e}")
 
@@ -808,11 +849,11 @@ async def uninstall_docker_image(
             is_installed=False
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to uninstall Docker image: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[IMAGE_UNINSTALL_FAILED]variantId:{variant_id};error:{str(e)}")
+        raise ApplicationError("IMAGE_UNINSTALL_FAILED", status_code=500, variantId=variant_id, error=str(e))
 
 
 @router.get("/docker/{variant_id}/check-update", response_model=ImageUpdateCheckResponse)
@@ -862,20 +903,14 @@ async def check_docker_image_update(
         engine = engine_repo.get_by_id(variant_id)
 
         if not engine:
-            raise HTTPException(
-                status_code=404,
-                detail=f"[VARIANT_NOT_FOUND]variantId:{variant_id}"
-            )
+            raise ApplicationError("VARIANT_NOT_FOUND", status_code=404, variantId=variant_id)
 
         # Check it's a Docker variant
         docker_image = engine.get("docker_image")
         docker_tag = engine.get("docker_tag", "latest")
 
         if not docker_image:
-            raise HTTPException(
-                status_code=400,
-                detail=f"[NOT_DOCKER_VARIANT]variantId:{variant_id}"
-            )
+            raise ApplicationError("NOT_DOCKER_VARIANT", status_code=400, variantId=variant_id)
 
         # Perform update check
         logger.info(f"Checking for updates: {docker_image}:{docker_tag} (host: {docker_host_id or 'local'})")
@@ -891,7 +926,7 @@ async def check_docker_image_update(
             error=result["error"]
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Update check failed for {variant_id}: {e}", exc_info=True)
@@ -929,7 +964,7 @@ async def enable_engine(
         success = settings_service.set_engine_enabled(engine_name, True, engine_type)
 
         if not success:
-            raise HTTPException(status_code=400, detail=f"[ENGINE_ENABLE_FAILED]engine:{engine_name}")
+            raise ApplicationError("ENGINE_ENABLE_FAILED", status_code=400, engine=engine_name)
 
         logger.info(f"Variant '{engine_name}' ({engine_type}) enabled via API")
 
@@ -972,10 +1007,10 @@ async def enable_engine(
 
     except ValueError as e:
         # Validation error (e.g., engine not found)
-        raise HTTPException(status_code=400, detail=f"[ENGINE_ENABLE_FAILED]engineType:{engine_type};engineName:{engine_name};error:{str(e)}")
+        raise ApplicationError("ENGINE_ENABLE_FAILED", status_code=400, engineType=engine_type, engineName=engine_name, error=str(e))
     except Exception as e:
         logger.error(f"Failed to enable engine {engine_name}: {e}")
-        raise HTTPException(status_code=500, detail=f"[ENGINE_ENABLE_FAILED]engineType:{engine_type};engineName:{engine_name};error:{str(e)}")
+        raise ApplicationError("ENGINE_ENABLE_FAILED", status_code=500, engineType=engine_type, engineName=engine_name, error=str(e))
 
 
 @router.post("/{engine_type}/{engine_name}/disable", response_model=MessageResponse)
@@ -1009,7 +1044,7 @@ async def disable_engine(
         success = settings_service.set_engine_enabled(engine_name, False, engine_type)
 
         if not success:
-            raise HTTPException(status_code=400, detail=f"[ENGINE_DISABLE_FAILED]engine:{engine_name}")
+            raise ApplicationError("ENGINE_DISABLE_FAILED", status_code=400, engine=engine_name)
 
         logger.info(f"Variant '{engine_name}' ({engine_type}) disabled via API")
 
@@ -1047,10 +1082,10 @@ async def disable_engine(
 
     except ValueError as e:
         # Validation error (e.g., trying to disable default engine)
-        raise HTTPException(status_code=400, detail=f"[ENGINE_DISABLE_FAILED]engineType:{engine_type};engineName:{engine_name};error:{str(e)}")
+        raise ApplicationError("ENGINE_DISABLE_FAILED", status_code=400, engineType=engine_type, engineName=engine_name, error=str(e))
     except Exception as e:
         logger.error(f"Failed to disable engine {engine_name}: {e}")
-        raise HTTPException(status_code=500, detail=f"[ENGINE_DISABLE_FAILED]engineType:{engine_type};engineName:{engine_name};error:{str(e)}")
+        raise ApplicationError("ENGINE_DISABLE_FAILED", status_code=500, engineType=engine_type, engineName=engine_name, error=str(e))
 
 
 @router.post("/{engine_type}/{engine_name}/start", response_model=MessageResponse)
@@ -1085,25 +1120,19 @@ async def start_engine(
         # Check if engine is enabled (use full variant ID like 'spacy:local')
         is_enabled = settings_service.is_engine_enabled(engine_name, engine_type)
         if not is_enabled:
-            raise HTTPException(
-                status_code=400,
-                detail=f"[ENGINE_START_DISABLED]engine:{engine_name}"
-            )
+            raise ApplicationError("ENGINE_START_DISABLED", status_code=400, engine=engine_name)
 
         # Get the appropriate engine manager
         try:
             manager = _get_engine_manager(engine_type)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"[ENGINE_INVALID_TYPE]engineType:{engine_type};error:{str(e)}")
+            raise ApplicationError("ENGINE_INVALID_TYPE", status_code=400, engineType=engine_type, error=str(e))
 
         # Check if engine exists using DB lookup (Single Source of Truth)
         metadata = manager.get_engine_metadata(engine_name)
 
         if not metadata:
-            raise HTTPException(
-                status_code=400,
-                detail=f"[ENGINE_NOT_FOUND]engine:{engine_name};type:{engine_type}"
-            )
+            raise ApplicationError("ENGINE_NOT_FOUND", status_code=400, engine=engine_name, type=engine_type)
 
         # Get model name from request or use default
         # Audio engines don't have models, so model_name can be None for them
@@ -1128,10 +1157,7 @@ async def start_engine(
 
         # Validate that we have a model (except for audio engines which don't need one)
         if not model_name and engine_type != 'audio':
-            raise HTTPException(
-                status_code=400,
-                detail=f"[ENGINE_NO_MODEL_DISCOVERED]engine:{engine_name};hint:Run model discovery first"
-            )
+            raise ApplicationError("ENGINE_NO_MODEL_DISCOVERED", status_code=400, engine=engine_name, hint="Run model discovery first")
 
         # Start the engine using start_by_variant for consistent handling
         logger.info(f"Starting {engine_type} engine '{engine_name}' (base: {base_engine_name}) with model '{model_name}'")
@@ -1143,8 +1169,8 @@ async def start_engine(
             message=f"Engine '{engine_name}' started successfully on port {port}"
         )
 
-    except HTTPException:
-        # Re-raise HTTP exceptions
+    except ApplicationError:
+        # Re-raise application exceptions
         raise
     except EngineStartupCancelledError:
         # Engine was stopped during startup - not an error, user intentionally cancelled
@@ -1155,7 +1181,7 @@ async def start_engine(
         )
     except Exception as e:
         logger.error(f"Failed to start engine {engine_name}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[ENGINE_START_FAILED]error:{str(e)}")
+        raise ApplicationError("ENGINE_START_FAILED", status_code=500, error=str(e))
 
 
 @router.post("/{engine_type}/{engine_name}/stop", response_model=MessageResponse)
@@ -1187,16 +1213,13 @@ async def stop_engine(
         try:
             manager = _get_engine_manager(engine_type)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"[ENGINE_INVALID_TYPE]engineType:{engine_type};error:{str(e)}")
+            raise ApplicationError("ENGINE_INVALID_TYPE", status_code=400, engineType=engine_type, error=str(e))
 
         # Check if engine exists using DB lookup (Single Source of Truth)
         metadata = manager.get_engine_metadata(engine_name)
 
         if not metadata:
-            raise HTTPException(
-                status_code=400,
-                detail=f"[ENGINE_NOT_FOUND]engine:{engine_name};type:{engine_type}"
-            )
+            raise ApplicationError("ENGINE_NOT_FOUND", status_code=400, engine=engine_name, type=engine_type)
 
         # Check if engine is actually running
         if not manager.is_engine_running(engine_name):
@@ -1214,12 +1237,12 @@ async def stop_engine(
             message=f"Engine '{engine_name}' stopped successfully"
         )
 
-    except HTTPException:
-        # Re-raise HTTP exceptions
+    except ApplicationError:
+        # Re-raise application exceptions
         raise
     except Exception as e:
         logger.error(f"Failed to stop engine {engine_name}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[ENGINE_STOP_FAILED]error:{str(e)}")
+        raise ApplicationError("ENGINE_STOP_FAILED", status_code=500, error=str(e))
 
 
 @router.post("/{engine_type}/default/{engine_name}", response_model=MessageResponse)
@@ -1257,6 +1280,12 @@ async def set_default_engine(
                     if eng['variant_id'] != engine_name:
                         if manager.is_engine_running(eng['variant_id']):
                             engines_to_stop.append(eng['variant_id'])
+                            logger.debug(
+                                "set_default_engine: detected running engine to stop",
+                                engine_type=engine_type,
+                                new_default=engine_name,
+                                running_variant=eng['variant_id']
+                            )
             except Exception as e:
                 logger.warning(f"Failed to check running engines before default switch: {e}")
 
@@ -1281,10 +1310,10 @@ async def set_default_engine(
         )
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"[ENGINE_SET_DEFAULT_FAILED]engineType:{engine_type};engineName:{engine_name};error:{str(e)}")
+        raise ApplicationError("ENGINE_SET_DEFAULT_FAILED", status_code=400, engineType=engine_type, engineName=engine_name, error=str(e))
     except Exception as e:
         logger.error(f"Failed to set default engine: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[ENGINE_SET_DEFAULT_FAILED]engineType:{engine_type};engineName:{engine_name};error:{str(e)}")
+        raise ApplicationError("ENGINE_SET_DEFAULT_FAILED", status_code=500, engineType=engine_type, engineName=engine_name, error=str(e))
 
 
 @router.delete("/{engine_type}/default", response_model=MessageResponse)
@@ -1339,10 +1368,10 @@ async def clear_default_engine(
         )
 
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"[ENGINE_CLEAR_DEFAULT_FAILED]engineType:{engine_type};error:{str(e)}")
+        raise ApplicationError("ENGINE_CLEAR_DEFAULT_FAILED", status_code=400, engineType=engine_type, error=str(e))
     except Exception as e:
         logger.error(f"Failed to clear default engine: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[ENGINE_CLEAR_DEFAULT_FAILED]engineType:{engine_type};error:{str(e)}")
+        raise ApplicationError("ENGINE_CLEAR_DEFAULT_FAILED", status_code=500, engineType=engine_type, error=str(e))
 
 
 class KeepRunningRequest(CamelCaseModel):
@@ -1381,25 +1410,19 @@ async def set_engine_keep_running(
         # Validate engine type
         valid_types = ['tts', 'text', 'stt', 'audio']
         if engine_type not in valid_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"[ENGINE_INVALID_TYPE]type:{engine_type};valid:{', '.join(valid_types)}"
-            )
+            raise ApplicationError("ENGINE_INVALID_TYPE", status_code=400, type=engine_type, valid=", ".join(valid_types))
 
         # Get the appropriate engine manager to verify engine exists
         try:
             manager = _get_engine_manager(engine_type)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"[ENGINE_INVALID_TYPE]engineType:{engine_type};error:{str(e)}")
+            raise ApplicationError("ENGINE_INVALID_TYPE", status_code=400, engineType=engine_type, error=str(e))
 
         # Check if engine exists using DB lookup (Single Source of Truth)
         metadata = manager.get_engine_metadata(engine_name)
 
         if not metadata:
-            raise HTTPException(
-                status_code=400,
-                detail=f"[ENGINE_NOT_FOUND]engine:{engine_name};type:{engine_type}"
-            )
+            raise ApplicationError("ENGINE_NOT_FOUND", status_code=400, engine=engine_name, type=engine_type)
 
         # Update keep_running flag in settings
         settings_service = SettingsService(conn)
@@ -1413,12 +1436,12 @@ async def set_engine_keep_running(
             message=f"Keep-running {action} for variant '{engine_name}'"
         )
 
-    except HTTPException:
-        # Re-raise HTTP exceptions
+    except ApplicationError:
+        # Re-raise application exceptions
         raise
     except Exception as e:
         logger.error(f"Failed to set keep-running for engine {engine_name}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[ENGINE_KEEP_RUNNING_FAILED]engineType:{engine_type};engineName:{engine_name};error:{str(e)}")
+        raise ApplicationError("ENGINE_KEEP_RUNNING_FAILED", status_code=500, engineType=engine_type, engineName=engine_name, error=str(e))
 
 
 class EngineSettingsRequest(CamelCaseModel):
@@ -1462,19 +1485,13 @@ async def update_engine_settings(
         # Validate engine type
         valid_types = ['tts', 'text', 'stt', 'audio']
         if engine_type not in valid_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"[ENGINE_INVALID_TYPE]type:{engine_type};valid:{', '.join(valid_types)}"
-            )
+            raise ApplicationError("ENGINE_INVALID_TYPE", status_code=400, type=engine_type, valid=", ".join(valid_types))
 
         # Check if engine exists in DB
         engine_repo = EngineRepository(conn)
         engine = engine_repo.get_by_id(engine_name)
         if not engine:
-            raise HTTPException(
-                status_code=400,
-                detail=f"[ENGINE_NOT_FOUND]engine:{engine_name};type:{engine_type}"
-            )
+            raise ApplicationError("ENGINE_NOT_FOUND", status_code=400, engine=engine_name, type=engine_type)
 
         # Update default model in engine_models table (SSOT for models)
         updated_fields = []
@@ -1483,10 +1500,7 @@ async def update_engine_settings(
             if model_repo.set_default_model(engine_name, request.default_model_name):
                 updated_fields.append(f"model={request.default_model_name}")
             else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"[MODEL_NOT_FOUND]engine:{engine_name};model:{request.default_model_name}"
-                )
+                raise ApplicationError("MODEL_NOT_FOUND", status_code=400, engine=engine_name, model=request.default_model_name)
 
         # Update other settings in engines table
         engine_repo.update_settings(
@@ -1506,11 +1520,11 @@ async def update_engine_settings(
             message=f"Updated settings for '{engine_name}': {', '.join(updated_fields) or 'no changes'}"
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to update settings for engine {engine_name}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[ENGINE_SETTINGS_UPDATE_FAILED]engineType:{engine_type};engineName:{engine_name};error:{str(e)}")
+        raise ApplicationError("ENGINE_SETTINGS_UPDATE_FAILED", status_code=500, engineType=engine_type, engineName=engine_name, error=str(e))
 
 
 # ============================================================================
@@ -1567,15 +1581,16 @@ async def discover_docker_engine(
 
         # Check Docker availability
         if not is_docker_available():
-            raise HTTPException(
-                status_code=503,
-                detail="[DOCKER_NOT_AVAILABLE]message:Docker daemon is not running"
-            )
+            raise ApplicationError("DOCKER_NOT_AVAILABLE", status_code=503, message="Docker daemon is not running")
 
         # Initialize discovery service
         discovery_service = DockerDiscoveryService()
 
         # Discover engine from image
+        logger.debug(
+            f"[engines] discover_docker_engine START "
+            f"image={request.docker_image}:{request.docker_tag}"
+        )
         logger.info(f"Discovering Docker engine from {request.docker_image}:{request.docker_tag}")
         result = await discovery_service.discover_engine(
             docker_image=request.docker_image,
@@ -1596,6 +1611,11 @@ async def discover_docker_engine(
         # Note: requires_gpu is already correctly set by docker_discovery_service
         # which matches the docker_tag to the correct variant.
         # No fallback needed - discovery service handles this.
+        logger.debug(
+            f"[engines] discover_docker_engine DONE name={result.engine_info.name if result.engine_info else 'unknown'} "
+            f"type={result.engine_info.type if result.engine_info else 'unknown'} "
+            f"requires_gpu={result.engine_info.requires_gpu if result.engine_info else 'unknown'}"
+        )
         logger.info(f"Successfully discovered engine: {result.engine_info.name if result.engine_info else 'unknown'}")
         return DockerDiscoverResponse(
             success=True,
@@ -1603,7 +1623,7 @@ async def discover_docker_engine(
             error=None
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to discover Docker engine: {e}", exc_info=True)
@@ -1652,10 +1672,7 @@ async def register_docker_engine(
         engine_repo = EngineRepository(conn)
         existing_engine = engine_repo.get_by_id(variant_id)
         if existing_engine:
-            raise HTTPException(
-                status_code=400,
-                detail=f"[ENGINE_ALREADY_EXISTS]variantId:{variant_id}"
-            )
+            raise ApplicationError("ENGINE_ALREADY_EXISTS", status_code=400, variantId=variant_id)
 
         # Ensure Docker host exists in engine_hosts table
         host_repo = EngineHostRepository(conn)
@@ -1790,7 +1807,7 @@ async def register_docker_engine(
             error=None
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to register Docker engine: {e}", exc_info=True)
@@ -1835,36 +1852,30 @@ async def discover_models(
         engine = engine_repo.get_by_id(variant_id)
 
         if not engine:
-            raise HTTPException(
-                status_code=404,
-                detail=f"[ENGINE_NOT_FOUND]variantId:{variant_id}"
-            )
+            raise ApplicationError("ENGINE_NOT_FOUND", status_code=404, variantId=variant_id)
 
         engine_type = engine.get("engine_type")
         if not engine_type:
-            raise HTTPException(
-                status_code=400,
-                detail=f"[ENGINE_TYPE_UNKNOWN]variantId:{variant_id}"
-            )
+            raise ApplicationError("ENGINE_TYPE_UNKNOWN", status_code=400, variantId=variant_id)
 
         # Get the appropriate engine manager
         try:
             manager = _get_engine_manager(engine_type)
         except ValueError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"[ENGINE_INVALID_TYPE]engineType:{engine_type};error:{str(e)}"
-            )
+            raise ApplicationError("ENGINE_INVALID_TYPE", status_code=400, engineType=engine_type, error=str(e))
 
         # Check if engine exists using DB lookup (Single Source of Truth)
         metadata = manager.get_engine_metadata(variant_id)
         if not metadata:
-            raise HTTPException(
-                status_code=404,
-                detail=f"[ENGINE_NOT_REGISTERED]variantId:{variant_id}"
-            )
+            raise ApplicationError("ENGINE_NOT_REGISTERED", status_code=404, variantId=variant_id)
 
         # Run discovery
+        logger.debug(
+            "discover_models: starting discovery",
+            variant_id=variant_id,
+            engine_type=engine_type,
+            is_running=manager.is_engine_running(variant_id)
+        )
         logger.info(f"Starting model discovery for {variant_id}")
         discovered = await manager.discover_engine_models(variant_id)
 
@@ -1887,13 +1898,10 @@ async def discover_models(
             message=f"Discovered {len(model_names)} models for {variant_id}"
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Model discovery failed for {variant_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"[MODEL_DISCOVERY_FAILED]variantId:{variant_id};error:{str(e)}"
-        )
+        raise ApplicationError("MODEL_DISCOVERY_FAILED", status_code=500, variantId=variant_id, error=str(e))
 
 

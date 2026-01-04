@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import sqlite3
 import uuid
+from loguru import logger
 
 
 def utc_now_iso() -> str:
@@ -44,6 +45,12 @@ class ProjectRepository:
         max_order = cursor.fetchone()[0]
         order_index = 0 if max_order is None else max_order + 1
 
+        logger.debug(
+            "[ProjectRepository] create order_index calculation",
+            max_order=max_order,
+            new_order_index=order_index
+        )
+
         cursor.execute(
             """
             INSERT INTO projects (id, title, description, order_index, created_at, updated_at)
@@ -53,6 +60,7 @@ class ProjectRepository:
         )
         self.conn.commit()
 
+        logger.debug(f"[ProjectRepository] create project_id={project_id} title='{title}' order_index={order_index}")
         return self.get_by_id(project_id)
 
     def get_by_id(self, project_id: str) -> Optional[Dict[str, Any]]:
@@ -102,7 +110,9 @@ class ProjectRepository:
         cursor = self.conn.cursor()
         cursor.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         self.conn.commit()
-        return cursor.rowcount > 0
+        deleted = cursor.rowcount > 0
+        logger.debug(f"[ProjectRepository] delete project_id={project_id} deleted={deleted}")
+        return deleted
 
     def reorder_batch(self, project_ids: List[str]) -> bool:
         """
@@ -149,6 +159,7 @@ class ChapterRepository:
         )
         self.conn.commit()
 
+        logger.debug(f"[ChapterRepository] create chapter_id={chapter_id} project_id={project_id} title='{title}' order_index={order_index}")
         return self.get_by_id(chapter_id)
 
     def get_by_id(self, chapter_id: str) -> Optional[Dict[str, Any]]:
@@ -203,7 +214,9 @@ class ChapterRepository:
         cursor = self.conn.cursor()
         cursor.execute("DELETE FROM chapters WHERE id = ?", (chapter_id,))
         self.conn.commit()
-        return cursor.rowcount > 0
+        deleted = cursor.rowcount > 0
+        logger.debug(f"[ChapterRepository] delete chapter_id={chapter_id} deleted={deleted}")
+        return deleted
 
     def reorder_batch(self, chapter_ids: List[str], project_id: str) -> bool:
         """
@@ -341,6 +354,10 @@ class SegmentRepository:
         )
         self.conn.commit()
 
+        logger.debug(
+            f"[SegmentRepository] create segment_id={segment_id} chapter_id={chapter_id} "
+            f"order_index={order_index} text_length={len(text)} type={segment_type}"
+        )
         return self.get_by_id(segment_id)
 
     def get_by_id(self, segment_id: str) -> Optional[Dict[str, Any]]:
@@ -487,6 +504,14 @@ class SegmentRepository:
         )
         self.conn.commit()
 
+        # Build list of updated field names (exclude updated_at)
+        updated_fields = [u.split(' = ')[0] for u in updates[:-1]]
+        logger.debug(
+            "[SegmentRepository] update single segment",
+            segment_id=segment_id,
+            field_count=len(updated_fields),
+            fields=updated_fields
+        )
         return self.get_by_id(segment_id)
 
     def set_frozen(self, segment_id: str, is_frozen: bool) -> Dict[str, Any]:
@@ -547,6 +572,7 @@ class SegmentRepository:
         )
 
         self.conn.commit()
+        logger.debug(f"[SegmentRepository] delete segment_id={segment_id} chapter_id={chapter_id}")
         return True
 
     def reorder_batch(self, segment_ids: List[str], chapter_id: str) -> bool:
@@ -570,6 +596,11 @@ class SegmentRepository:
             )
 
         self.conn.commit()
+        logger.debug(
+            "[SegmentRepository] reorder_batch completed",
+            chapter_id=chapter_id,
+            segment_count=len(segment_ids)
+        )
         return True
 
     def move_to_chapter(self, segment_id: str, new_chapter_id: str, new_order_index: int) -> Dict[str, Any]:
@@ -878,6 +909,10 @@ class TTSJobRepository:
         ))
         self.conn.commit()
 
+        logger.debug(
+            f"[TTSJobRepository] create job_id={job_id} chapter_id={chapter_id} "
+            f"total_segments={total_segments} engine={tts_engine}"
+        )
         return self.get_by_id(job_id)
 
     def get_by_id(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -944,14 +979,22 @@ class TTSJobRepository:
                 self.conn.commit()
 
                 # Return fresh job data with updated started_at
-                return self.get_by_id(job_id)
+                job = self.get_by_id(job_id)
+                logger.debug(
+                    "[TTSJobRepository] get_next_pending_job found job",
+                    job_id=job_id,
+                    chapter_id=job.get('chapter_id') if job else None,
+                    total_segments=job.get('total_segments') if job else None,
+                    engine=job.get('tts_engine') if job else None
+                )
+                return job
             else:
                 self.conn.rollback()
+                logger.debug("[TTSJobRepository] get_next_pending_job no pending jobs found")
                 return None
 
         except Exception as e:
             self.conn.rollback()
-            from loguru import logger
             logger.error(f"Failed to get next job: {e}")
             raise
 
@@ -999,6 +1042,11 @@ class TTSJobRepository:
         """, params)
         self.conn.commit()
 
+        logger.debug(
+            f"[TTSJobRepository] update_progress job_id={job_id} "
+            f"processed={processed_segments} failed={failed_segments} current={current_segment_id}"
+        )
+
     def mark_segment_completed(self, job_id: str, segment_id: str):
         """
         Mark a specific segment as completed within the job
@@ -1035,7 +1083,6 @@ class TTSJobRepository:
                 break
 
         if not updated:
-            from loguru import logger
             logger.warning(f"Segment {segment_id} not found in job {job_id} segment_ids")
             return
 
@@ -1062,6 +1109,7 @@ class TTSJobRepository:
             WHERE id = ?
         """, (now, now, job_id))
         self.conn.commit()
+        logger.debug(f"[TTSJobRepository] mark_completed job_id={job_id}")
 
     def mark_failed(self, job_id: str, error_message: str):
         """Mark job as failed"""
@@ -1076,7 +1124,6 @@ class TTSJobRepository:
             WHERE id = ?
         """, (error_message, now, now, job_id))
         self.conn.commit()
-        from loguru import logger
         logger.error(f"Job {job_id} failed: {error_message}")
 
     def get_latest_job_for_chapter(self, chapter_id: str) -> Optional[Dict[str, Any]]:
@@ -1188,7 +1235,6 @@ class TTSJobRepository:
         ))
         self.conn.commit()
 
-        from loguru import logger
         logger.info(f"Created segment job {job_id} for {len(segment_ids)} segment(s)")
 
         return self.get_by_id(job_id)
@@ -1216,7 +1262,6 @@ class TTSJobRepository:
         self.conn.commit()
 
         if affected > 0:
-            from loguru import logger
             logger.info(f"Cancellation requested for job {job_id}")
         return affected > 0
 
@@ -1238,7 +1283,6 @@ class TTSJobRepository:
         """, (now, now, job_id))
         self.conn.commit()
 
-        from loguru import logger
         logger.info(f"Job {job_id} marked as cancelled")
 
     def cancel_job(self, job_id: str):
@@ -1261,7 +1305,6 @@ class TTSJobRepository:
         self.conn.commit()
 
         if affected > 0:
-            from loguru import logger
             logger.info(f"Cancelled pending job {job_id}")
         return affected > 0
 
@@ -1326,7 +1369,6 @@ class TTSJobRepository:
         """, (json.dumps(remaining_segment_objs), job_id))
         self.conn.commit()
 
-        from loguru import logger
         logger.info(
             f"Resumed job {job_id}: {len(remaining_segment_objs)} remaining segments "
             f"({job.get('processed_segments', 0)}/{job.get('total_segments', 0)} already done)"
@@ -1347,7 +1389,6 @@ class TTSJobRepository:
             Number of jobs reset
         """
         import json
-        from loguru import logger
 
         cursor = self.conn.cursor()
 
@@ -1476,7 +1517,6 @@ class TTSJobRepository:
         affected = cursor.rowcount
         self.conn.commit()
 
-        from loguru import logger
         if affected > 0:
             logger.info(f"Deleted job {job_id}")
         else:
@@ -1506,7 +1546,6 @@ class TTSJobRepository:
         affected = cursor.rowcount
         self.conn.commit()
 
-        from loguru import logger
         logger.info(f"Deleted {affected} job(s) with status: {statuses}")
 
         return affected
@@ -1543,10 +1582,8 @@ class TTSJobRepository:
                     seg = segment_repo.get_by_id(seg_id)
                     if seg and seg['status'] in ('queued', 'processing'):
                         segment_repo.update(seg_id, status='pending')
-                        from loguru import logger
                         logger.debug(f"Reset segment {seg_id} to pending (job {job_id} deleted)")
                 except Exception as e:
-                    from loguru import logger
                     logger.error(f"Failed to reset segment {seg_id} during job deletion: {e}")
 
         # Delete the job

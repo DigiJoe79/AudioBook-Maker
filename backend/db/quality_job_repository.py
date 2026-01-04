@@ -125,7 +125,10 @@ class QualityJobRepository:
         ))
         self.conn.commit()
 
-        logger.debug(f"Created quality job {job_id} ({job_type}, {total_segments} segments)")
+        logger.debug(
+            f"[QualityJobRepository] create job_id={job_id} job_type={job_type} "
+            f"total_segments={total_segments} stt_engine={stt_engine} audio_engine={audio_engine}"
+        )
         return self.get_by_id(job_id)
 
     def get_by_id(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -229,6 +232,10 @@ class QualityJobRepository:
             WHERE id = ?
         """, (processed_segments, failed_segments, current_segment_id, job_id))
         self.conn.commit()
+        logger.debug(
+            f"[QualityJobRepository] update_progress job_id={job_id} "
+            f"processed={processed_segments} failed={failed_segments}"
+        )
 
     def mark_completed(self, job_id: str):
         """Mark job as completed."""
@@ -239,6 +246,7 @@ class QualityJobRepository:
             WHERE id = ?
         """, (utc_now_iso(), job_id))
         self.conn.commit()
+        logger.debug(f"[QualityJobRepository] mark_completed job_id={job_id}")
 
     def mark_failed(self, job_id: str, error_message: str):
         """Mark job as failed."""
@@ -249,6 +257,7 @@ class QualityJobRepository:
             WHERE id = ?
         """, (error_message, utc_now_iso(), job_id))
         self.conn.commit()
+        logger.debug(f"[QualityJobRepository] mark_failed job_id={job_id} error={error_message[:50]}...")
 
     def mark_cancelled(self, job_id: str):
         """Mark job as cancelled."""
@@ -311,6 +320,16 @@ class QualityJobRepository:
             WHERE id = ?
         """, (json.dumps(segment_objs), job_id))
         self.conn.commit()
+
+        # Count analyzed segments for logging
+        analyzed_count = sum(1 for s in segment_objs if s.get('job_status') == 'analyzed')
+        logger.debug(
+            "[QualityJobRepository] mark_segment_analyzed",
+            job_id=job_id,
+            segment_id=segment_id,
+            analyzed_count=analyzed_count,
+            total_segments=len(segment_objs)
+        )
 
     def resume_job(self, job_id: str) -> Dict[str, Any]:
         """

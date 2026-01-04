@@ -23,6 +23,8 @@ from docker.transport import SSHHTTPAdapter
 from docker import APIClient, DockerClient
 from loguru import logger
 
+from core.exceptions import ApplicationError
+
 # Suppress paramiko's verbose error logging for expected connection failures
 # (host reboots, network issues, etc.) - these are handled gracefully by DockerHostMonitor
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
@@ -75,6 +77,14 @@ class CustomSSHHTTPAdapter(SSHHTTPAdapter):
         self.custom_known_hosts_path = custom_known_hosts_path
         self.identity_file = identity_file
 
+        logger.debug(
+            "SSH adapter init",
+            base_url=base_url,
+            timeout=timeout,
+            known_hosts=str(custom_known_hosts_path) if custom_known_hosts_path else None,
+            identity_file=str(identity_file) if identity_file else None,
+        )
+
         # Don't call parent __init__ yet - we need to set up our path first
         # Parent's __init__ calls _create_paramiko_client which we override
         super().__init__(
@@ -98,9 +108,11 @@ class CustomSSHHTTPAdapter(SSHHTTPAdapter):
             base_url: SSH URL to connect to
         """
         self.ssh_client = paramiko.SSHClient()
+        logger.debug("Creating paramiko SSH client", base_url=base_url)
 
         # Load system host keys first (lower priority)
         self.ssh_client.load_system_host_keys()
+        logger.debug("Loaded system host keys")
 
         # Load our custom known_hosts (higher priority, can be saved)
         if self.custom_known_hosts_path and self.custom_known_hosts_path.exists():
@@ -119,6 +131,7 @@ class CustomSSHHTTPAdapter(SSHHTTPAdapter):
         # We use AutoAddPolicy because we manage host key verification ourselves
         # via the ParamikoHostKeyScanner before connection attempts
         self.ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        logger.debug("Set AutoAddPolicy for unknown hosts")
 
         # Parse the SSH URL
         parsed = urllib.parse.urlparse(base_url)
@@ -127,6 +140,12 @@ class CustomSSHHTTPAdapter(SSHHTTPAdapter):
             "port": parsed.port or 22,
             "username": parsed.username,
         }
+        logger.debug(
+            "Parsed SSH connection params",
+            hostname=self.ssh_params["hostname"],
+            port=self.ssh_params["port"],
+            username=self.ssh_params["username"],
+        )
 
         # Use identity file directly if provided (no ~/.ssh/config needed)
         if self.identity_file and self.identity_file.exists():
@@ -136,7 +155,15 @@ class CustomSSHHTTPAdapter(SSHHTTPAdapter):
             self.ssh_params["look_for_keys"] = False
             self.ssh_params["allow_agent"] = False
             logger.debug(
-                f"[CustomSSHHTTPAdapter] Using identity file: {self.identity_file}"
+                "Using explicit identity file",
+                identity_file=str(self.identity_file),
+                look_for_keys=False,
+                allow_agent=False,
+            )
+        else:
+            logger.debug(
+                "No identity file provided, using paramiko default key discovery",
+                identity_file=str(self.identity_file) if self.identity_file else None,
             )
 
 
@@ -185,6 +212,7 @@ class CustomSSHAPIClient(APIClient):
 
         # Now set up our custom SSH adapter
         # Pool sizes are 1 by default to avoid SSH channel exhaustion
+        logger.debug("Creating CustomSSHHTTPAdapter", ssh_url=self._ssh_base_url)
         self._custom_adapter = CustomSSHHTTPAdapter(
             base_url=self._ssh_base_url,
             timeout=timeout,
@@ -193,9 +221,12 @@ class CustomSSHAPIClient(APIClient):
         )
         self.mount("http+docker://ssh", self._custom_adapter)
         self.base_url = "http+docker://ssh"
+        logger.debug("Mounted SSH adapter at http+docker://ssh")
 
         # Now retrieve the actual API version from the remote Docker
+        logger.debug("Retrieving Docker API version from remote")
         self._version = self._retrieve_server_version()
+        logger.debug("Retrieved Docker API version", version=self._version)
 
 
 def create_docker_client_with_custom_ssh(
@@ -231,6 +262,13 @@ def create_docker_client_with_custom_ssh(
         )
         client.ping()
     """
+    logger.debug(
+        "Creating Docker client with custom SSH",
+        ssh_url=ssh_url,
+        known_hosts_path=str(known_hosts_path) if known_hosts_path else None,
+        identity_file=str(identity_file) if identity_file else None,
+        timeout=timeout,
+    )
     try:
         # Create API client with our custom SSH handling
         api_client = CustomSSHAPIClient(
@@ -245,9 +283,10 @@ def create_docker_client_with_custom_ssh(
         client = DockerClient.__new__(DockerClient)
         client.api = api_client
 
+        logger.debug("Docker client created successfully", ssh_url=ssh_url)
         return client
 
     except Exception as e:
         # DEBUG level - caller handles and logs appropriately
-        logger.debug(f"[CustomSSHAdapter] Failed to create client: {e}")
-        raise RuntimeError(f"[DOCKER_CLIENT_CREATION_FAILED]error:{e}")
+        logger.debug("Failed to create Docker client", ssh_url=ssh_url, error=str(e))
+        raise ApplicationError("DOCKER_CLIENT_CREATION_FAILED", status_code=503, host=ssh_url, error=str(e))

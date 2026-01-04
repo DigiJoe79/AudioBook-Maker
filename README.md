@@ -2,11 +2,11 @@
 
 > A modern desktop application for creating audiobooks with advanced text-to-speech and voice cloning capabilities
 
-[![Version](https://img.shields.io/badge/version-1.1.1-blue.svg)](https://github.com/DigiJoe79/audiobook-maker/releases)
+[![Version](https://img.shields.io/badge/version-1.1.2-blue.svg)](https://github.com/DigiJoe79/audiobook-maker/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://tauri.app)
 
-> **v1.1.1** - Hotfix for remote backend connectivity. See [Release Notes](docs/releases/RELEASE_v1.1.1.md).
+> **v1.1.2** - Simplified error handling with unified ApplicationError. See [Release Notes](docs/releases/RELEASE_v1.1.2.md).
 >
 > **v1.1.0** - Docker-based deployment, Remote GPU hosts, Engine variants. See [Release Notes](docs/releases/RELEASE_v1.1.0.md).
 
@@ -282,6 +282,16 @@ When the backend is running:
 
 ## Troubleshooting
 
+### Enabling debug logs
+Add `-e LOG_LEVEL=DEBUG` to the backend container for detailed logging. This is automatically passed through to engine containers.
+
+```bash
+docker run -d \
+  --name audiobook-maker-backend \
+  -e LOG_LEVEL=DEBUG \
+  ...
+```
+
 ### Backend container won't start
 ```bash
 # Check logs
@@ -310,6 +320,33 @@ docker run --rm --gpus all nvidia/cuda:11.8.0-base-ubuntu22.04 nvidia-smi
 - Verify SSH key is in remote `~/.ssh/authorized_keys`
 - Check firewall allows SSH (port 22)
 - Test manually: `ssh user@host`
+
+### Engine health checks fail with "Name or service not known"
+This happens when running the backend container in a custom network (e.g., macvlan, custom bridge) where `host-gateway` doesn't resolve correctly.
+
+**Symptoms:**
+- Engine containers start but immediately stop
+- Logs show: `Health check failed: [Errno -2] Name or service not known`
+
+**Solutions:**
+
+1. **Use host network mode** (recommended for NAS systems like Unraid):
+   ```bash
+   docker run -d \
+     --name audiobook-maker-backend \
+     --network host \
+     --add-host=host.docker.internal:host-gateway \
+     -e DOCKER_ENGINE_HOST=host.docker.internal \
+     -v /var/run/docker.sock:/var/run/docker.sock \
+     -v audiobook-data:/app/data \
+     -v audiobook-media:/app/media \
+     ghcr.io/digijoe79/audiobook-maker/backend:latest
+   ```
+
+2. **Or use explicit host IP**:
+   ```bash
+   -e DOCKER_ENGINE_HOST=192.168.1.X  # Your server's actual IP
+   ```
 
 
 ## Tech Stack

@@ -1,12 +1,13 @@
 """
 API endpoints for segment management
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 import sqlite3
 from loguru import logger
 
+from core.exceptions import ApplicationError
 from db.database import get_db
 from db.repositories import SegmentRepository
 from models.response_models import SegmentResponse, DeleteResponse, ReorderResponse, to_camel
@@ -137,11 +138,11 @@ async def create_segment(
             )
 
         return new_segment
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to create segment: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[SEGMENT_CREATE_FAILED]error:{str(e)}")
+        raise ApplicationError("SEGMENT_CREATE_FAILED", status_code=500, error=str(e))
 
 
 @router.get("/segments/{segment_id}", response_model=SegmentResponse)
@@ -156,14 +157,14 @@ async def get_segment(segment_id: str, conn: sqlite3.Connection = Depends(get_db
 
         segment = segment_repo.get_by_id(segment_id)
         if not segment:
-            raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+            raise ApplicationError("SEGMENT_NOT_FOUND", status_code=404, segmentId=segment_id)
 
         return segment
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to get segment {segment_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[SEGMENT_GET_FAILED]segmentId:{segment_id};error:{str(e)}")
+        raise ApplicationError("SEGMENT_GET_FAILED", status_code=500, segmentId=segment_id, error=str(e))
 
 
 @router.put("/segments/{segment_id}", response_model=SegmentResponse)
@@ -204,7 +205,7 @@ async def update_segment(
         )
 
         if not updated:
-            raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+            raise ApplicationError("SEGMENT_NOT_FOUND", status_code=404, segmentId=segment_id)
 
         # Broadcast SSE event for real-time UI updates (including MSE player hot-swap)
         logger.debug(f"Broadcasting segment.updated event: segmentId={updated['id']}, chapterId={updated['chapter_id']}")
@@ -220,11 +221,11 @@ async def update_segment(
         )
 
         return updated
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to update segment {segment_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[SEGMENT_UPDATE_FAILED]segmentId:{segment_id};error:{str(e)}")
+        raise ApplicationError("SEGMENT_UPDATE_FAILED", status_code=500, segmentId=segment_id, error=str(e))
 
 
 @router.delete("/segments/{segment_id}", response_model=DeleteResponse)
@@ -245,7 +246,7 @@ async def delete_segment(segment_id: str, conn: sqlite3.Connection = Depends(get
         # Get segment to delete its audio file
         segment = segment_repo.get_by_id(segment_id)
         if not segment:
-            raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+            raise ApplicationError("SEGMENT_NOT_FOUND", status_code=404, segmentId=segment_id)
 
         # Delete audio file if it exists
         if segment.get('audio_path'):
@@ -268,7 +269,7 @@ async def delete_segment(segment_id: str, conn: sqlite3.Connection = Depends(get
 
         # Delete segment from database
         if not segment_repo.delete(segment_id):
-            raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+            raise ApplicationError("SEGMENT_NOT_FOUND", status_code=404, segmentId=segment_id)
 
         chapter_id = segment.get("chapter_id")
 
@@ -298,11 +299,11 @@ async def delete_segment(segment_id: str, conn: sqlite3.Connection = Depends(get
             success=True,
             message="Segment deleted"
         )
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to delete segment {segment_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[SEGMENT_DELETE_FAILED]segmentId:{segment_id};error:{str(e)}")
+        raise ApplicationError("SEGMENT_DELETE_FAILED", status_code=500, segmentId=segment_id, error=str(e))
 
 
 @router.post("/segments/reorder", response_model=ReorderResponse)
@@ -322,12 +323,9 @@ async def reorder_segments(
         for segment_id in data.segment_ids:
             segment = segment_repo.get_by_id(segment_id)
             if not segment:
-                raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+                raise ApplicationError("SEGMENT_NOT_FOUND", status_code=404, segmentId=segment_id)
             if segment['chapter_id'] != data.chapter_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"[SEGMENT_CHAPTER_MISMATCH]segmentId:{segment_id};chapterId:{data.chapter_id}"
-                )
+                raise ApplicationError("SEGMENT_CHAPTER_MISMATCH", status_code=400, segmentId=segment_id, chapterId=data.chapter_id)
 
         # Reorder
         segment_repo.reorder_batch(data.segment_ids, data.chapter_id)
@@ -347,11 +345,11 @@ async def reorder_segments(
             message=f"Reordered {len(data.segment_ids)} segments",
             count=len(data.segment_ids)
         )
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to reorder segments: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[SEGMENT_REORDER_FAILED]chapterId:{data.chapter_id};error:{str(e)}")
+        raise ApplicationError("SEGMENT_REORDER_FAILED", status_code=500, chapterId=data.chapter_id, error=str(e))
 
 
 @router.put("/segments/{segment_id}/move", response_model=SegmentResponse)
@@ -374,11 +372,17 @@ async def move_segment(
         # Validate segment exists
         segment = segment_repo.get_by_id(segment_id)
         if not segment:
-            raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+            raise ApplicationError("SEGMENT_NOT_FOUND", status_code=404, segmentId=segment_id)
 
         # Validate new chapter exists
         if not chapter_repo.get_by_id(data.new_chapter_id):
-            raise HTTPException(status_code=404, detail=f"[TARGET_CHAPTER_NOT_FOUND]chapterId:{data.new_chapter_id}")
+            raise ApplicationError("TARGET_CHAPTER_NOT_FOUND", status_code=404, chapterId=data.new_chapter_id)
+
+        logger.debug(
+            f"[segments] move_segment segment_id={segment_id} "
+            f"from_chapter={segment['chapter_id']} to_chapter={data.new_chapter_id} "
+            f"new_order_index={data.new_order_index}"
+        )
 
         # Move segment
         updated_segment = segment_repo.move_to_chapter(
@@ -388,11 +392,11 @@ async def move_segment(
         )
 
         return updated_segment
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to move segment {segment_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[SEGMENT_MOVE_FAILED]segmentId:{segment_id};targetChapterId:{data.new_chapter_id};error:{str(e)}")
+        raise ApplicationError("SEGMENT_MOVE_FAILED", status_code=500, segmentId=segment_id, targetChapterId=data.new_chapter_id, error=str(e))
 
 
 class FreezeSegmentRequest(BaseModel):
@@ -429,13 +433,18 @@ async def toggle_freeze_segment(
     # Validate segment exists
     segment = segment_repo.get_by_id(segment_id)
     if not segment:
-        raise HTTPException(status_code=404, detail=f"[SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+        raise ApplicationError("SEGMENT_NOT_FOUND", status_code=404, segmentId=segment_id)
+
+    logger.debug(
+        f"[segments] toggle_freeze_segment segment_id={segment_id} "
+        f"freeze={data.freeze} chapter_id={segment['chapter_id']}"
+    )
 
     # Update frozen status
     try:
         updated_segment = segment_repo.set_frozen(segment_id, data.freeze)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=f"[SEGMENT_FREEZE_FAILED]segmentId:{segment_id};error:{str(e)}")
+        raise ApplicationError("SEGMENT_FREEZE_FAILED", status_code=404, segmentId=segment_id, error=str(e))
 
     # Broadcast SSE event
     event_type = EventType.SEGMENT_FROZEN if data.freeze else EventType.SEGMENT_UNFROZEN

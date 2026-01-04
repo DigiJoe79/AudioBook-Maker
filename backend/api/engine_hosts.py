@@ -7,7 +7,8 @@ Replaces docker_hosts.py with unified host management.
 
 import asyncio
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
+from core.exceptions import ApplicationError
 import sqlite3
 import os
 
@@ -69,42 +70,56 @@ async def list_hosts(conn: sqlite3.Connection = Depends(get_db)):
 
     Returns all hosts including local subprocess, local Docker, and remote Docker.
     """
-    host_repo = EngineHostRepository(conn)
-    engine_repo = EngineRepository(conn)
+    try:
+        host_repo = EngineHostRepository(conn)
+        engine_repo = EngineRepository(conn)
 
-    hosts = host_repo.get_all()
+        hosts = host_repo.get_all()
 
-    # Filter subprocess host when not available (backend in Docker)
-    if not is_subprocess_available():
-        hosts = [h for h in hosts if h["host_id"] != "local"]
+        # Filter subprocess host when not available (backend in Docker)
+        subprocess_available = is_subprocess_available()
+        logger.debug("Subprocess availability check", available=subprocess_available)
+        if not subprocess_available:
+            hosts = [h for h in hosts if h["host_id"] != "local"]
 
-    # Enrich with engine count
-    host_responses = []
-    for host in hosts:
-        engines = engine_repo.get_by_host(host["host_id"])
-        host_responses.append(EngineHostResponse(
-            **host,
-            engine_count=len(engines)
-        ))
+        # Enrich with engine count
+        host_responses = []
+        for host in hosts:
+            engines = engine_repo.get_by_host(host["host_id"])
+            host_responses.append(EngineHostResponse(
+                **host,
+                engine_count=len(engines)
+            ))
 
-    return EngineHostsListResponse(
-        hosts=host_responses,
-        count=len(hosts)
-    )
+        return EngineHostsListResponse(
+            hosts=host_responses,
+            count=len(hosts)
+        )
+    except ApplicationError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list engine hosts: {e}")
+        raise ApplicationError("HOST_LIST_FAILED", status_code=500, error=str(e))
 
 
 @router.get("/{host_id}", response_model=EngineHostResponse)
 async def get_host(host_id: str, conn: sqlite3.Connection = Depends(get_db)):
     """Get a specific engine host."""
-    host_repo = EngineHostRepository(conn)
-    engine_repo = EngineRepository(conn)
+    try:
+        host_repo = EngineHostRepository(conn)
+        engine_repo = EngineRepository(conn)
 
-    host = host_repo.get_by_id(host_id)
-    if not host:
-        raise HTTPException(status_code=404, detail=f"[HOST_NOT_FOUND]hostId:{host_id}")
+        host = host_repo.get_by_id(host_id)
+        if not host:
+            raise ApplicationError("HOST_NOT_FOUND", status_code=404, hostId=host_id)
 
-    engines = engine_repo.get_by_host(host_id)
-    return EngineHostResponse(**host, engine_count=len(engines))
+        engines = engine_repo.get_by_host(host_id)
+        return EngineHostResponse(**host, engine_count=len(engines))
+    except ApplicationError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get engine host {host_id}: {e}")
+        raise ApplicationError("HOST_GET_FAILED", status_code=500, hostId=host_id, error=str(e))
 
 
 @router.post("", response_model=EngineHostResponse)
@@ -121,30 +136,38 @@ async def create_host(
     If host_id is provided (from /prepare endpoint), uses that ID and updates
     the SSH config to use the managed key.
     """
-    host_repo = EngineHostRepository(conn)
+    try:
+        host_repo = EngineHostRepository(conn)
 
-    host = host_repo.add_docker_host(
-        name=request.name,
-        ssh_url=request.ssh_url,
-        host_id=request.host_id
-    )
+        host = host_repo.add_docker_host(
+            name=request.name,
+            ssh_url=request.ssh_url,
+            host_id=request.host_id
+        )
 
-    # Update has_gpu if provided from test result
-    if request.has_gpu is not None:
-        host = host_repo.set_has_gpu(host['host_id'], request.has_gpu)
+        # Update has_gpu if provided from test result
+        if request.has_gpu is not None:
+            host = host_repo.set_has_gpu(host['host_id'], request.has_gpu)
 
-    # Update SSH config if we have a managed key for this host
-    ssh_key_service = get_ssh_key_service()
-    if ssh_key_service.has_key_pair(host['host_id']):
-        ssh_key_service.update_ssh_config(host['host_id'], request.ssh_url)
-        logger.info(f"Configured SSH for host {host['host_id']} with managed key")
+        # Update SSH config if we have a managed key for this host
+        ssh_key_service = get_ssh_key_service()
+        has_managed_key = ssh_key_service.has_key_pair(host['host_id'])
+        logger.debug("SSH key configuration attempt", host_id=host['host_id'], has_managed_key=has_managed_key)
+        if has_managed_key:
+            ssh_key_service.update_ssh_config(host['host_id'], request.ssh_url)
+            logger.info(f"Configured SSH for host {host['host_id']} with managed key")
 
-    logger.info(f"Created engine host: {host['host_id']} ({request.ssh_url}), GPU: {request.has_gpu}")
+        logger.info(f"Created engine host: {host['host_id']} ({request.ssh_url}), GPU: {request.has_gpu}")
 
-    # Start monitoring the new host
-    asyncio.create_task(docker_host_monitor.add_host(host['host_id']))
+        # Start monitoring the new host
+        asyncio.create_task(docker_host_monitor.add_host(host['host_id']))
 
-    return EngineHostResponse(**host, engine_count=0)
+        return EngineHostResponse(**host, engine_count=0)
+    except ApplicationError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create engine host: {e}")
+        raise ApplicationError("HOST_CREATE_FAILED", status_code=500, error=str(e))
 
 
 @router.post("/prepare", response_model=PrepareHostResponse)
@@ -160,35 +183,38 @@ async def prepare_host(request: PrepareHostRequest):
     Returns:
         PrepareHostResponse with host_id, public key, and install command
     """
-    import uuid
-
-    # Generate a unique host ID with docker: prefix for consistency
-    # Format: docker:abc123 (matches variant runner_id format)
-    host_id = f"docker:{uuid.uuid4().hex[:8]}"
-
-    # Generate SSH key pair
-    ssh_key_service = get_ssh_key_service()
     try:
-        private_key_path, public_key = ssh_key_service.generate_key_pair(host_id)
-    except RuntimeError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"[SSH_KEY_GENERATION_FAILED]error:{str(e)}"
+        import uuid
+
+        # Generate a unique host ID with docker: prefix for consistency
+        # Format: docker:abc123 (matches variant runner_id format)
+        host_id = f"docker:{uuid.uuid4().hex[:8]}"
+
+        # Generate SSH key pair
+        ssh_key_service = get_ssh_key_service()
+        try:
+            private_key_path, public_key = ssh_key_service.generate_key_pair(host_id)
+        except RuntimeError as e:
+            raise ApplicationError("SSH_KEY_GENERATION_FAILED", status_code=500, error=str(e))
+
+        # Generate install command and authorized_keys entry
+        install_command = ssh_key_service.get_install_command(public_key)
+        authorized_keys_entry = ssh_key_service.get_authorized_keys_entry(public_key)
+
+        logger.info(f"Prepared SSH key for host {host_id}")
+
+        return PrepareHostResponse(
+            success=True,
+            host_id=host_id,
+            public_key=public_key,
+            install_command=install_command,
+            authorized_keys_entry=authorized_keys_entry
         )
-
-    # Generate install command and authorized_keys entry
-    install_command = ssh_key_service.get_install_command(public_key)
-    authorized_keys_entry = ssh_key_service.get_authorized_keys_entry(public_key)
-
-    logger.info(f"Prepared SSH key for host {host_id}")
-
-    return PrepareHostResponse(
-        success=True,
-        host_id=host_id,
-        public_key=public_key,
-        install_command=install_command,
-        authorized_keys_entry=authorized_keys_entry
-    )
+    except ApplicationError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to prepare host: {e}")
+        raise ApplicationError("HOST_PREPARE_FAILED", status_code=500, error=str(e))
 
 
 class TestHostRequest(CamelCaseModel):
@@ -222,22 +248,26 @@ def _test_docker_via_sdk(
 
     try:
         # Create Docker client using our custom SSH adapter (same as DockerHostMonitor)
+        logger.debug("Creating SSH connection", ssh_url=ssh_url, key_path=private_key_path)
         client = create_docker_client_with_custom_ssh(
             ssh_url=ssh_url,
             known_hosts_path=Path(known_hosts_path) if known_hosts_path else None,
             identity_file=Path(private_key_path) if private_key_path else None,
             timeout=30,
         )
+        logger.debug("SSH connection established, querying Docker info")
 
         # Test connection by getting Docker info
         info = client.info()
         docker_version = info.get("ServerVersion", "unknown")
+        logger.debug("Docker info retrieved", docker_version=docker_version)
 
         # Check for GPU (nvidia runtime)
         has_gpu = False
         runtimes = info.get("Runtimes", {})
         if isinstance(runtimes, dict):
             has_gpu = "nvidia" in runtimes
+        logger.debug("GPU detection complete", has_gpu=has_gpu, runtimes=list(runtimes.keys()) if isinstance(runtimes, dict) else [])
 
         # Close the client
         try:
@@ -293,91 +323,100 @@ async def test_host(request: TestHostRequest):
     Returns:
         TestHostResponse with connection details and GPU status
     """
-    import asyncio
-
-    ssh_key_service = get_ssh_key_service()
-
-    # Check if we have keys for this host
-    if not ssh_key_service.has_key_pair(request.host_id):
-        return TestHostResponse(
-            success=False,
-            has_gpu=False,
-            has_docker_permission=False,
-            error="SSH key not found. Please generate a key first.",
-            error_category="SSH_KEY_NOT_FOUND"
-        )
-
-    # Scan host key (saves to our known_hosts)
-    ssh_key_service.update_ssh_config(request.host_id, request.ssh_url)
-
-    # Get SSH key paths
-    private_key_path = ssh_key_service.get_private_key_path(request.host_id)
-    known_hosts_path = ssh_key_service.get_known_hosts_path()
-
-    if not private_key_path:
-        return TestHostResponse(
-            success=False,
-            has_gpu=False,
-            has_docker_permission=False,
-            error="SSH private key not found",
-            error_category="SSH_KEY_NOT_FOUND"
-        )
-
-    # Run the Docker SDK test in a thread pool (blocking operation)
-    loop = asyncio.get_event_loop()
     try:
-        success, docker_version, has_gpu, error = await loop.run_in_executor(
-            None,
-            _test_docker_via_sdk,
-            request.ssh_url,
-            str(private_key_path),
-            str(known_hosts_path),
+        import asyncio
+
+        ssh_key_service = get_ssh_key_service()
+
+        # Check if we have keys for this host
+        has_keys = ssh_key_service.has_key_pair(request.host_id)
+        logger.debug("Key pair existence check", host_id=request.host_id, has_keys=has_keys)
+        if not has_keys:
+            return TestHostResponse(
+                success=False,
+                has_gpu=False,
+                has_docker_permission=False,
+                error="SSH key not found. Please generate a key first.",
+                error_category="SSH_KEY_NOT_FOUND"
+            )
+
+        # Scan host key (saves to our known_hosts)
+        logger.debug("Updating known_hosts", host_id=request.host_id, ssh_url=request.ssh_url)
+        ssh_key_service.update_ssh_config(request.host_id, request.ssh_url)
+
+        # Get SSH key paths
+        private_key_path = ssh_key_service.get_private_key_path(request.host_id)
+        known_hosts_path = ssh_key_service.get_known_hosts_path()
+
+        if not private_key_path:
+            return TestHostResponse(
+                success=False,
+                has_gpu=False,
+                has_docker_permission=False,
+                error="SSH private key not found",
+                error_category="SSH_KEY_NOT_FOUND"
+            )
+
+        # Run the Docker SDK test in a thread pool (blocking operation)
+        loop = asyncio.get_event_loop()
+        try:
+            success, docker_version, has_gpu, error = await loop.run_in_executor(
+                None,
+                _test_docker_via_sdk,
+                request.ssh_url,
+                str(private_key_path),
+                str(known_hosts_path),
+            )
+        except Exception as e:
+            return TestHostResponse(
+                success=False,
+                has_gpu=False,
+                has_docker_permission=False,
+                error=str(e),
+                error_category="SSH_ERROR"
+            )
+
+        if not success:
+            # Map error codes to response
+            error_category = "SSH_ERROR"
+            error_message = error or "Unknown error"
+
+            if error == "SSH_AUTH_FAILED":
+                error_category = "SSH_AUTH_FAILED"
+                error_message = "SSH key not authorized on remote host"
+            elif error == "SSH_CONNECTION_REFUSED":
+                error_category = "SSH_CONNECTION_REFUSED"
+                error_message = "SSH connection refused"
+            elif error == "SSH_TIMEOUT":
+                error_category = "SSH_TIMEOUT"
+                error_message = "Connection timeout"
+            elif error and "permission denied" in error.lower() and "docker" in error.lower():
+                error_category = "DOCKER_PERMISSION_DENIED"
+                error_message = "User not in docker group"
+
+            return TestHostResponse(
+                success=False,
+                has_gpu=False,
+                has_docker_permission=error_category != "DOCKER_PERMISSION_DENIED",
+                error=error_message,
+                error_category=error_category
+            )
+
+        logger.info(f"Host {request.host_id} test successful: Docker {docker_version}, GPU: {has_gpu}")
+
+        return TestHostResponse(
+            success=True,
+            docker_version=docker_version,
+            has_gpu=has_gpu,
+            has_docker_permission=True,
+            error=None,
+            error_category=None
         )
+    except ApplicationError:
+        raise
     except Exception as e:
-        return TestHostResponse(
-            success=False,
-            has_gpu=False,
-            has_docker_permission=False,
-            error=str(e),
-            error_category="SSH_ERROR"
-        )
-
-    if not success:
-        # Map error codes to response
-        error_category = "SSH_ERROR"
-        error_message = error or "Unknown error"
-
-        if error == "SSH_AUTH_FAILED":
-            error_category = "SSH_AUTH_FAILED"
-            error_message = "SSH key not authorized on remote host"
-        elif error == "SSH_CONNECTION_REFUSED":
-            error_category = "SSH_CONNECTION_REFUSED"
-            error_message = "SSH connection refused"
-        elif error == "SSH_TIMEOUT":
-            error_category = "SSH_TIMEOUT"
-            error_message = "Connection timeout"
-        elif error and "permission denied" in error.lower() and "docker" in error.lower():
-            error_category = "DOCKER_PERMISSION_DENIED"
-            error_message = "User not in docker group"
-
-        return TestHostResponse(
-            success=False,
-            has_gpu=False,
-            has_docker_permission=error_category != "DOCKER_PERMISSION_DENIED",
-            error=error_message,
-            error_category=error_category
-        )
-
-    logger.info(f"Host {request.host_id} test successful: Docker {docker_version}, GPU: {has_gpu}")
-
-    return TestHostResponse(
-        success=True,
-        docker_version=docker_version,
-        has_gpu=has_gpu,
-        has_docker_permission=True,
-        error=None,
-        error_category=None
-    )
+        logger.error(f"Failed to test host connection: {e}")
+        raise ApplicationError("HOST_TEST_FAILED", status_code=500, hostId=request.host_id, error=str(e))
 
 
 @router.delete("/prepare/{host_id}", response_model=MessageResponse)
@@ -388,15 +427,19 @@ async def cleanup_prepared_host(host_id: str):
     Deletes the SSH key pair generated during prepare.
     Called when user cancels the add host dialog.
     """
-    ssh_key_service = get_ssh_key_service()
+    try:
+        ssh_key_service = get_ssh_key_service()
 
-    if ssh_key_service.has_key_pair(host_id):
-        ssh_key_service.delete_key_pair(host_id)
-        logger.info(f"Cleaned up prepared host: {host_id}")
-        return MessageResponse(success=True, message=f"Cleaned up host {host_id}")
+        if ssh_key_service.has_key_pair(host_id):
+            ssh_key_service.delete_key_pair(host_id)
+            logger.info(f"Cleaned up prepared host: {host_id}")
+            return MessageResponse(success=True, message=f"Cleaned up host {host_id}")
 
-    # No keys to clean up - that's ok
-    return MessageResponse(success=True, message="Nothing to clean up")
+        # No keys to clean up - that's ok
+        return MessageResponse(success=True, message="Nothing to clean up")
+    except Exception as e:
+        logger.error(f"Failed to cleanup prepared host {host_id}: {e}")
+        raise ApplicationError("HOST_CLEANUP_FAILED", status_code=500, hostId=host_id, error=str(e))
 
 
 @router.delete("/{host_id}", response_model=MessageResponse)
@@ -406,42 +449,42 @@ async def delete_host(host_id: str, conn: sqlite3.Connection = Depends(get_db)):
 
     Cannot delete the local subprocess host or hosts with installed engines.
     """
-    host_repo = EngineHostRepository(conn)
-    engine_repo = EngineRepository(conn)
+    try:
+        host_repo = EngineHostRepository(conn)
+        engine_repo = EngineRepository(conn)
 
-    host = host_repo.get_by_id(host_id)
-    if not host:
-        raise HTTPException(status_code=404, detail=f"[HOST_NOT_FOUND]hostId:{host_id}")
+        host = host_repo.get_by_id(host_id)
+        if not host:
+            raise ApplicationError("HOST_NOT_FOUND", status_code=404, hostId=host_id)
 
-    # Cannot delete local host
-    if host_id == "local":
-        raise HTTPException(
-            status_code=400,
-            detail="[HOST_DELETE_FORBIDDEN]hostId:local;reason:Cannot delete local subprocess host"
-        )
+        # Cannot delete local host
+        if host_id == "local":
+            raise ApplicationError("HOST_DELETE_FORBIDDEN", status_code=400, hostId="local", reason="Cannot delete local subprocess host")
 
-    # Check for installed engines
-    engines = engine_repo.get_by_host(host_id)
-    installed = [e for e in engines if e.get("is_installed")]
-    if installed:
-        raise HTTPException(
-            status_code=400,
-            detail=f"[HOST_HAS_ENGINES]hostId:{host_id};count:{len(installed)}"
-        )
+        # Check for installed engines
+        engines = engine_repo.get_by_host(host_id)
+        installed = [e for e in engines if e.get("is_installed")]
+        if installed:
+            raise ApplicationError("HOST_HAS_ENGINES", status_code=400, hostId=host_id, count=len(installed))
 
-    # Stop monitoring the host
-    asyncio.create_task(docker_host_monitor.remove_host(host_id))
+        # Stop monitoring the host
+        asyncio.create_task(docker_host_monitor.remove_host(host_id))
 
-    # Delete SSH keys if they exist (pass ssh_url for known_hosts cleanup)
-    ssh_key_service = get_ssh_key_service()
-    ssh_key_service.delete_key_pair(host_id, ssh_url=host.get("ssh_url"))
+        # Delete SSH keys if they exist (pass ssh_url for known_hosts cleanup)
+        ssh_key_service = get_ssh_key_service()
+        ssh_key_service.delete_key_pair(host_id, ssh_url=host.get("ssh_url"))
 
-    # Delete the host (will cascade to any non-installed engine entries)
-    host_repo.delete(host_id)
+        # Delete the host (will cascade to any non-installed engine entries)
+        host_repo.delete(host_id)
 
-    logger.info(f"Deleted engine host: {host_id}")
+        logger.info(f"Deleted engine host: {host_id}")
 
-    return MessageResponse(success=True, message=f"Host {host_id} deleted")
+        return MessageResponse(success=True, message=f"Host {host_id} deleted")
+    except ApplicationError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete host {host_id}: {e}")
+        raise ApplicationError("HOST_DELETE_FAILED", status_code=500, hostId=host_id, error=str(e))
 
 
 @router.post("/ensure-docker-local", response_model=EngineHostResponse)
@@ -452,13 +495,19 @@ async def ensure_docker_local(conn: sqlite3.Connection = Depends(get_db)):
     Creates the docker:local host entry if it doesn't exist.
     Used when first enabling Docker support.
     """
-    host_repo = EngineHostRepository(conn)
+    try:
+        host_repo = EngineHostRepository(conn)
 
-    host = host_repo.ensure_docker_local_exists()
+        host = host_repo.ensure_docker_local_exists()
 
-    logger.info("Ensured docker:local host exists")
+        logger.info("Ensured docker:local host exists")
 
-    return EngineHostResponse(**host, engine_count=0)
+        return EngineHostResponse(**host, engine_count=0)
+    except ApplicationError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to ensure docker:local host: {e}")
+        raise ApplicationError("HOST_ENSURE_LOCAL_FAILED", status_code=500, error=str(e))
 
 
 @router.get("/{host_id}/volumes", response_model=DockerVolumesResponse)
@@ -469,28 +518,31 @@ async def get_docker_volumes(host_id: str, conn: sqlite3.Connection = Depends(ge
     Returns the configured mount paths for samples and models directories.
     Only applicable to Docker hosts (docker:local, docker:remote).
     """
-    host_repo = EngineHostRepository(conn)
+    try:
+        host_repo = EngineHostRepository(conn)
 
-    host = host_repo.get_by_id(host_id)
-    if not host:
-        raise HTTPException(status_code=404, detail=f"[HOST_NOT_FOUND]hostId:{host_id}")
+        host = host_repo.get_by_id(host_id)
+        if not host:
+            raise ApplicationError("HOST_NOT_FOUND", status_code=404, hostId=host_id)
 
-    # Only Docker hosts have volume configuration
-    host_type = host.get("host_type", "")
-    if not host_type.startswith("docker"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"[HOST_NOT_DOCKER]hostId:{host_id};hostType:{host_type}"
+        # Only Docker hosts have volume configuration
+        host_type = host.get("host_type", "")
+        if not host_type.startswith("docker"):
+            raise ApplicationError("HOST_NOT_DOCKER", status_code=400, hostId=host_id, hostType=host_type)
+
+        volumes = host_repo.get_docker_volumes(host_id) or {}
+
+        return DockerVolumesResponse(
+            success=True,
+            host_id=host_id,
+            samples_path=volumes.get("samples"),
+            models_path=volumes.get("models")
         )
-
-    volumes = host_repo.get_docker_volumes(host_id) or {}
-
-    return DockerVolumesResponse(
-        success=True,
-        host_id=host_id,
-        samples_path=volumes.get("samples"),
-        models_path=volumes.get("models")
-    )
+    except ApplicationError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get Docker volumes for host {host_id}: {e}")
+        raise ApplicationError("HOST_VOLUMES_GET_FAILED", status_code=500, hostId=host_id, error=str(e))
 
 
 @router.put("/{host_id}/volumes", response_model=DockerVolumesResponse)
@@ -512,49 +564,56 @@ async def set_docker_volumes(
         samples_path: Host path for speaker samples (null = use upload mechanism)
         models_path: Host path for external models (null = no external models)
     """
-    host_repo = EngineHostRepository(conn)
+    try:
+        host_repo = EngineHostRepository(conn)
 
-    host = host_repo.get_by_id(host_id)
-    if not host:
-        raise HTTPException(status_code=404, detail=f"[HOST_NOT_FOUND]hostId:{host_id}")
+        host = host_repo.get_by_id(host_id)
+        if not host:
+            raise ApplicationError("HOST_NOT_FOUND", status_code=404, hostId=host_id)
 
-    # Only Docker hosts have volume configuration
-    host_type = host.get("host_type", "")
-    if not host_type.startswith("docker"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"[HOST_NOT_DOCKER]hostId:{host_id};hostType:{host_type}"
+        # Only Docker hosts have volume configuration
+        host_type = host.get("host_type", "")
+        if not host_type.startswith("docker"):
+            raise ApplicationError("HOST_NOT_DOCKER", status_code=400, hostId=host_id, hostType=host_type)
+
+        # Validate paths for docker:local (backend runs on same machine)
+        validation_error = None
+        if host_type == "docker:local":
+            invalid_paths = []
+            samples_valid = request.samples_path is None or os.path.isdir(request.samples_path)
+            models_valid = request.models_path is None or os.path.isdir(request.models_path)
+            logger.debug("Path validation results", host_id=host_id, samples_path=request.samples_path, samples_valid=samples_valid, models_path=request.models_path, models_valid=models_valid)
+            if request.samples_path and not samples_valid:
+                invalid_paths.append(f"samples: {request.samples_path}")
+            if request.models_path and not models_valid:
+                invalid_paths.append(f"models: {request.models_path}")
+
+            if invalid_paths:
+                validation_error = f"Path(s) not found: {', '.join(invalid_paths)}"
+                logger.debug("Validation warning generated", host_id=host_id, validation_error=validation_error)
+                logger.warning(f"Volume path validation failed for {host_id}: {validation_error}")
+
+        # Save configuration (even with validation warning)
+        host_repo.set_docker_volumes(
+            host_id=host_id,
+            samples_path=request.samples_path,
+            models_path=request.models_path
         )
 
-    # Validate paths for docker:local (backend runs on same machine)
-    validation_error = None
-    if host_type == "docker:local":
-        invalid_paths = []
-        if request.samples_path and not os.path.isdir(request.samples_path):
-            invalid_paths.append(f"samples: {request.samples_path}")
-        if request.models_path and not os.path.isdir(request.models_path):
-            invalid_paths.append(f"models: {request.models_path}")
+        logger.info(f"Updated Docker volumes for {host_id}: samples={request.samples_path}, models={request.models_path}")
 
-        if invalid_paths:
-            validation_error = f"Path(s) not found: {', '.join(invalid_paths)}"
-            logger.warning(f"Volume path validation failed for {host_id}: {validation_error}")
-
-    # Save configuration (even with validation warning)
-    host_repo.set_docker_volumes(
-        host_id=host_id,
-        samples_path=request.samples_path,
-        models_path=request.models_path
-    )
-
-    logger.info(f"Updated Docker volumes for {host_id}: samples={request.samples_path}, models={request.models_path}")
-
-    return DockerVolumesResponse(
-        success=True,
-        host_id=host_id,
-        samples_path=request.samples_path,
-        models_path=request.models_path,
-        validation_error=validation_error
-    )
+        return DockerVolumesResponse(
+            success=True,
+            host_id=host_id,
+            samples_path=request.samples_path,
+            models_path=request.models_path,
+            validation_error=validation_error
+        )
+    except ApplicationError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to set Docker volumes for host {host_id}: {e}")
+        raise ApplicationError("HOST_VOLUMES_UPDATE_FAILED", status_code=500, hostId=host_id, error=str(e))
 
 
 @router.get("/{host_id}/public-key", response_model=HostPublicKeyResponse)
@@ -567,38 +626,44 @@ async def get_host_public_key(host_id: str, conn: sqlite3.Connection = Depends(g
 
     Only applicable to remote Docker hosts (docker:remote).
     """
-    host_repo = EngineHostRepository(conn)
+    try:
+        host_repo = EngineHostRepository(conn)
 
-    host = host_repo.get_by_id(host_id)
-    if not host:
-        raise HTTPException(status_code=404, detail=f"[HOST_NOT_FOUND]hostId:{host_id}")
+        host = host_repo.get_by_id(host_id)
+        if not host:
+            raise ApplicationError("HOST_NOT_FOUND", status_code=404, hostId=host_id)
 
-    # Only remote Docker hosts have SSH keys
-    host_type = host.get("host_type", "")
-    if host_type != "docker:remote":
+        # Only remote Docker hosts have SSH keys
+        host_type = host.get("host_type", "")
+        if host_type != "docker:remote":
+            return HostPublicKeyResponse(
+                success=False,
+                host_id=host_id,
+                public_key=None,
+                install_command=None
+            )
+
+        ssh_key_service = get_ssh_key_service()
+        public_key = ssh_key_service.get_public_key(host_id)
+
+        if not public_key:
+            return HostPublicKeyResponse(
+                success=False,
+                host_id=host_id,
+                public_key=None,
+                install_command=None
+            )
+
+        install_command = ssh_key_service.get_install_command(public_key)
+
         return HostPublicKeyResponse(
-            success=False,
+            success=True,
             host_id=host_id,
-            public_key=None,
-            install_command=None
+            public_key=public_key,
+            install_command=install_command
         )
-
-    ssh_key_service = get_ssh_key_service()
-    public_key = ssh_key_service.get_public_key(host_id)
-
-    if not public_key:
-        return HostPublicKeyResponse(
-            success=False,
-            host_id=host_id,
-            public_key=None,
-            install_command=None
-        )
-
-    install_command = ssh_key_service.get_install_command(public_key)
-
-    return HostPublicKeyResponse(
-        success=True,
-        host_id=host_id,
-        public_key=public_key,
-        install_command=install_command
-    )
+    except ApplicationError:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get public key for host {host_id}: {e}")
+        raise ApplicationError("HOST_PUBLIC_KEY_FAILED", status_code=500, hostId=host_id, error=str(e))

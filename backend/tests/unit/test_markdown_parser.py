@@ -9,6 +9,7 @@ from unittest.mock import Mock, MagicMock, patch, AsyncMock
 
 from services.markdown_parser import MarkdownParser
 from models.response_models import MappingRules
+from core.exceptions import ApplicationError
 
 
 # ============================================================================
@@ -198,29 +199,30 @@ class TestParseValidation:
     """Tests for validation errors."""
 
     def test_raises_for_missing_project_title(self, parser):
-        """ValueError raised when project title is missing."""
+        """ApplicationError raised when project title is missing."""
         md = """## Chapter 1
 Some text.
 """
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ApplicationError) as exc_info:
             parser.parse(md)
 
-        assert "IMPORT_NO_PROJECT_TITLE" in str(exc_info.value)
+        assert exc_info.value.code == "IMPORT_NO_PROJECT_TITLE"
 
     def test_raises_for_no_chapters(self, parser):
-        """ValueError raised when no chapters found."""
+        """ApplicationError raised when no chapters found."""
         md = """# My Project
 Just a description without chapters.
 """
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ApplicationError) as exc_info:
             parser.parse(md)
 
-        assert "IMPORT_NO_CHAPTERS" in str(exc_info.value)
+        assert exc_info.value.code == "IMPORT_NO_CHAPTERS"
 
     def test_empty_content_raises_error(self, parser):
-        """Empty content raises ValueError."""
-        with pytest.raises(ValueError):
+        """Empty content raises ApplicationError (no title found)."""
+        with pytest.raises(ApplicationError) as exc_info:
             parser.parse("")
+        assert exc_info.value.code == "IMPORT_NO_PROJECT_TITLE"
 
 
 # ============================================================================

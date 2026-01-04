@@ -7,10 +7,11 @@ Provides centralized job management for all job types:
 """
 
 import sqlite3
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from typing import Optional
 from loguru import logger
 
+from core.exceptions import ApplicationError
 from db.database import get_db, get_db_connection_simple
 from db.repositories import TTSJobRepository, SegmentRepository
 from db.segments_analysis_repository import SegmentsAnalysisRepository
@@ -89,7 +90,7 @@ async def list_tts_jobs(
 
     except Exception as e:
         logger.error(f"Failed to list TTS jobs: {e}")
-        raise HTTPException(status_code=500, detail=f"[TTS_JOB_LIST_FAILED]error:{str(e)}")
+        raise ApplicationError("TTS_JOB_LIST_FAILED", status_code=500, error=str(e))
 
 
 @tts_router.get("/active", response_model=TTSJobsListResponse)
@@ -133,7 +134,7 @@ async def list_active_tts_jobs() -> TTSJobsListResponse:
 
     except Exception as e:
         logger.error(f"Failed to list active TTS jobs: {e}")
-        raise HTTPException(status_code=500, detail=f"[TTS_JOB_ACTIVE_LIST_FAILED]error:{str(e)}")
+        raise ApplicationError("TTS_JOB_ACTIVE_LIST_FAILED", status_code=500, error=str(e))
 
 
 @tts_router.get("/{job_id}", response_model=TTSJobResponse)
@@ -163,17 +164,17 @@ async def get_tts_job(job_id: str) -> TTSJobResponse:
 
         if not job:
             logger.warning(f"TTS job {job_id} not found")
-            raise HTTPException(status_code=404, detail=f"[TTS_JOB_NOT_FOUND]jobId:{job_id}")
+            raise ApplicationError("TTS_JOB_NOT_FOUND", status_code=404, jobId=job_id)
 
         logger.debug(f"Retrieved TTS job {job_id} (status: {job.get('status')})")
 
         return job
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to get TTS job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[TTS_JOB_GET_FAILED]jobId:{job_id};error:{str(e)}")
+        raise ApplicationError("TTS_JOB_GET_FAILED", status_code=500, jobId=job_id, error=str(e))
 
 
 @tts_router.delete("/cleanup", response_model=CleanupJobsResponse)
@@ -222,7 +223,7 @@ async def cleanup_tts_jobs() -> CleanupJobsResponse:
 
     except Exception as e:
         logger.error(f"Failed to cleanup TTS jobs: {e}")
-        raise HTTPException(status_code=500, detail=f"[TTS_JOB_CLEANUP_FAILED]error:{str(e)}")
+        raise ApplicationError("TTS_JOB_CLEANUP_FAILED", status_code=500, error=str(e))
 
 
 @tts_router.delete("/{job_id}", response_model=DeleteJobResponse)
@@ -255,7 +256,7 @@ async def delete_tts_job(job_id: str) -> DeleteJobResponse:
         deleted = job_repo.delete_with_segment_cleanup(job_id)
 
         if not deleted:
-            raise HTTPException(status_code=404, detail=f"[TTS_JOB_NOT_FOUND]jobId:{job_id}")
+            raise ApplicationError("TTS_JOB_NOT_FOUND", status_code=404, jobId=job_id)
 
         logger.info(f"Deleted TTS job {job_id} with segment cleanup")
 
@@ -265,11 +266,11 @@ async def delete_tts_job(job_id: str) -> DeleteJobResponse:
             job_id=job_id
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to delete TTS job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[TTS_JOB_DELETE_FAILED]jobId:{job_id};error:{str(e)}")
+        raise ApplicationError("TTS_JOB_DELETE_FAILED", status_code=500, jobId=job_id, error=str(e))
 
 
 @tts_router.post("/{job_id}/cancel", response_model=CancelJobResponse)
@@ -293,7 +294,7 @@ async def cancel_tts_job(job_id: str) -> CancelJobResponse:
         # Get job
         job = job_repo.get_by_id(job_id)
         if not job:
-            raise HTTPException(status_code=404, detail=f"[TTS_JOB_NOT_FOUND]jobId:{job_id}")
+            raise ApplicationError("TTS_JOB_NOT_FOUND", status_code=404, jobId=job_id)
 
         job_status = job['status']
 
@@ -350,11 +351,11 @@ async def cancel_tts_job(job_id: str) -> CancelJobResponse:
             message=f"Cannot cancel job with status '{job_status}'"
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to cancel TTS job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[TTS_JOB_CANCEL_FAILED]jobId:{job_id};error:{str(e)}")
+        raise ApplicationError("TTS_JOB_CANCEL_FAILED", status_code=500, jobId=job_id, error=str(e))
 
 
 @tts_router.post("/{job_id}/resume", response_model=TTSJobResponse)
@@ -402,14 +403,11 @@ async def resume_tts_job(job_id: str) -> TTSJobResponse:
         # 1. Get original job
         original_job = job_repo.get_by_id(job_id)
         if not original_job:
-            raise HTTPException(status_code=404, detail=f"[TTS_JOB_NOT_FOUND]jobId:{job_id}")
+            raise ApplicationError("TTS_JOB_NOT_FOUND", status_code=404, jobId=job_id)
 
         # 2. Validate job is cancelled
         if original_job['status'] != 'cancelled':
-            raise HTTPException(
-                status_code=400,
-                detail=f"[JOB_NOT_CANCELLED]jobId:{job_id};status:{original_job['status']}"
-            )
+            raise ApplicationError("JOB_NOT_CANCELLED", status_code=400, jobId=job_id, status=original_job['status'])
 
         # 3. Resume job - filtering by job_status happens in repository
         # This now works correctly for both normal and force_regenerate jobs!
@@ -443,11 +441,11 @@ async def resume_tts_job(job_id: str) -> TTSJobResponse:
 
         return resumed_job
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to resume TTS job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[TTS_JOB_RESUME_FAILED]jobId:{job_id};error:{str(e)}")
+        raise ApplicationError("TTS_JOB_RESUME_FAILED", status_code=500, jobId=job_id, error=str(e))
 
 
 # ============================================================================
@@ -477,7 +475,7 @@ async def list_quality_jobs(
         )
     except Exception as e:
         logger.error(f"Failed to list quality jobs: {e}")
-        raise HTTPException(status_code=500, detail=f"[QUALITY_JOB_LIST_FAILED]error:{str(e)}")
+        raise ApplicationError("QUALITY_JOB_LIST_FAILED", status_code=500, error=str(e))
 
 
 @quality_router.get("/active", response_model=QualityJobsListResponse)
@@ -497,7 +495,7 @@ async def list_active_quality_jobs(db: sqlite3.Connection = Depends(get_db)) -> 
         )
     except Exception as e:
         logger.error(f"Failed to list active quality jobs: {e}")
-        raise HTTPException(status_code=500, detail=f"[QUALITY_JOB_ACTIVE_LIST_FAILED]error:{str(e)}")
+        raise ApplicationError("QUALITY_JOB_ACTIVE_LIST_FAILED", status_code=500, error=str(e))
 
 
 @quality_router.get("/{job_id}", response_model=QualityJobResponse)
@@ -512,14 +510,14 @@ async def get_quality_job(job_id: str, db: sqlite3.Connection = Depends(get_db))
         job = job_repo.get_by_id(job_id)
 
         if not job:
-            raise HTTPException(status_code=404, detail=f"[JOB_NOT_FOUND]jobId:{job_id}")
+            raise ApplicationError("JOB_NOT_FOUND", status_code=404, jobId=job_id)
 
         return QualityJobResponse(**job)
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to get quality job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[QUALITY_JOB_GET_FAILED]jobId:{job_id};error:{str(e)}")
+        raise ApplicationError("QUALITY_JOB_GET_FAILED", status_code=500, jobId=job_id, error=str(e))
 
 
 @quality_router.post("/{job_id}/cancel", response_model=MessageResponse)
@@ -534,10 +532,10 @@ async def cancel_quality_job(job_id: str, db: sqlite3.Connection = Depends(get_d
         job = job_repo.get_by_id(job_id)
 
         if not job:
-            raise HTTPException(status_code=404, detail=f"[JOB_NOT_FOUND]jobId:{job_id}")
+            raise ApplicationError("JOB_NOT_FOUND", status_code=404, jobId=job_id)
 
         if job['status'] not in ('pending', 'running'):
-            raise HTTPException(status_code=400, detail=f"[JOB_CANNOT_CANCEL]status:{job['status']}")
+            raise ApplicationError("JOB_CANNOT_CANCEL", status_code=400, status=job['status'])
 
         if job['status'] == 'pending':
             # Pending jobs can be cancelled immediately (worker hasn't picked them up)
@@ -554,17 +552,17 @@ async def cancel_quality_job(job_id: str, db: sqlite3.Connection = Depends(get_d
         success = job_repo.request_cancellation(job_id)
 
         if not success:
-            raise HTTPException(status_code=400, detail="[JOB_NOT_RUNNING]")
+            raise ApplicationError("JOB_NOT_RUNNING", status_code=400)
 
         # NOTE: Don't emit SSE here - the worker will emit when it actually cancels
         # This avoids race condition where refetch overwrites the optimistic update
 
         return MessageResponse(success=True, message="Cancellation requested")
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to cancel quality job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[QUALITY_JOB_CANCEL_FAILED]jobId:{job_id};error:{str(e)}")
+        raise ApplicationError("QUALITY_JOB_CANCEL_FAILED", status_code=500, jobId=job_id, error=str(e))
 
 
 @quality_router.delete("/cleanup", response_model=CleanupJobsResponse)
@@ -604,7 +602,7 @@ async def cleanup_quality_jobs(db: sqlite3.Connection = Depends(get_db)) -> Clea
 
     except Exception as e:
         logger.error(f"Failed to cleanup quality jobs: {e}")
-        raise HTTPException(status_code=500, detail=f"[QUALITY_JOB_CLEANUP_FAILED]error:{str(e)}")
+        raise ApplicationError("QUALITY_JOB_CLEANUP_FAILED", status_code=500, error=str(e))
 
 
 @quality_router.post("/{job_id}/resume", response_model=QualityJobResponse)
@@ -647,13 +645,13 @@ async def resume_quality_job(job_id: str, db: sqlite3.Connection = Depends(get_d
     except ValueError as e:
         error_msg = str(e)
         if "not found" in error_msg:
-            raise HTTPException(status_code=404, detail=f"[QUALITY_JOB_NOT_FOUND]jobId:{job_id}")
-        raise HTTPException(status_code=400, detail=f"[QUALITY_JOB_INVALID_STATE]jobId:{job_id};error:{error_msg}")
-    except HTTPException:
+            raise ApplicationError("QUALITY_JOB_NOT_FOUND", status_code=404, jobId=job_id)
+        raise ApplicationError("QUALITY_JOB_INVALID_STATE", status_code=400, jobId=job_id, error=error_msg)
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to resume quality job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[QUALITY_JOB_RESUME_FAILED]jobId:{job_id};error:{str(e)}")
+        raise ApplicationError("QUALITY_JOB_RESUME_FAILED", status_code=500, jobId=job_id, error=str(e))
 
 
 @quality_router.delete("/{job_id}", response_model=MessageResponse)
@@ -668,19 +666,19 @@ async def delete_quality_job(job_id: str, db: sqlite3.Connection = Depends(get_d
         job = job_repo.get_by_id(job_id)
 
         if not job:
-            raise HTTPException(status_code=404, detail=f"[JOB_NOT_FOUND]jobId:{job_id}")
+            raise ApplicationError("JOB_NOT_FOUND", status_code=404, jobId=job_id)
 
         success = job_repo.delete_by_id(job_id)
 
         if not success:
-            raise HTTPException(status_code=500, detail="[JOB_DELETE_FAILED]")
+            raise ApplicationError("JOB_DELETE_FAILED", status_code=500)
 
         return MessageResponse(success=True, message="Job deleted")
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to delete quality job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[QUALITY_JOB_DELETE_FAILED]jobId:{job_id};error:{str(e)}")
+        raise ApplicationError("QUALITY_JOB_DELETE_FAILED", status_code=500, jobId=job_id, error=str(e))
 
 
 # Include sub-routers in main router

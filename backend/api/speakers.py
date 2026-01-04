@@ -4,7 +4,7 @@ Speaker Management API Endpoints
 RESTful API for managing speakers and their voice samples.
 """
 import sqlite3
-from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form
+from fastapi import APIRouter, Depends, File, UploadFile, Form
 from fastapi.responses import FileResponse
 from typing import List, Optional
 from pathlib import Path
@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict
 import uuid
 from loguru import logger
 
+from core.exceptions import ApplicationError
 from db.database import get_db
 from services.speaker_service import SpeakerService
 from models.response_models import SpeakerResponse, SpeakerSampleResponse, DeleteResponse, to_camel
@@ -68,7 +69,7 @@ async def list_speakers(db: sqlite3.Connection = Depends(get_db)) -> list[Speake
 
     except Exception as e:
         logger.error(f"Failed to list speakers: {e}")
-        raise HTTPException(status_code=500, detail=f"[SPEAKER_LIST_FAILED]error:{str(e)}")
+        raise ApplicationError("SPEAKER_LIST_FAILED", status_code=500, error=str(e))
 
 
 @router.post("/", response_model=SpeakerResponse)
@@ -90,7 +91,7 @@ async def create_speaker(
     try:
         # Validate gender
         if request.gender and request.gender not in ['male', 'female', 'neutral']:
-            raise HTTPException(status_code=400, detail="[SPEAKER_INVALID_GENDER]")
+            raise ApplicationError("SPEAKER_INVALID_GENDER", status_code=400)
 
         service = SpeakerService(db)
         speaker = service.create_speaker(request.model_dump())
@@ -120,11 +121,11 @@ async def create_speaker(
 
         return speaker
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to create speaker: {e}")
-        raise HTTPException(status_code=500, detail=f"[SPEAKER_CREATE_FAILED]error:{str(e)}")
+        raise ApplicationError("SPEAKER_CREATE_FAILED", status_code=500, error=str(e))
 
 
 @router.get("/{speaker_id}", response_model=SpeakerResponse)
@@ -145,17 +146,17 @@ async def get_speaker(speaker_id: str, db: sqlite3.Connection = Depends(get_db))
         speaker = service.get_speaker(speaker_id)
 
         if not speaker:
-            raise HTTPException(status_code=404, detail=f"[SPEAKER_NOT_FOUND]speakerId:{speaker_id}")
+            raise ApplicationError("SPEAKER_NOT_FOUND", status_code=404, speakerId=speaker_id)
 
         logger.debug(f"Retrieved speaker: {speaker['name']}")
 
         return speaker
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to get speaker {speaker_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[SPEAKER_GET_FAILED]speakerId:{speaker_id};error:{str(e)}")
+        raise ApplicationError("SPEAKER_GET_FAILED", status_code=500, speakerId=speaker_id, error=str(e))
 
 
 @router.put("/{speaker_id}", response_model=SpeakerResponse)
@@ -179,13 +180,13 @@ async def update_speaker(
     try:
         # Validate gender if provided
         if request.gender and request.gender not in ['male', 'female', 'neutral']:
-            raise HTTPException(status_code=400, detail="[SPEAKER_INVALID_GENDER]")
+            raise ApplicationError("SPEAKER_INVALID_GENDER", status_code=400)
 
         service = SpeakerService(db)
 
         # Check if speaker exists
         if not service.get_speaker(speaker_id):
-            raise HTTPException(status_code=404, detail=f"[SPEAKER_NOT_FOUND]speakerId:{speaker_id}")
+            raise ApplicationError("SPEAKER_NOT_FOUND", status_code=404, speakerId=speaker_id)
 
         # Update only non-None fields
         update_data = {k: v for k, v in request.model_dump().items() if v is not None}
@@ -205,11 +206,11 @@ async def update_speaker(
 
         return speaker
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to update speaker {speaker_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[SPEAKER_UPDATE_FAILED]speakerId:{speaker_id};error:{str(e)}")
+        raise ApplicationError("SPEAKER_UPDATE_FAILED", status_code=500, speakerId=speaker_id, error=str(e))
 
 
 @router.post("/{speaker_id}/set-default", response_model=SpeakerResponse)
@@ -236,7 +237,7 @@ async def set_default_speaker(speaker_id: str, db: sqlite3.Connection = Depends(
         # Check if speaker exists
         speaker = speaker_service.get_speaker(speaker_id)
         if not speaker:
-            raise HTTPException(status_code=404, detail=f"[SPEAKER_NOT_FOUND]speakerId:{speaker_id}")
+            raise ApplicationError("SPEAKER_NOT_FOUND", status_code=404, speakerId=speaker_id)
 
         # Set speaker as default in speakers table
         updated_speaker = speaker_service.set_default_speaker(speaker_id)
@@ -258,11 +259,11 @@ async def set_default_speaker(speaker_id: str, db: sqlite3.Connection = Depends(
 
         return updated_speaker
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to set default speaker {speaker_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[SPEAKER_SET_DEFAULT_FAILED]speakerId:{speaker_id};error:{str(e)}")
+        raise ApplicationError("SPEAKER_SET_DEFAULT_FAILED", status_code=500, speakerId=speaker_id, error=str(e))
 
 
 @router.get("/default/get", response_model=Optional[SpeakerResponse])
@@ -281,7 +282,7 @@ async def get_default_speaker(db: sqlite3.Connection = Depends(get_db)) -> Optio
 
     except Exception as e:
         logger.error(f"Failed to get default speaker: {e}")
-        raise HTTPException(status_code=500, detail=f"[SPEAKER_GET_DEFAULT_FAILED]error:{str(e)}")
+        raise ApplicationError("SPEAKER_GET_DEFAULT_FAILED", status_code=500, error=str(e))
 
 
 @router.delete("/{speaker_id}", response_model=DeleteResponse)
@@ -302,7 +303,7 @@ async def delete_speaker(speaker_id: str, db: sqlite3.Connection = Depends(get_d
 
         # Check if speaker exists
         if not service.get_speaker(speaker_id):
-            raise HTTPException(status_code=404, detail=f"[SPEAKER_NOT_FOUND]speakerId:{speaker_id}")
+            raise ApplicationError("SPEAKER_NOT_FOUND", status_code=404, speakerId=speaker_id)
 
         result = service.delete_speaker(speaker_id)
 
@@ -316,11 +317,11 @@ async def delete_speaker(speaker_id: str, db: sqlite3.Connection = Depends(get_d
 
         return result
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to delete speaker {speaker_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[SPEAKER_DELETE_FAILED]speakerId:{speaker_id};error:{str(e)}")
+        raise ApplicationError("SPEAKER_DELETE_FAILED", status_code=500, speakerId=speaker_id, error=str(e))
 
 
 @router.post("/{speaker_id}/samples", response_model=SpeakerSampleResponse)
@@ -350,11 +351,11 @@ async def upload_sample(
         # Check if speaker exists
         speaker = service.get_speaker(speaker_id)
         if not speaker:
-            raise HTTPException(status_code=404, detail=f"[SPEAKER_NOT_FOUND]speakerId:{speaker_id}")
+            raise ApplicationError("SPEAKER_NOT_FOUND", status_code=404, speakerId=speaker_id)
 
         # Validate file type
         if not file.filename.lower().endswith(('.wav', '.mp3')):
-            raise HTTPException(status_code=400, detail="[SPEAKER_INVALID_FILE_TYPE]")
+            raise ApplicationError("SPEAKER_INVALID_FILE_TYPE", status_code=400)
 
         # Create unique filename
         file_ext = Path(file.filename).suffix
@@ -404,11 +405,11 @@ async def upload_sample(
 
         return sample
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to upload sample for speaker {speaker_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[SPEAKER_SAMPLE_ADD_FAILED]speakerId:{speaker_id};error:{str(e)}")
+        raise ApplicationError("SPEAKER_SAMPLE_ADD_FAILED", status_code=500, speakerId=speaker_id, error=str(e))
 
 
 
@@ -437,18 +438,18 @@ async def get_sample_audio(
         # Get speaker to verify it exists
         speaker = service.get_speaker(speaker_id)
         if not speaker:
-            raise HTTPException(status_code=404, detail=f"[SPEAKER_NOT_FOUND]speakerId:{speaker_id}")
+            raise ApplicationError("SPEAKER_NOT_FOUND", status_code=404, speakerId=speaker_id)
 
         # Find the sample
         sample = next((s for s in speaker["samples"] if s["id"] == sample_id), None)
         if not sample:
-            raise HTTPException(status_code=404, detail=f"[SPEAKER_SAMPLE_NOT_FOUND]sampleId:{sample_id}")
+            raise ApplicationError("SPEAKER_SAMPLE_NOT_FOUND", status_code=404, sampleId=sample_id)
 
         # Reconstruct full path from relative path stored in DB
         sample_path = Path(SPEAKER_SAMPLES_DIR) / sample["filePath"]
         if not sample_path.exists():
             logger.error(f"Sample file not found: {sample_path}")
-            raise HTTPException(status_code=404, detail="[SPEAKER_SAMPLE_FILE_NOT_FOUND]")
+            raise ApplicationError("SPEAKER_SAMPLE_FILE_NOT_FOUND", status_code=404)
 
         # Determine media type based on file extension
         media_type = "audio/wav" if sample_path.suffix.lower() == ".wav" else "audio/mpeg"
@@ -461,11 +462,11 @@ async def get_sample_audio(
             filename=sample["fileName"]
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to get sample audio {sample_id} for speaker {speaker_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[SPEAKER_SAMPLE_GET_FAILED]speakerId:{speaker_id};sampleId:{sample_id};error:{str(e)}")
+        raise ApplicationError("SPEAKER_SAMPLE_GET_FAILED", status_code=500, speakerId=speaker_id, sampleId=sample_id, error=str(e))
 
 
 @router.delete("/{speaker_id}/samples/{sample_id}", response_model=DeleteResponse)
@@ -491,7 +492,7 @@ async def delete_sample(
 
         # Check if speaker exists
         if not service.get_speaker(speaker_id):
-            raise HTTPException(status_code=404, detail=f"[SPEAKER_NOT_FOUND]speakerId:{speaker_id}")
+            raise ApplicationError("SPEAKER_NOT_FOUND", status_code=404, speakerId=speaker_id)
 
         result = service.delete_sample(speaker_id, sample_id)
 
@@ -508,10 +509,10 @@ async def delete_sample(
 
         return result
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=f"[SPEAKER_SAMPLE_NOT_FOUND]sampleId:{sample_id};error:{str(e)}")
+        raise ApplicationError("SPEAKER_SAMPLE_NOT_FOUND", status_code=404, sampleId=sample_id, error=str(e))
     except Exception as e:
         logger.error(f"Failed to delete sample: {e}")
-        raise HTTPException(status_code=500, detail=f"[SPEAKER_SAMPLE_DELETE_FAILED]speakerId:{speaker_id};sampleId:{sample_id};error:{str(e)}")
+        raise ApplicationError("SPEAKER_SAMPLE_DELETE_FAILED", status_code=500, speakerId=speaker_id, sampleId=sample_id, error=str(e))

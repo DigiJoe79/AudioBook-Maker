@@ -22,6 +22,8 @@ from bs4 import BeautifulSoup
 import markdownify
 from loguru import logger
 
+from core.exceptions import ApplicationError
+
 
 @dataclass
 class EpubChapter:
@@ -53,29 +55,45 @@ class EpubImporter:
         Parse EPUB bytes and build an EpubBook structure.
         """
         if not data:
-            raise ValueError("[EPUB_IMPORT_FILE_EMPTY]")
+            raise ApplicationError("EPUB_IMPORT_FILE_EMPTY", status_code=400)
 
-        logger.debug(f"Parsing EPUB file ({len(data)} bytes)")
+        logger.debug(
+            "EPUB parsing phase: START",
+            file_size_bytes=len(data)
+        )
         book = epub.read_epub(io.BytesIO(data))
+        logger.debug("EPUB parsing phase: ZIP extraction complete")
 
         # Get book title
         meta_title = book.get_metadata("DC", "title")
         if meta_title and len(meta_title) > 0:
             title = meta_title[0][0]
+            logger.debug("EPUB metadata: title extracted", title=title)
         else:
             title = "Untitled Book"
+            logger.debug("EPUB metadata: no title found, using default")
 
         # Best-effort description (optional)
         meta_desc = book.get_metadata("DC", "description")
         if meta_desc and len(meta_desc) > 0:
             description = meta_desc[0][0]
+            logger.debug(
+                "EPUB metadata: description extracted",
+                description_length=len(description)
+            )
         else:
             description = ""
+            logger.debug("EPUB metadata: no description found")
 
         chapters: List[EpubChapter] = []
+        document_items = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
+        logger.debug(
+            "EPUB parsing phase: document enumeration",
+            document_count=len(document_items)
+        )
 
         # Items of type DOCUMENT are the XHTML/HTML spine entries
-        for idx, item in enumerate(book.get_items_of_type(ebooklib.ITEM_DOCUMENT)):
+        for idx, item in enumerate(document_items):
             html_bytes: bytes = item.get_content()
             html = html_bytes.decode("utf-8", errors="ignore")
 
@@ -85,11 +103,23 @@ class EpubImporter:
             heading = soup.find(["h1", "h2", "h3", "title"])
             if heading is not None:
                 chapter_title = heading.get_text(" ", strip=True)
+                logger.debug(
+                    "HTML to markdown: heading found",
+                    item_index=idx,
+                    heading_tag=heading.name,
+                    title=chapter_title
+                )
             else:
                 chapter_title = f"Chapter {idx + 1}"
+                logger.debug(
+                    "HTML to markdown: no heading, using fallback",
+                    item_index=idx,
+                    fallback_title=chapter_title
+                )
 
             # Convert body HTML to markdown
             body = soup.body if soup.body is not None else soup
+            html_length = len(str(body))
             body_md = markdownify.markdownify(
                 str(body),
                 heading_style="ATX",  # Use '#' headings
@@ -98,9 +128,21 @@ class EpubImporter:
 
             # Clean up markdown text a bit
             text_md = self._normalize_markdown(body_md)
+            logger.debug(
+                "HTML to markdown: conversion complete",
+                item_index=idx,
+                html_length=html_length,
+                markdown_length=len(text_md)
+            )
 
             # Heuristic: skip very short or obviously front matter pages
             if self._looks_like_front_matter(chapter_title, text_md, idx):
+                logger.debug(
+                    "EPUB parsing phase: skipping front matter",
+                    item_index=idx,
+                    title=chapter_title,
+                    text_length=len(text_md)
+                )
                 continue
 
             chapters.append(
@@ -112,8 +154,13 @@ class EpubImporter:
             )
 
         if not chapters:
-            raise ValueError("[EPUB_IMPORT_NO_CHAPTERS]")
+            raise ApplicationError("EPUB_IMPORT_NO_CHAPTERS", status_code=400)
 
+        logger.debug(
+            "EPUB parsing phase: COMPLETE",
+            chapters_extracted=len(chapters),
+            documents_processed=len(document_items)
+        )
         logger.info(f"Parsed EPUB: '{title}' with {len(chapters)} chapters")
         return EpubBook(
             title=title,

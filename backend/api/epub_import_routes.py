@@ -18,10 +18,11 @@ from datetime import datetime
 import json
 import sqlite3
 
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, Form, Depends
 
 from loguru import logger
 
+from core.exceptions import ApplicationError
 from models.response_models import (
     MappingRules,
     ImportPreviewResponse,
@@ -66,38 +67,38 @@ async def get_epub_import_preview(
         rules_dict = json.loads(mapping_rules)
         rules = MappingRules(**rules_dict)
     except (json.JSONDecodeError, ValueError) as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"[EPUB_IMPORT_INVALID_MAPPING_JSON]error:{str(e)}",
-        )
+        raise ApplicationError("EPUB_IMPORT_INVALID_MAPPING_JSON", status_code=400, error=str(e))
 
     content = await file.read()
     if not content:
-        raise HTTPException(status_code=400, detail="[EPUB_IMPORT_FILE_EMPTY]")
+        raise ApplicationError("EPUB_IMPORT_FILE_EMPTY", status_code=400)
 
-    logger.debug(f"Parsing EPUB file: {file.filename} ({len(content)} bytes)")
+    logger.debug(
+        "EPUB preview: processing byte content",
+        filename=file.filename,
+        content_length=len(content),
+        language=language
+    )
 
     # Convert EPUB to markdown
     try:
         importer = EpubImporter(language=language)
         book = importer.load_from_bytes(content)
         md_content = importer.to_markdown_document(book)
+    except ApplicationError:
+        # Let ApplicationError pass through to global handler (no double-wrapping)
+        raise
     except ValueError as ve:
-        logger.error(f"EPUB parsing failed: {str(ve)}")
-        raise HTTPException(status_code=400, detail=f"[EPUB_IMPORT_VALIDATION_ERROR]error:{str(ve)}")
+        # Only truly unexpected ValueErrors get wrapped
+        logger.error(f"Unexpected EPUB parsing error: {str(ve)}")
+        raise ApplicationError("EPUB_IMPORT_VALIDATION_ERROR", status_code=400, error=str(ve))
     except EpubException as ee:
         # Invalid EPUB structure (not a ZIP, missing files, etc.)
         logger.error(f"Invalid EPUB file: {str(ee)}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"[EPUB_IMPORT_INVALID_EPUB]error:{str(ee)}",
-        )
+        raise ApplicationError("EPUB_IMPORT_INVALID_EPUB", status_code=400, error=str(ee))
     except Exception as e:
         logger.exception(f"Unexpected EPUB parsing error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"[EPUB_IMPORT_PARSE_FAILED]error:{str(e)}",
-        )
+        raise ApplicationError("EPUB_IMPORT_PARSE_FAILED", status_code=500, error=str(e))
 
     # Get segmentation limits and divider duration from settings
     settings_service = SettingsService(conn)
@@ -117,6 +118,22 @@ async def get_epub_import_preview(
         if metadata:
             constraints = metadata.get('constraints') or {}
             engine_max = constraints.get('max_text_length', 500)
+            logger.debug(
+                "EPUB metadata extraction: engine constraints found",
+                engine=default_engine,
+                max_text_length=engine_max
+            )
+        else:
+            logger.debug(
+                "EPUB metadata extraction: no engine metadata, using fallback",
+                engine=default_engine,
+                fallback_max=engine_max
+            )
+    else:
+        logger.debug(
+            "EPUB metadata extraction: no default engine configured, using fallback",
+            fallback_max=engine_max
+        )
 
     max_length = min(user_pref, engine_max)
 
@@ -137,15 +154,16 @@ async def get_epub_import_preview(
             max_segment_length=max_length,
             default_divider_duration=default_divider_duration,
         )
+    except ApplicationError:
+        # Let ApplicationError pass through to global handler (no double-wrapping)
+        raise
     except ValueError as ve:
-        logger.error(f"Markdown parsing failed for EPUB: {str(ve)}")
-        raise HTTPException(status_code=400, detail=f"[EPUB_IMPORT_VALIDATION_ERROR]error:{str(ve)}")
+        # Only truly unexpected ValueErrors get wrapped
+        logger.error(f"Unexpected parsing error for EPUB: {str(ve)}")
+        raise ApplicationError("EPUB_IMPORT_VALIDATION_ERROR", status_code=400, error=str(ve))
     except Exception as e:
         logger.error(f"Segmentation failed for EPUB preview: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"[EPUB_IMPORT_SEGMENTATION_FAILED]error:{str(e)}",
-        )
+        raise ApplicationError("EPUB_IMPORT_SEGMENTATION_FAILED", status_code=500, error=str(e))
 
     # Validate and get warnings
     validator = ImportValidator()
@@ -247,38 +265,23 @@ async def execute_epub_import(
         rules_dict = json.loads(mapping_rules)
         rules = MappingRules(**rules_dict)
     except (json.JSONDecodeError, ValueError) as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"[EPUB_IMPORT_INVALID_MAPPING_JSON]error:{str(e)}",
-        )
+        raise ApplicationError("EPUB_IMPORT_INVALID_MAPPING_JSON", status_code=400, error=str(e))
 
     try:
         selected_chapters_list = json.loads(selected_chapters)
     except json.JSONDecodeError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"[EPUB_IMPORT_INVALID_CHAPTERS_JSON]error:{str(e)}",
-        )
+        raise ApplicationError("EPUB_IMPORT_INVALID_CHAPTERS_JSON", status_code=400, error=str(e))
 
     try:
         renamed_chapters_dict = json.loads(renamed_chapters)
     except json.JSONDecodeError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"[EPUB_IMPORT_INVALID_RENAMED_JSON]error:{str(e)}",
-        )
+        raise ApplicationError("EPUB_IMPORT_INVALID_RENAMED_JSON", status_code=400, error=str(e))
 
     if mode not in ["new", "merge"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"[EPUB_IMPORT_INVALID_MODE]mode:{mode}",
-        )
+        raise ApplicationError("EPUB_IMPORT_INVALID_MODE", status_code=400, mode=mode)
 
     if mode == "merge" and not merge_target_id:
-        raise HTTPException(
-            status_code=400,
-            detail="[EPUB_IMPORT_MISSING_TARGET_ID]",
-        )
+        raise ApplicationError("EPUB_IMPORT_MISSING_TARGET_ID", status_code=400)
 
     # Early validation: Check merge target exists BEFORE expensive parsing
     merge_target_project = None
@@ -286,14 +289,19 @@ async def execute_epub_import(
         project_repo = ProjectRepository(conn)
         merge_target_project = project_repo.get_by_id(merge_target_id)
         if not merge_target_project:
-            raise HTTPException(
-                status_code=404,
-                detail=f"[EPUB_IMPORT_TARGET_NOT_FOUND]projectId:{merge_target_id}",
-            )
+            raise ApplicationError("EPUB_IMPORT_TARGET_NOT_FOUND", status_code=404, projectId=merge_target_id)
 
     content = await file.read()
     if not content:
-        raise HTTPException(status_code=400, detail="[EPUB_IMPORT_FILE_EMPTY]")
+        raise ApplicationError("EPUB_IMPORT_FILE_EMPTY", status_code=400)
+
+    logger.debug(
+        "EPUB import: processing byte content",
+        filename=file.filename,
+        content_length=len(content),
+        mode=mode,
+        language=language
+    )
 
     logger.info(
         "Executing EPUB import: "
@@ -318,32 +326,27 @@ async def execute_epub_import(
         importer = EpubImporter(language=language)
         book = importer.load_from_bytes(content)
         md_content = importer.to_markdown_document(book)
+    except ApplicationError:
+        # Let ApplicationError pass through to global handler (no double-wrapping)
+        raise
     except ValueError as ve:
-        logger.error(f"EPUB parsing failed during import: {str(ve)}")
-        raise HTTPException(status_code=400, detail=f"[EPUB_IMPORT_VALIDATION_ERROR]error:{str(ve)}")
+        # Only truly unexpected ValueErrors get wrapped
+        logger.error(f"Unexpected EPUB parsing error during import: {str(ve)}")
+        raise ApplicationError("EPUB_IMPORT_VALIDATION_ERROR", status_code=400, error=str(ve))
     except EpubException as ee:
         # Invalid EPUB structure (not a ZIP, missing files, etc.)
         logger.error(f"Invalid EPUB file during import: {str(ee)}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"[EPUB_IMPORT_INVALID_EPUB]error:{str(ee)}",
-        )
+        raise ApplicationError("EPUB_IMPORT_INVALID_EPUB", status_code=400, error=str(ee))
     except Exception as e:
         logger.exception(f"Unexpected EPUB parsing error during import: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"[EPUB_IMPORT_PARSE_FAILED]error:{str(e)}",
-        )
+        raise ApplicationError("EPUB_IMPORT_PARSE_FAILED", status_code=500, error=str(e))
 
     # Engine constraints and settings
     settings_service = SettingsService(conn)
     tts_manager = get_tts_engine_manager()
 
     if tts_engine not in tts_manager.list_available_engines():
-        raise HTTPException(
-            status_code=400,
-            detail=f"[EPUB_IMPORT_UNKNOWN_ENGINE]engine:{tts_engine}",
-        )
+        raise ApplicationError("EPUB_IMPORT_UNKNOWN_ENGINE", status_code=400, engine=tts_engine)
 
     # Get engine constraints from metadata (Single Source of Truth)
     metadata = tts_manager.get_engine_metadata(tts_engine)
@@ -374,15 +377,16 @@ async def execute_epub_import(
             max_segment_length=max_length,
             default_divider_duration=default_divider_duration,
         )
+    except ApplicationError:
+        # Let ApplicationError pass through to global handler (no double-wrapping)
+        raise
     except ValueError as ve:
-        logger.error(f"Markdown parsing failed during EPUB import: {str(ve)}")
-        raise HTTPException(status_code=400, detail=f"[EPUB_IMPORT_VALIDATION_ERROR]error:{str(ve)}")
+        # Only truly unexpected ValueErrors get wrapped
+        logger.error(f"Unexpected parsing error during EPUB import: {str(ve)}")
+        raise ApplicationError("EPUB_IMPORT_VALIDATION_ERROR", status_code=400, error=str(ve))
     except Exception as e:
         logger.error(f"Segmentation failed during EPUB import: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"[EPUB_IMPORT_SEGMENTATION_FAILED]error:{str(e)}",
-        )
+        raise ApplicationError("EPUB_IMPORT_SEGMENTATION_FAILED", status_code=500, error=str(e))
 
     # Repositories
     project_repo = ProjectRepository(conn)

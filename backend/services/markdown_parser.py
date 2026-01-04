@@ -16,6 +16,7 @@ import re
 from loguru import logger
 from models.response_models import MappingRules
 from core.text_engine_manager import get_text_engine_manager
+from core.exceptions import ApplicationError
 
 
 class MarkdownParser:
@@ -65,6 +66,13 @@ class MarkdownParser:
         project_pattern = re.escape(self.project_heading) + r'\s+'
         chapter_pattern = re.escape(self.chapter_heading) + r'\s+'
         divider_regex = self._create_divider_regex(self.divider_pattern)
+
+        logger.debug(
+            "Heading hierarchy configured",
+            project_heading=self.project_heading,
+            chapter_heading=self.chapter_heading,
+            divider_pattern=self.divider_pattern
+        )
 
         i = 0
         while i < len(lines):
@@ -141,14 +149,10 @@ class MarkdownParser:
 
         # Validation
         if not project_title:
-            raise ValueError(
-                f"[IMPORT_NO_PROJECT_TITLE]projectHeading:{self.project_heading}"
-            )
+            raise ApplicationError("IMPORT_NO_PROJECT_TITLE", status_code=400, projectHeading=self.project_heading)
 
         if not chapters:
-            raise ValueError(
-                f"[IMPORT_NO_CHAPTERS]projectHeading:{self.project_heading};chapterHeading:{self.chapter_heading}"
-            )
+            raise ApplicationError("IMPORT_NO_CHAPTERS", status_code=400, projectHeading=self.project_heading, chapterHeading=self.chapter_heading)
 
         logger.info(
             f"Parsed markdown: Project '{project_title}', "
@@ -189,6 +193,13 @@ class MarkdownParser:
         """
         # First, parse structure
         parsed = self.parse(md_content)
+        logger.debug(
+            "parse_with_segmentation started",
+            language=language,
+            text_engine=text_engine or "(default)",
+            max_segment_length=max_segment_length,
+            chapter_count=len(parsed["chapters"])
+        )
 
         # Get text engine manager
         text_manager = get_text_engine_manager()
@@ -206,9 +217,19 @@ class MarkdownParser:
             installed = text_manager.list_installed_engines()
             if installed:
                 engine_name = installed[0]
+                logger.debug(
+                    "Segmentation strategy: using first installed engine",
+                    engine=engine_name
+                )
 
         if not engine_name:
             raise ValueError("No text processing engine available")
+
+        logger.debug(
+            "Segmentation strategy resolved",
+            engine=engine_name,
+            source="parameter" if text_engine else "settings/fallback"
+        )
 
         # Ensure engine is ready
         await text_manager.ensure_engine_ready(engine_name, language)

@@ -116,7 +116,18 @@
       "deleteForbidden": "Cannot delete this host - it is protected",
       "hasEngines": "Cannot delete host with installed engines. Uninstall engines first.",
       "notDocker": "This operation requires a Docker host",
-      "sshKeyGenerationFailed": "Failed to generate SSH key: {{error}}"
+      "sshKeyGenerationFailed": "Failed to generate SSH key: {{error}}",
+      "listFailed": "Failed to load engine hosts: {{error}}",
+      "getFailed": "Failed to load host {{hostId}}: {{error}}",
+      "createFailed": "Failed to create host: {{error}}",
+      "prepareFailed": "Failed to prepare host: {{error}}",
+      "testFailed": "Failed to test host connection: {{error}}",
+      "cleanupFailed": "Failed to cleanup prepared host: {{error}}",
+      "deleteFailed": "Failed to delete host: {{error}}",
+      "ensureLocalFailed": "Failed to ensure local Docker host: {{error}}",
+      "volumesGetFailed": "Failed to get volume configuration: {{error}}",
+      "volumesUpdateFailed": "Failed to update volume configuration: {{error}}",
+      "publicKeyFailed": "Failed to get SSH public key: {{error}}"
     },
     "addHost": {
       "title": "Add Docker Host",
@@ -703,10 +714,13 @@
     "language": "Language",
     "errors": {
       "segmentNotFound": "Segment not found: {{segmentId}}",
+      "chapterNotFound": "Chapter not found: {{chapterId}}",
       "jobNotFound": "TTS job not found: {{jobId}}",
       "jobOperationFailed": "TTS job operation failed: {{error}}",
       "segmentFrozen": "Cannot regenerate frozen segment. Unfreeze it first.",
       "missingParameters": "Segment missing required TTS parameters",
+      "noSegments": "No segments to generate for chapter: {{chapterId}}",
+      "jobCreateFailed": "Failed to create TTS job for chapter {{chapterId}}: {{error}}",
       "jobListFailed": "Failed to load TTS jobs: {{error}}",
       "activeJobListFailed": "Failed to load active TTS jobs: {{error}}",
       "jobGetFailed": "Failed to get TTS job: {{error}}",

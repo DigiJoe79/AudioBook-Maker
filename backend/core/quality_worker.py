@@ -130,14 +130,23 @@ class QualityWorker:
                     conn.close()
                     return job
 
+                logger.debug("[QualityWorker] Polling for pending jobs")
                 job = retry_on_db_lock(get_next_job)
 
                 if job:
                     self.current_job_id = job['id']
+                    logger.debug(
+                        f"[QualityWorker] Job found job_id={job['id']} job_type={job['job_type']} "
+                        f"chapter_id={job.get('chapter_id')} total_segments={job.get('total_segments', 0)}"
+                    )
                     logger.info(f"Processing Quality job {job['id']} ({job['job_type']})")
                     self._process_job_sync(job)
                     self.current_job_id = None
                 else:
+                    logger.debug(
+                        "[QualityWorker] No pending jobs found, sleeping poll_interval={:.1f}s",
+                        self.poll_interval
+                    )
                     time.sleep(self.poll_interval)
 
             except KeyboardInterrupt:
@@ -151,6 +160,7 @@ class QualityWorker:
                     logger.error(f"[QualityWorker] Database error: {e}", exc_info=True)
                 time.sleep(self.poll_interval)
             except Exception as e:
+                logger.debug(f"[QualityWorker] Exception in _worker_loop type={type(e).__name__}")
                 logger.error(f"[QualityWorker] Unexpected error: {e}", exc_info=True)
                 time.sleep(self.poll_interval)
 
@@ -159,6 +169,11 @@ class QualityWorker:
         if self._event_loop is None:
             logger.error("[QualityWorker] Cannot process job: no event loop available")
             return
+
+        logger.debug(
+            f"[QualityWorker] _process_job_sync START job_id={job['id']} "
+            f"status={job.get('status')} stt_engine={job.get('stt_engine')} audio_engine={job.get('audio_engine')}"
+        )
 
         future = asyncio.run_coroutine_threadsafe(
             self._process_job_async(job),
@@ -197,6 +212,12 @@ class QualityWorker:
             if not total_segments:
                 total_segments = len(segment_objs)
 
+            already_analyzed = len(segment_objs) - len(pending_segment_ids)
+            logger.debug(
+                "[QualityWorker] Segment filtering: total_in_job={} pending={} already_analyzed={} total_segments={}",
+                len(segment_objs), len(pending_segment_ids), already_analyzed, total_segments
+            )
+
             # Check if there are any pending segments to process
             if len(pending_segment_ids) == 0:
                 logger.info(f"No pending segments for job {job['id']} - marking complete")
@@ -215,14 +236,24 @@ class QualityWorker:
             if job.get('stt_engine'):
                 from core.stt_engine_manager import get_stt_engine_manager
                 stt_manager = get_stt_engine_manager()
+                logger.debug(
+                    "[QualityWorker] Verifying STT engine readiness engine={} model={}",
+                    job['stt_engine'], job.get('stt_model_name')
+                )
                 await stt_manager.ensure_engine_ready(job['stt_engine'], job.get('stt_model_name'))
+                logger.debug("[QualityWorker] STT engine verified ready engine={}", job['stt_engine'])
 
             if job.get('audio_engine'):
                 from core.audio_engine_manager import get_audio_engine_manager
                 audio_manager = get_audio_engine_manager()
                 # Get default model for audio engine
                 audio_model_name = settings_service.get_default_model_for_engine(job['audio_engine'], 'audio')
+                logger.debug(
+                    "[QualityWorker] Verifying Audio engine readiness engine={} model={}",
+                    job['audio_engine'], audio_model_name
+                )
                 await audio_manager.ensure_engine_ready(job['audio_engine'], audio_model_name)
+                logger.debug("[QualityWorker] Audio engine verified ready engine={}", job['audio_engine'])
 
             # 3. Emit job started event (with existing progress for resumed jobs)
             from services.event_broadcaster import emit_quality_job_started
@@ -247,7 +278,12 @@ class QualityWorker:
             regenerate_mode = settings_service.get_setting('quality.autoRegenerateDefects') or 0
             defective_segments: List[dict] = []  # For bundled regeneration (mode 1)
 
-            for segment_id in pending_segment_ids:
+            for idx, segment_id in enumerate(pending_segment_ids):
+                logger.debug(
+                    f"[QualityWorker] Processing segment [{idx + 1}/{len(pending_segment_ids)}] "
+                    f"segment_id={segment_id}"
+                )
+
                 if not self.running:
                     job_repo.mark_failed(job['id'], "Worker shutdown")
                     return
@@ -266,6 +302,10 @@ class QualityWorker:
 
                 segment = segment_repo.get_by_id(segment_id)
                 if not segment or segment.get('is_frozen'):
+                    logger.debug(
+                        f"[QualityWorker] Skipping segment segment_id={segment_id} "
+                        f"reason={'not_found' if not segment else 'frozen'}"
+                    )
                     processed += 1
                     job_repo.update_progress(job['id'], processed, failed)
                     continue
@@ -404,18 +444,31 @@ class QualityWorker:
         server_attempt = 0
         loading_wait_total = 0
 
+        logger.debug(
+            "[QualityWorker] _analyze_with_retry starting engine={} type={} max_attempts={}",
+            engine_name, engine_type, max_server_attempts
+        )
+
         while server_attempt < max_server_attempts:
             try:
                 return await analyze_func()
 
             except EngineClientError as e:
                 # 400/404 - Request invalid, don't retry
+                logger.debug(
+                    "[QualityWorker] Client error (no retry) engine={} error={}",
+                    engine_name, str(e)
+                )
                 logger.error(f"[QualityWorker] {engine_type.upper()} client error: {e}")
                 return None
 
             except EngineLoadingError:
                 # 503 - Engine loading, wait and retry without restart
                 loading_wait_total += 1
+                logger.debug(
+                    "[QualityWorker] Engine loading (will retry without restart) engine={} wait_total={}s max_wait={}s",
+                    engine_name, loading_wait_total, max_loading_wait_seconds
+                )
                 if loading_wait_total >= max_loading_wait_seconds:
                     logger.error(
                         f"[QualityWorker] {engine_type.upper()} loading timeout "
@@ -433,6 +486,10 @@ class QualityWorker:
             except EngineServerError as e:
                 # 500 or connection error - restart engine and retry
                 server_attempt += 1
+                logger.debug(
+                    "[QualityWorker] Server error (will restart engine) engine={} attempt={}/{} error={}",
+                    engine_name, server_attempt, max_server_attempts, str(e)
+                )
                 logger.error(
                     f"[QualityWorker] {engine_type.upper()} server error "
                     f"(attempt {server_attempt}/{max_server_attempts}): {e}"
@@ -451,6 +508,10 @@ class QualityWorker:
                             f"{restart_err}"
                         )
                 else:
+                    logger.debug(
+                        "[QualityWorker] Max retry attempts exhausted engine={} attempts={}",
+                        engine_name, max_server_attempts
+                    )
                     logger.error(
                         f"[QualityWorker] {engine_type.upper()} analysis failed "
                         f"after {max_server_attempts} attempts"
@@ -500,6 +561,10 @@ class QualityWorker:
                 from db.pronunciation_repository import PronunciationRulesRepository
                 pron_repo = PronunciationRulesRepository(conn)
                 # Get rules for this segment's context (engine, language, project)
+                logger.debug(
+                    "[QualityWorker] Loading pronunciation rules engine={} language={} project_id={}",
+                    segment.get('tts_engine', ''), segment.get('language', 'en'), job.get('project_id')
+                )
                 rules = pron_repo.get_rules_for_context(
                     engine_name=segment.get('tts_engine', ''),
                     language=segment.get('language', 'en'),
@@ -514,10 +579,18 @@ class QualityWorker:
                     }
                     for r in rules if r.is_active
                 ]
+                logger.debug(
+                    "[QualityWorker] Pronunciation rules loaded count={} active={}",
+                    len(rules), len(pronunciation_rules)
+                )
             except Exception as e:
                 logger.warning(f"Failed to load pronunciation rules: {e}")
 
             async def do_stt_analysis():
+                logger.debug(
+                    "[QualityWorker] Calling STT engine engine={} audio_path={} language={}",
+                    job['stt_engine'], str(audio_path), segment.get('language', 'en')
+                )
                 return await stt_manager.analyze_generic(
                     engine_name=job['stt_engine'],
                     audio_path=str(audio_path),
@@ -551,6 +624,10 @@ class QualityWorker:
             )
 
             async def do_audio_analysis():
+                logger.debug(
+                    "[QualityWorker] Calling Audio engine engine={} audio_path={} thresholds={}",
+                    job['audio_engine'], str(audio_path), thresholds
+                )
                 return await audio_manager.analyze_generic(
                     engine_name=job['audio_engine'],
                     audio_path=str(audio_path),
@@ -587,6 +664,11 @@ class QualityWorker:
             # Get quality settings for max attempts check
             max_attempts = settings_service.get_setting('quality.maxRegenerateAttempts') or 5
             current_attempts = segment.get('regenerate_attempts', 0)
+
+            logger.debug(
+                "[QualityWorker] Auto-regenerate check segment_id={} current_attempts={} max_attempts={} eligible={}",
+                segment['id'], current_attempts, max_attempts, current_attempts < max_attempts
+            )
 
             if current_attempts >= max_attempts:
                 logger.warning(
@@ -672,6 +754,11 @@ class QualityWorker:
         try:
             max_attempts = settings_service.get_setting('quality.maxRegenerateAttempts') or 5
 
+            logger.debug(
+                "[QualityWorker] Batch regenerate filtering total_defective={} max_attempts={}",
+                len(segments), max_attempts
+            )
+
             # Filter: only segments under maxRegenerateAttempts
             eligible_segments = []
             for seg in segments:
@@ -681,14 +768,23 @@ class QualityWorker:
                     new_attempts = segment_repo.increment_regenerate_attempts(seg['id'])
                     eligible_segments.append(seg)
                     logger.debug(
-                        f"Segment {seg['id']} eligible for batch regenerate "
-                        f"(attempt {new_attempts}/{max_attempts})"
+                        "[QualityWorker] Segment eligible for batch regenerate segment_id={} attempt={}/{}",
+                        seg['id'], new_attempts, max_attempts
                     )
                 else:
+                    logger.debug(
+                        "[QualityWorker] Segment excluded (max attempts reached) segment_id={} attempts={}/{}",
+                        seg['id'], current_attempts, max_attempts
+                    )
                     logger.warning(
                         f"Segment {seg['id']} reached max regenerate attempts "
                         f"({current_attempts}/{max_attempts}), skipping"
                     )
+
+            logger.debug(
+                "[QualityWorker] Batch regenerate filter result eligible={} excluded={}",
+                len(eligible_segments), len(segments) - len(eligible_segments)
+            )
 
             if not eligible_segments:
                 logger.debug("[QualityWorker] No eligible segments for batch regeneration")
@@ -755,7 +851,13 @@ class QualityWorker:
 
     def _aggregate_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Aggregate results from multiple engines."""
+        logger.debug(
+            "[QualityWorker] Aggregating results engine_count={}",
+            len(results)
+        )
+
         if not results:
+            logger.debug("[QualityWorker] No results to aggregate, returning defect status")
             return {
                 'qualityScore': 0,
                 'qualityStatus': 'defect',
@@ -780,6 +882,11 @@ class QualityWorker:
         # Average score
         scores = [get_score(r) for r in results]
         avg_score = sum(scores) // len(scores) if scores else 0
+
+        logger.debug(
+            "[QualityWorker] Aggregation complete scores={} avg_score={} statuses={} worst_status={}",
+            scores, avg_score, [get_status(r) for r in results], worst_status
+        )
 
         return {
             'qualityScore': avg_score,

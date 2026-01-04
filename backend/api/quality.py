@@ -4,7 +4,8 @@ Quality Analysis Endpoints - Unified STT + Audio Analysis
 Provides job-based quality analysis endpoints using the Quality Worker system.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
+from core.exceptions import ApplicationError
 from typing import Optional
 from loguru import logger
 
@@ -40,14 +41,14 @@ async def analyze_segment(
         # Validate segment
         segment = segment_repo.get_by_id(segment_id)
         if not segment:
-            raise HTTPException(status_code=404, detail=f"[STT_SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+            raise ApplicationError("STT_SEGMENT_NOT_FOUND", status_code=404, segmentId=segment_id)
 
         # Check frozen FIRST (consistent with TTS)
         if segment.get('is_frozen'):
-            raise HTTPException(status_code=400, detail="[QUALITY_SEGMENT_FROZEN]")
+            raise ApplicationError("QUALITY_SEGMENT_FROZEN", status_code=400)
 
         if not segment.get('audio_path'):
-            raise HTTPException(status_code=400, detail="[QUALITY_NO_AUDIO]")
+            raise ApplicationError("QUALITY_NO_AUDIO", status_code=400)
 
         # Get default engines if not specified
         if stt_engine is None:
@@ -58,32 +59,40 @@ async def analyze_segment(
         if audio_engine is None:
             audio_engine = settings_service.get_default_engine('audio')
 
+        logger.debug(
+            f"[quality] analyze_segment segment_id={segment_id} "
+            f"has_audio={bool(segment.get('audio_path'))} stt_engine={stt_engine} audio_engine={audio_engine}"
+        )
+
         # Validate engines are actually available (discovered AND enabled)
         from core.stt_engine_manager import get_stt_engine_manager
         from core.audio_engine_manager import get_audio_engine_manager
 
         if stt_engine:
             stt_manager = get_stt_engine_manager()
-            if not stt_manager.is_engine_available(stt_engine):
+            stt_available = stt_manager.is_engine_available(stt_engine)
+            logger.debug("Engine availability check", engine_type="stt", engine=stt_engine, available=stt_available)
+            if not stt_available:
                 logger.warning(f"STT engine '{stt_engine}' not available, skipping STT analysis")
                 stt_engine = None
                 stt_model_name = None
 
         if audio_engine:
             audio_manager = get_audio_engine_manager()
-            if not audio_manager.is_engine_available(audio_engine):
+            audio_available = audio_manager.is_engine_available(audio_engine)
+            logger.debug("Engine availability check", engine_type="audio", engine=audio_engine, available=audio_available)
+            if not audio_available:
                 logger.warning(f"Audio engine '{audio_engine}' not available, skipping audio analysis")
                 audio_engine = None
 
         # At least one engine must be active
         if not stt_engine and not audio_engine:
-            raise HTTPException(
-                status_code=400,
-                detail="[QUALITY_NO_ENGINES]"
-            )
+            raise ApplicationError("QUALITY_NO_ENGINES", status_code=400)
+
+        logger.debug("Engines validated for analysis", stt_engine=stt_engine, audio_engine=audio_engine)
 
         # Create job with segment_ids for tracking
-        job = job_repo.create(
+        job_params = dict(
             job_type='segment',
             language=segment.get('language', 'en'),
             total_segments=1,
@@ -95,6 +104,8 @@ async def analyze_segment(
             trigger_source='manual',
             segment_ids=[segment_id]
         )
+        logger.debug("Creating quality job", **job_params)
+        job = job_repo.create(**job_params)
 
         logger.info(f"Created quality job {job['id']} for segment {segment_id}")
 
@@ -118,11 +129,11 @@ async def analyze_segment(
             status="pending"
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to create quality job: {e}")
-        raise HTTPException(status_code=500, detail=f"[QUALITY_JOB_CREATE_FAILED]error:{str(e)}")
+        raise ApplicationError("QUALITY_JOB_CREATE_FAILED", status_code=500, error=str(e))
 
 
 @router.post("/analyze/chapter/{chapter_id}", response_model=QualityJobCreatedResponse)
@@ -147,7 +158,7 @@ async def analyze_chapter(
         # Validate chapter
         chapter = chapter_repo.get_by_id(chapter_id)
         if not chapter:
-            raise HTTPException(status_code=404, detail=f"[STT_CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
+            raise ApplicationError("STT_CHAPTER_NOT_FOUND", status_code=404, chapterId=chapter_id)
 
         # Get segments with audio
         segments = segment_repo.get_by_chapter(chapter_id)
@@ -156,16 +167,18 @@ async def analyze_chapter(
             if s.get('audio_path') and s.get('status') == 'completed' and not s.get('is_frozen')
         ]
 
+        logger.debug(
+            f"[quality] analyze_chapter chapter_id={chapter_id} "
+            f"total_segments={len(segments)} with_audio={len(segments_with_audio)}"
+        )
+
         if not segments_with_audio:
-            raise HTTPException(status_code=400, detail="[QUALITY_NO_SEGMENTS]")
+            raise ApplicationError("QUALITY_NO_SEGMENTS", status_code=400)
 
         # Check for active jobs
         active_jobs = job_repo.get_active_jobs_for_chapter(chapter_id)
         if active_jobs:
-            raise HTTPException(
-                status_code=409,
-                detail=f"[QUALITY_JOB_IN_PROGRESS]jobId:{active_jobs[0]['id']}"
-            )
+            raise ApplicationError("QUALITY_JOB_IN_PROGRESS", status_code=409, jobId=active_jobs[0]['id'])
 
         # Get default engines
         if stt_engine is None:
@@ -194,10 +207,7 @@ async def analyze_chapter(
                 audio_engine = None
 
         if not stt_engine and not audio_engine:
-            raise HTTPException(
-                status_code=400,
-                detail="[QUALITY_NO_ENGINES]"
-            )
+            raise ApplicationError("QUALITY_NO_ENGINES", status_code=400)
 
         # Create job with segment_ids for tracking
         segment_ids = [s['id'] for s in segments_with_audio]
@@ -235,8 +245,8 @@ async def analyze_chapter(
             status="pending"
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to create quality job: {e}")
-        raise HTTPException(status_code=500, detail=f"[QUALITY_JOB_CREATE_FAILED]error:{str(e)}")
+        raise ApplicationError("QUALITY_JOB_CREATE_FAILED", status_code=500, error=str(e))

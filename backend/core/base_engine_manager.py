@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Any, Set
 from datetime import datetime, timezone
 import socket
 import asyncio
+import time
 import httpx
 from loguru import logger
 
@@ -514,7 +515,15 @@ class BaseEngineManager(ABC):
             self._exempt_from_auto_stop.clear()
 
             # Load keepRunning for all installed engines (subprocess + Docker)
-            for variant_id in self.list_installed_engines():
+            installed_engines = self.list_installed_engines()
+            logger.debug(
+                "sync_keep_running_from_settings: loading",
+                engine_type=self.engine_type,
+                installed_count=len(installed_engines),
+                previous_exempt=list(old_exempt)
+            )
+
+            for variant_id in installed_engines:
                 # Query DB with full variant_id (settings are stored per-variant)
                 keep_running = settings_service.get_engine_keep_running(variant_id, self.engine_type)
                 if keep_running:
@@ -524,6 +533,14 @@ class BaseEngineManager(ABC):
             # Log changes
             added = self._exempt_from_auto_stop - old_exempt
             removed = old_exempt - self._exempt_from_auto_stop
+
+            logger.debug(
+                "sync_keep_running_from_settings: result",
+                engine_type=self.engine_type,
+                exempt_engines=list(self._exempt_from_auto_stop),
+                added=list(added),
+                removed=list(removed)
+            )
 
             if added:
                 logger.info(f"Engines marked as keep running: {', '.join(added)}")
@@ -1079,6 +1096,7 @@ class BaseEngineManager(ABC):
 
             # Wait for health check (max 30s)
             logger.debug(f"Waiting for {variant_id} server to be ready...")
+            poll_start_time = time.monotonic()
             for attempt in range(30):
                 # Check if engine was stopped during startup (race condition protection)
                 if variant_id in self._stopping_engines or variant_id not in self.engine_endpoints:
@@ -1090,6 +1108,15 @@ class BaseEngineManager(ABC):
 
                 try:
                     health = await self.health_check(variant_id)
+                    elapsed_ms = int((time.monotonic() - poll_start_time) * 1000)
+                    logger.debug(
+                        "Health check poll",
+                        variant_id=variant_id,
+                        attempt=attempt + 1,
+                        elapsed_ms=elapsed_ms,
+                        status=health.get('status'),
+                        model_loaded=health.get('engineModelLoaded')
+                    )
                     if health.get('status') in ['ready', 'loading']:
                         logger.info(f"{variant_id} server ready on port {port}")
 
@@ -1121,9 +1148,22 @@ class BaseEngineManager(ABC):
 
                         return port
                 except asyncio.TimeoutError:
-                    logger.debug(f"Health check timeout for {variant_id}")
+                    elapsed_ms = int((time.monotonic() - poll_start_time) * 1000)
+                    logger.debug(
+                        "Health check poll: timeout",
+                        variant_id=variant_id,
+                        attempt=attempt + 1,
+                        elapsed_ms=elapsed_ms
+                    )
                 except Exception as e:
-                    logger.debug(f"Health check failed for {variant_id}: {e}")
+                    elapsed_ms = int((time.monotonic() - poll_start_time) * 1000)
+                    logger.debug(
+                        "Health check poll: failed",
+                        variant_id=variant_id,
+                        attempt=attempt + 1,
+                        elapsed_ms=elapsed_ms,
+                        error=str(e)
+                    )
 
             # Timeout - cleanup starting state before stopping
             self._starting_engines.discard(variant_id)
@@ -1180,7 +1220,13 @@ class BaseEngineManager(ABC):
         base_url = self.get_engine_base_url(variant_id)
         url = f"{base_url}/load"
 
-        logger.debug(f"Loading model {model_name} on {variant_id}...")
+        # Debug: Model loading phase start
+        logger.debug(
+            "Model loading phase: starting",
+            variant_id=variant_id,
+            model_name=model_name,
+            load_url=url
+        )
 
         # Note: CamelCaseModel accepts both snake_case and camelCase (populate_by_name=True)
         # Using camelCase here for consistency with JSON API convention
@@ -1198,8 +1244,22 @@ class BaseEngineManager(ABC):
             raise RuntimeError(f"Invalid JSON response from {variant_id}: {e}")
 
         if result.get('status') != 'loaded':
+            logger.debug(
+                "Model loading phase: failed",
+                variant_id=variant_id,
+                model_name=model_name,
+                status=result.get('status'),
+                error=result.get('error')
+            )
             raise RuntimeError(f"Model loading failed: {result.get('error')}")
 
+        # Debug: Model loading phase complete
+        logger.debug(
+            "Model loading phase: complete",
+            variant_id=variant_id,
+            model_name=model_name,
+            status=result.get('status')
+        )
         logger.success(f"Model {model_name} loaded successfully on {variant_id}")
 
         # Emit model loaded event
@@ -1500,9 +1560,25 @@ class BaseEngineManager(ABC):
             True if running, False otherwise
         """
         # Check via runner - works for both subprocess (LocalRunner) and Docker (DockerRunner)
-        for runner in self.runner_registry.runners.values():
+        for runner_name, runner in self.runner_registry.runners.items():
             if runner.is_running(variant_id):
+                logger.debug(
+                    "is_engine_running: running",
+                    variant_id=variant_id,
+                    runner=runner_name,
+                    has_endpoint=variant_id in self.engine_endpoints,
+                    has_port=variant_id in self.engine_ports
+                )
                 return True
+
+        # Debug: Engine not running via any runner
+        logger.debug(
+            "is_engine_running: not running",
+            variant_id=variant_id,
+            checked_runners=list(self.runner_registry.runners.keys()),
+            has_stale_endpoint=variant_id in self.engine_endpoints,
+            has_stale_port=variant_id in self.engine_ports
+        )
 
         # Engine not running via any runner - cleanup stale tracking entries if present
         if variant_id in self.engine_endpoints:
@@ -1655,6 +1731,28 @@ class BaseEngineManager(ABC):
         # Extract model_name from config if provided
         model_name = config.get("model_name") if config else None
 
+        # Debug: Runner selection logic
+        base_engine_name, runner_id = parse_variant_id(variant_id)
+        runner = self.runner_registry.get_runner_by_variant(variant_id)
+        runner_type = type(runner).__name__ if runner else "None"
+        logger.debug(
+            "start_by_variant: runner selection",
+            variant_id=variant_id,
+            base_engine=base_engine_name,
+            runner_id=runner_id,
+            runner_type=runner_type,
+            model_name=model_name
+        )
+
+        # Debug: Port assignment details
+        current_port = self.engine_ports.get(variant_id)
+        logger.debug(
+            "start_by_variant: port state",
+            variant_id=variant_id,
+            current_assigned_port=current_port,
+            global_used_ports=list(_global_used_ports)
+        )
+
         # Pass variant_id directly - ensure_engine_ready handles runner selection
         await self.ensure_engine_ready(variant_id, model_name)
 
@@ -1719,19 +1817,40 @@ class BaseEngineManager(ABC):
             - No activity recorded yet
         """
         # Not running or exempt (use engine_endpoints for all engine types)
-        if variant_id not in self.engine_endpoints or variant_id in self._exempt_from_auto_stop:
+        is_running = variant_id in self.engine_endpoints
+        is_exempt = variant_id in self._exempt_from_auto_stop
+        if not is_running or is_exempt:
+            logger.debug(
+                "get_seconds_until_auto_stop: not applicable",
+                variant_id=variant_id,
+                is_running=is_running,
+                is_exempt=is_exempt
+            )
             return None
 
         # No activity recorded
         if variant_id not in self._last_activity:
+            logger.debug(
+                "get_seconds_until_auto_stop: no activity recorded",
+                variant_id=variant_id
+            )
             return None
 
         # Calculate remaining time
         last_active = self._last_activity[variant_id]
         elapsed = (datetime.now(timezone.utc) - last_active).total_seconds()
         remaining = self._inactivity_timeout - elapsed
+        result = max(0, int(remaining))
 
-        return max(0, int(remaining))
+        logger.debug(
+            "get_seconds_until_auto_stop: calculated",
+            variant_id=variant_id,
+            elapsed_seconds=int(elapsed),
+            timeout_seconds=self._inactivity_timeout,
+            remaining_seconds=result
+        )
+
+        return result
 
     async def check_idle_engines(self):
         """

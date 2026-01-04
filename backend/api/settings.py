@@ -4,12 +4,13 @@ Settings API Endpoints
 RESTful API for managing global application settings.
 """
 import sqlite3
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from typing import Any, Dict
 from pydantic import BaseModel, ConfigDict
 from loguru import logger
 
 from db.database import get_db
+from core.exceptions import ApplicationError
 from services.settings_service import SettingsService
 from services.event_broadcaster import broadcaster, EventType
 from core.base_engine_manager import parse_variant_id
@@ -52,7 +53,7 @@ async def get_all_settings(db: sqlite3.Connection = Depends(get_db)) -> AllSetti
 
     except Exception as e:
         logger.error(f"Failed to get settings: {e}")
-        raise HTTPException(status_code=500, detail=f"[SETTINGS_GET_FAILED]error:{str(e)}")
+        raise ApplicationError("SETTINGS_GET_FAILED", status_code=500, error=str(e))
 
 
 @router.get("/{key}", response_model=SettingValueResponse)
@@ -73,7 +74,7 @@ async def get_setting(key: str, db: sqlite3.Connection = Depends(get_db)) -> Set
         value = service.get_setting(key)
 
         if value is None:
-            raise HTTPException(status_code=404, detail=f"[SETTINGS_KEY_NOT_FOUND]key:{key}")
+            raise ApplicationError("SETTINGS_KEY_NOT_FOUND", status_code=404, key=key)
 
         logger.debug(f"Retrieved setting: {key}")
 
@@ -82,11 +83,11 @@ async def get_setting(key: str, db: sqlite3.Connection = Depends(get_db)) -> Set
             value=value
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to get setting '{key}': {e}")
-        raise HTTPException(status_code=500, detail=f"[SETTINGS_GET_FAILED]key:{key};error:{str(e)}")
+        raise ApplicationError("SETTINGS_GET_FAILED", status_code=500, key=key, error=str(e))
 
 
 @router.put("/{key}", response_model=SettingValueResponse)
@@ -124,7 +125,7 @@ async def update_setting(
 
     except Exception as e:
         logger.error(f"Failed to update setting '{key}': {e}")
-        raise HTTPException(status_code=500, detail=f"[SETTINGS_UPDATE_FAILED]error:{str(e)}")
+        raise ApplicationError("SETTINGS_UPDATE_FAILED", status_code=500, error=str(e))
 
 
 @router.post("/reset", response_model=MessageResponse)
@@ -153,7 +154,7 @@ async def reset_to_defaults(db: sqlite3.Connection = Depends(get_db)) -> Message
 
     except Exception as e:
         logger.error(f"Failed to reset settings: {e}")
-        raise HTTPException(status_code=500, detail=f"[SETTINGS_RESET_FAILED]error:{str(e)}")
+        raise ApplicationError("SETTINGS_RESET_FAILED", status_code=500, error=str(e))
 
 
 @router.get("/segment-limits/{engine}", response_model=SegmentLimitsResponse)
@@ -185,7 +186,7 @@ async def get_segment_limits(engine: str, db: sqlite3.Connection = Depends(get_d
 
     except Exception as e:
         logger.error(f"Failed to get segment limits for engine '{engine}': {e}")
-        raise HTTPException(status_code=500, detail=f"[SETTINGS_GET_SEGMENT_LIMITS_FAILED]engine:{engine};error:{str(e)}")
+        raise ApplicationError("SETTINGS_GET_SEGMENT_LIMITS_FAILED", status_code=500, engine=engine, error=str(e))
 
 
 @router.get("/engine-schema/{engine_type}/{engine}", response_model=EngineSchemaResponse)
@@ -220,12 +221,12 @@ async def get_engine_parameter_schema_by_type(engine_type: str, engine: str) -> 
             from core.audio_engine_manager import get_audio_engine_manager
             manager = get_audio_engine_manager()
         else:
-            raise HTTPException(status_code=400, detail=f"[SETTINGS_INVALID_ENGINE_TYPE]type:{engine_type}")
+            raise ApplicationError("SETTINGS_INVALID_ENGINE_TYPE", status_code=400, type=engine_type)
 
         # Get metadata from DB (Single Source of Truth)
         metadata = manager.get_engine_metadata(engine)
         if not metadata:
-            raise HTTPException(status_code=404, detail=f"[SETTINGS_ENGINE_NOT_FOUND]engine:{engine};type:{engine_type}")
+            raise ApplicationError("SETTINGS_ENGINE_NOT_FOUND", status_code=404, engine=engine, type=engine_type)
 
         # Get parameter schema from engine metadata (engine.yaml)
         # Note: metadata['config'] contains the entire engine.yaml,
@@ -237,11 +238,11 @@ async def get_engine_parameter_schema_by_type(engine_type: str, engine: str) -> 
 
         return EngineSchemaResponse(parameters=schema)
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to get parameter schema for {engine_type} engine '{engine}': {e}")
-        raise HTTPException(status_code=500, detail=f"[SETTINGS_GET_SCHEMA_FAILED]engine:{engine};type:{engine_type};error:{str(e)}")
+        raise ApplicationError("SETTINGS_GET_SCHEMA_FAILED", status_code=500, engine=engine, type=engine_type, error=str(e))
 
 
 @router.get("/engine-schema/{engine}", response_model=EngineSchemaResponse)
@@ -269,7 +270,7 @@ async def get_engine_parameter_schema(engine: str) -> EngineSchemaResponse:
         # Get metadata from DB (Single Source of Truth)
         metadata = tts_manager.get_engine_metadata(engine)
         if not metadata:
-            raise HTTPException(status_code=404, detail=f"[SETTINGS_ENGINE_NOT_FOUND]engine:{engine}")
+            raise ApplicationError("SETTINGS_ENGINE_NOT_FOUND", status_code=404, engine=engine)
 
         # Get parameter schema from engine metadata (engine.yaml)
         # Note: metadata['config'] contains the entire engine.yaml,
@@ -281,8 +282,8 @@ async def get_engine_parameter_schema(engine: str) -> EngineSchemaResponse:
 
         return EngineSchemaResponse(parameters=schema)
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to get parameter schema for engine '{engine}': {e}")
-        raise HTTPException(status_code=500, detail=f"[SETTINGS_GET_SCHEMA_FAILED]engine:{engine};error:{str(e)}")
+        raise ApplicationError("SETTINGS_GET_SCHEMA_FAILED", status_code=500, engine=engine, error=str(e))

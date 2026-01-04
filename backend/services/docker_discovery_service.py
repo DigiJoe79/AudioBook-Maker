@@ -33,6 +33,7 @@ from pydantic import ValidationError
 import docker
 import docker.errors
 
+from core.exceptions import ApplicationError
 from models.engine_schema import EngineYamlSchema, validate_yaml_dict
 from models.response_models import CamelCaseModel
 
@@ -146,7 +147,7 @@ class DockerDiscoveryService:
                 logger.debug("[DockerDiscovery] Connected to Docker daemon")
             except docker.errors.DockerException as e:
                 logger.error(f"[DockerDiscovery] Failed to connect to Docker: {e}")
-                raise RuntimeError(f"[DOCKER_NOT_AVAILABLE]error:{e}")
+                raise ApplicationError("DOCKER_NOT_AVAILABLE", status_code=503, error=str(e))
         return self.docker_client
 
     async def _get_httpx_client(self):
@@ -171,17 +172,24 @@ class DockerDiscoveryService:
         Returns:
             Free port number or None if no ports available
         """
+        logger.debug(
+            "[DockerDiscovery] Finding free port",
+            range_start=self.PORT_RANGE_START,
+            range_end=self.PORT_RANGE_END,
+        )
         for port in range(self.PORT_RANGE_START, self.PORT_RANGE_END + 1):
             try:
                 # Try to bind to the port
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.bind(("127.0.0.1", port))
                     # If successful, port is free
+                    logger.debug("[DockerDiscovery] Found free port", port=port)
                     return port
             except OSError:
                 # Port is in use, try next
                 continue
 
+        logger.debug("[DockerDiscovery] No free ports available in range")
         return None
 
     async def _wait_for_health(self, port: int, timeout: float = HEALTH_CHECK_TIMEOUT) -> bool:
@@ -374,6 +382,12 @@ class DockerDiscoveryService:
         """
         container_id: Optional[str] = None
 
+        logger.debug(
+            "[DockerDiscovery] Starting discovery",
+            image=docker_image,
+            tag=docker_tag,
+        )
+
         try:
             # Step 1: Find free port
             port = self._find_free_port()
@@ -418,7 +432,17 @@ class DockerDiscoveryService:
             # Step 5: Convert camelCase → snake_case and validate against EngineYamlSchema
             # Engine servers use CamelCaseModel (camelCase JSON), but EngineYamlSchema expects snake_case
             try:
+                logger.debug(
+                    "[DockerDiscovery] Parsing metadata from /info",
+                    raw_keys=list(info_data.keys()) if isinstance(info_data, dict) else "not_a_dict",
+                )
                 snake_case_data = _convert_keys_to_snake_case(info_data)
+                logger.debug(
+                    "[DockerDiscovery] Converted to snake_case",
+                    name=snake_case_data.get("name"),
+                    engine_type=snake_case_data.get("engine_type"),
+                    variant_count=len(snake_case_data.get("variants", [])),
+                )
                 validated_info = validate_yaml_dict(snake_case_data)
 
                 # Match variant to docker_tag and override requires_gpu

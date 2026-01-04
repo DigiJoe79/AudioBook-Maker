@@ -40,9 +40,15 @@ function parseErrorMessage(message: string): ParsedError | null {
   if (paramsString) {
     const paramPairs = paramsString.split(';')
     for (const pair of paramPairs) {
-      const [key, value] = pair.split(':')
-      if (key && value) {
-        params[key.trim()] = value.trim()
+      // Split only on first colon to preserve colons in value
+      // e.g., "error:Engine spacy:docker:local failed" -> key="error", value="Engine spacy:docker:local failed"
+      const colonIndex = pair.indexOf(':')
+      if (colonIndex > 0) {
+        const key = pair.substring(0, colonIndex).trim()
+        const value = pair.substring(colonIndex + 1).trim()
+        if (key && value) {
+          params[key] = value
+        }
       }
     }
   }
@@ -191,10 +197,13 @@ export function translateBackendError(errorMessage: string, t: TFunction): strin
 
     // TTS Job errors
     TTS_SEGMENT_NOT_FOUND: 'tts.errors.segmentNotFound',
+    TTS_CHAPTER_NOT_FOUND: 'tts.errors.chapterNotFound',
     TTS_JOB_NOT_FOUND: 'tts.errors.jobNotFound',
     TTS_JOB_OPERATION_FAILED: 'tts.errors.jobOperationFailed',
     TTS_SEGMENT_FROZEN: 'tts.errors.segmentFrozen',
     TTS_MISSING_PARAMETERS: 'tts.errors.missingParameters',
+    TTS_NO_SEGMENTS: 'tts.errors.noSegments',
+    TTS_JOB_CREATE_FAILED: 'tts.errors.jobCreateFailed',
     TTS_JOB_LIST_FAILED: 'tts.errors.jobListFailed',
     TTS_JOB_ACTIVE_LIST_FAILED: 'tts.errors.activeJobListFailed',
     TTS_JOB_GET_FAILED: 'tts.errors.jobGetFailed',
@@ -269,6 +278,17 @@ export function translateBackendError(errorMessage: string, t: TFunction): strin
     HOST_HAS_ENGINES: 'settings.engineHosts.hasEngines',
     HOST_NOT_DOCKER: 'settings.engineHosts.notDocker',
     SSH_KEY_GENERATION_FAILED: 'settings.engineHosts.sshKeyGenerationFailed',
+    HOST_LIST_FAILED: 'settings.engineHosts.listFailed',
+    HOST_GET_FAILED: 'settings.engineHosts.getFailed',
+    HOST_CREATE_FAILED: 'settings.engineHosts.createFailed',
+    HOST_PREPARE_FAILED: 'settings.engineHosts.prepareFailed',
+    HOST_TEST_FAILED: 'settings.engineHosts.testFailed',
+    HOST_CLEANUP_FAILED: 'settings.engineHosts.cleanupFailed',
+    HOST_DELETE_FAILED: 'settings.engineHosts.deleteFailed',
+    HOST_ENSURE_LOCAL_FAILED: 'settings.engineHosts.ensureLocalFailed',
+    HOST_VOLUMES_GET_FAILED: 'settings.engineHosts.volumesGetFailed',
+    HOST_VOLUMES_UPDATE_FAILED: 'settings.engineHosts.volumesUpdateFailed',
+    HOST_PUBLIC_KEY_FAILED: 'settings.engineHosts.publicKeyFailed',
 
     // Engine management errors
     ENGINE_ALREADY_EXISTS: 'engines.errors.alreadyExists',

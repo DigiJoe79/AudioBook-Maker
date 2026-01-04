@@ -9,6 +9,7 @@ import json
 import sqlite3
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+from loguru import logger
 
 
 def dict_from_row(row: sqlite3.Row) -> Dict[str, Any]:
@@ -157,7 +158,19 @@ class EngineRepository:
         ))
 
         self.conn.commit()
-        return self.get_by_id(variant_id)
+
+        # Determine operation type by checking if record existed before
+        existing = self.get_by_id(variant_id)
+        logger.debug(
+            "[EngineRepository] upsert operation",
+            variant_id=variant_id,
+            engine_type=engine_type,
+            host_id=host_id,
+            is_installed=is_installed,
+            enabled=enabled,
+            source=source
+        )
+        return existing
 
     def update_system_metadata(
         self,
@@ -264,7 +277,14 @@ class EngineRepository:
             cursor.execute(
                 "SELECT * FROM engines WHERE is_installed = TRUE ORDER BY engine_type, display_name"
             )
-        return [dict_from_row(row) for row in cursor.fetchall()]
+        results = [dict_from_row(row) for row in cursor.fetchall()]
+        logger.debug(
+            "[EngineRepository] get_installed query",
+            engine_type=engine_type,
+            result_count=len(results),
+            variant_ids=[r.get('variant_id') for r in results]
+        )
+        return results
 
     def get_enabled(self, engine_type: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get all enabled engines, optionally filtered by type."""
@@ -278,7 +298,14 @@ class EngineRepository:
             cursor.execute(
                 "SELECT * FROM engines WHERE enabled = TRUE ORDER BY engine_type, display_name"
             )
-        return [dict_from_row(row) for row in cursor.fetchall()]
+        results = [dict_from_row(row) for row in cursor.fetchall()]
+        logger.debug(
+            "[EngineRepository] get_enabled query",
+            engine_type=engine_type,
+            result_count=len(results),
+            variant_ids=[r.get('variant_id') for r in results]
+        )
+        return results
 
     def get_default(self, engine_type: str) -> Optional[Dict[str, Any]]:
         """Get the default engine for a specific type."""
@@ -406,6 +433,7 @@ class EngineRepository:
         """, (now, variant_id))
 
         self.conn.commit()
+        logger.debug(f"[EngineRepository] set_default variant_id={variant_id} type={engine['engine_type']}")
         return True
 
     def clear_default(self, engine_type: str) -> bool:
@@ -439,6 +467,7 @@ class EngineRepository:
             WHERE variant_id = ?
         """, (enabled, now, variant_id))
         self.conn.commit()
+        logger.debug(f"[EngineRepository] set_enabled variant_id={variant_id} enabled={enabled}")
         return self.get_by_id(variant_id)
 
     def set_keep_running(self, variant_id: str, keep_running: bool) -> Optional[Dict[str, Any]]:
@@ -472,6 +501,7 @@ class EngineRepository:
             WHERE variant_id = ?
         """, (is_pulling, now, variant_id))
         self.conn.commit()
+        logger.debug(f"[EngineRepository] set_pulling variant_id={variant_id} is_pulling={is_pulling}")
         return self.get_by_id(variant_id)
 
     def update_settings(

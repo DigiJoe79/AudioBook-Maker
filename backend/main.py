@@ -128,8 +128,11 @@ configure_logging(log_level=LOG_LEVEL)
 # Note: Imports must be after logger configuration to use correct format
 import asyncio  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
-from fastapi import FastAPI  # noqa: E402
+from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+
+from core.exceptions import ApplicationError  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 import uvicorn  # noqa: E402
 
@@ -633,6 +636,21 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan
 )
+
+
+# Global exception handler for ApplicationError
+@app.exception_handler(ApplicationError)
+async def application_error_handler(request: Request, exc: ApplicationError):
+    """
+    Convert ApplicationError to JSON response with proper status code.
+
+    This ensures all ApplicationError subclasses are handled uniformly
+    and their structured error codes are preserved for frontend i18n.
+    """
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": str(exc)}
+    )
 
 # Configure CORS for Tauri Desktop App
 # Allow localhost (dev) and tauri:// protocol (production)

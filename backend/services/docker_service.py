@@ -13,6 +13,8 @@ from docker.errors import DockerException, ImageNotFound, APIError
 from typing import Optional, Dict, Any, Union
 from loguru import logger
 
+from core.exceptions import ApplicationError
+
 
 class PullCancelledException(Exception):
     """Raised when a Docker pull is cancelled by user."""
@@ -78,9 +80,11 @@ def get_docker_client(host_id: Optional[str] = None) -> docker.DockerClient:
     """
     # Local Docker
     if host_id is None or host_id == "docker:local":
+        logger.debug("Attempting Docker client connection", host="local")
         try:
             client = docker.from_env()
             client.ping()
+            logger.debug("Docker client connected successfully", host="local")
             return client
         except DockerException as e:
             logger.error(f"Failed to connect to local Docker: {e}")
@@ -89,10 +93,12 @@ def get_docker_client(host_id: Optional[str] = None) -> docker.DockerClient:
     # Remote Docker - get client from DockerHostMonitor
     from services.docker_host_monitor import docker_host_monitor
 
+    logger.debug("Attempting Docker client connection", host=host_id)
     client = docker_host_monitor.get_client(host_id)
     if client is None:
-        raise DockerException(f"[DOCKER_HOST_NOT_CONNECTED]hostId:{host_id}")
+        raise ApplicationError("DOCKER_HOST_NOT_CONNECTED", status_code=503, hostId=host_id)
 
+    logger.debug("Docker client connected successfully", host=host_id)
     return client
 
 
@@ -125,6 +131,7 @@ def pull_image(
 
         # Pull with progress streaming
         pull_log = []
+        logger.debug("Starting pull stream", image=image_name, tag=tag)
         for line in client.api.pull(image_name, tag=tag, stream=True, decode=True):
             pull_log.append(line)
 
@@ -132,6 +139,19 @@ def pull_image(
             status = line.get("status", "")
             layer_id = line.get("id", "")
             progress = line.get("progress", "")
+
+            # Log streaming details for each layer event
+            if layer_id:
+                progress_detail = line.get("progressDetail", {})
+                current = progress_detail.get("current", 0)
+                total = progress_detail.get("total", 0)
+                logger.debug(
+                    "Pull stream event",
+                    layer=layer_id,
+                    status=status,
+                    current_bytes=current,
+                    total_bytes=total
+                )
 
             if progress_callback and layer_id:
                 progress_callback(layer_id, status, progress)
@@ -141,8 +161,15 @@ def pull_image(
                 logger.debug(f"Pull: {status} {layer_id}")
 
         # Get the pulled image info
+        logger.debug("Retrieving pulled image info", image=full_image)
         image = client.images.get(full_image)
         size_mb = image.attrs.get("Size", 0) / (1024 * 1024)
+        logger.debug(
+            "Image retrieved after pull",
+            image=full_image,
+            image_id=image.id[:19],
+            size_mb=round(size_mb, 1)
+        )
 
         logger.info(f"Successfully pulled {full_image} ({size_mb:.1f} MB)")
 
@@ -156,10 +183,10 @@ def pull_image(
 
     except ImageNotFound as e:
         logger.error(f"Image not found: {full_image}")
-        raise DockerException(f"[DOCKER_IMAGE_NOT_FOUND]image:{full_image}") from e
+        raise ApplicationError("DOCKER_IMAGE_NOT_FOUND", status_code=404, image=full_image) from e
     except APIError as e:
         logger.error(f"Docker API error pulling {full_image}: {e}")
-        raise DockerException(f"[DOCKER_PULL_FAILED]image:{full_image};error:{e}") from e
+        raise ApplicationError("DOCKER_PULL_FAILED", status_code=500, image=full_image, reason=str(e)) from e
 
 
 async def pull_image_with_progress(
@@ -190,6 +217,10 @@ async def pull_image_with_progress(
     from services.event_broadcaster import emit_docker_image_progress
 
     full_image = f"{image_name}:{tag}"
+    logger.debug(
+        f"[docker_service] pull_image_with_progress START "
+        f"image={full_image} variant_id={variant_id} host={host_id or 'local'}"
+    )
     logger.info(f"Pulling Docker image with progress: {full_image} (host: {host_id or 'local'})")
 
     # Get the event loop NOW (before entering thread pool)
@@ -205,6 +236,10 @@ async def pull_image_with_progress(
     total_manifest_size = sum(manifest_layer_sizes.values()) if manifest_layer_sizes else 0
 
     if manifest_layer_sizes:
+        logger.debug(
+            f"[docker_service] Manifest fetched layers={len(manifest_layer_sizes)} "
+            f"total_size_mb={total_manifest_size / 1024 / 1024:.1f}"
+        )
         logger.info(
             f"Pre-fetched manifest: {len(manifest_layer_sizes)} layers, "
             f"{total_manifest_size / 1024 / 1024:.1f} MB total"
@@ -352,10 +387,10 @@ async def pull_image_with_progress(
         raise
     except ImageNotFound as e:
         logger.error(f"Image not found: {full_image}")
-        raise DockerException(f"[DOCKER_IMAGE_NOT_FOUND]image:{full_image}") from e
+        raise ApplicationError("DOCKER_IMAGE_NOT_FOUND", status_code=404, image=full_image) from e
     except APIError as e:
         logger.error(f"Docker API error pulling {full_image}: {e}")
-        raise DockerException(f"[DOCKER_PULL_FAILED]image:{full_image};error:{e}") from e
+        raise ApplicationError("DOCKER_PULL_FAILED", status_code=500, image=full_image, reason=str(e)) from e
     finally:
         # Always unregister pull when done
         if variant_id:
@@ -444,9 +479,16 @@ def remove_image(image_name: str, tag: str = "latest", force: bool = False, host
     full_image = f"{image_name}:{tag}"
     logger.info(f"Removing Docker image: {full_image} (host: {host_id or 'local'})")
 
+    logger.debug(
+        "Attempting image removal",
+        image=full_image,
+        host=host_id or "local",
+        force=force
+    )
     try:
         client = get_docker_client(host_id)
         client.images.remove(full_image, force=force)
+        logger.debug("Image removal completed", image=full_image)
         logger.info(f"Successfully removed {full_image}")
         return True
 
@@ -455,7 +497,7 @@ def remove_image(image_name: str, tag: str = "latest", force: bool = False, host
         return True  # Already gone
     except APIError as e:
         logger.error(f"Failed to remove image {full_image}: {e}")
-        raise DockerException(f"[DOCKER_REMOVE_FAILED]image:{full_image};error:{e}") from e
+        raise ApplicationError("DOCKER_REMOVE_FAILED", status_code=500, image=full_image, reason=str(e)) from e
 
 
 def image_exists(image_name: str, tag: str = "latest", host_id: Optional[str] = None) -> bool:
@@ -529,11 +571,14 @@ def is_docker_available(host_id: Optional[str] = None) -> bool:
     Returns:
         True if Docker is available on the host
     """
+    logger.debug("Checking Docker availability", host=host_id or "local")
     try:
         client = get_docker_client(host_id)
         client.ping()
+        logger.debug("Docker availability check passed", host=host_id or "local", available=True)
         return True
     except DockerException:
+        logger.debug("Docker availability check failed", host=host_id or "local", available=False)
         return False
 
 
@@ -826,6 +871,14 @@ def check_image_update(
 
     # Compare digests
     update_available = local_digest != remote_digest
+
+    logger.debug(
+        "Image update check digest comparison",
+        image=full_image,
+        local_digest=local_digest[:19] if local_digest else None,
+        remote_digest=remote_digest[:19] if remote_digest else None,
+        update_available=update_available
+    )
 
     return {
         "is_installed": True,

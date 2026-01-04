@@ -9,6 +9,7 @@ import json
 import sqlite3
 from typing import Any, Dict, List, Optional
 from datetime import datetime
+from loguru import logger
 
 
 def dict_from_row(row: sqlite3.Row) -> Dict[str, Any]:
@@ -77,6 +78,13 @@ class EngineHostRepository:
         """, (host_id, host_type, display_name, ssh_url, is_available, now))
 
         self.conn.commit()
+        logger.debug(
+            "[EngineHostRepository] create host",
+            host_id=host_id,
+            host_type=host_type,
+            display_name=display_name,
+            is_available=is_available
+        )
         return self.get_by_id(host_id)
 
     def get_by_id(self, host_id: str) -> Optional[Dict[str, Any]]:
@@ -223,6 +231,11 @@ class EngineHostRepository:
             WHERE host_id = ?
         """, (is_available, now, host_id))
         self.conn.commit()
+        logger.debug(
+            "[EngineHostRepository] set_available",
+            host_id=host_id,
+            is_available=is_available
+        )
         return self.get_by_id(host_id)
 
     def update_last_checked(self, host_id: str) -> Optional[Dict[str, Any]]:
@@ -256,12 +269,19 @@ class EngineHostRepository:
         """
         # Prevent deleting local subprocess host
         if host_id == "local":
+            logger.debug("[EngineHostRepository] delete blocked for local host")
             return False
 
         cursor = self.conn.cursor()
         cursor.execute("DELETE FROM engine_hosts WHERE host_id = ?", (host_id,))
+        deleted = cursor.rowcount > 0
         self.conn.commit()
-        return cursor.rowcount > 0
+        logger.debug(
+            "[EngineHostRepository] delete",
+            host_id=host_id,
+            deleted=deleted
+        )
+        return deleted
 
     # =========================================================================
     # Docker Host Management (for compatibility)

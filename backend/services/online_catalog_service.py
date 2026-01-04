@@ -31,10 +31,18 @@ async def fetch_online_catalog(url: str = CATALOG_URL, timeout: float = 30.0) ->
         httpx.HTTPError: On network errors
         yaml.YAMLError: On invalid YAML
     """
+    logger.debug("[OnlineCatalog] Fetching catalog", url=url, timeout=timeout)
     async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
         response = await client.get(url)
         response.raise_for_status()
-        return yaml.safe_load(response.text)
+        catalog = yaml.safe_load(response.text)
+        logger.debug(
+            "[OnlineCatalog] Fetch complete",
+            status=response.status_code,
+            catalog_version=catalog.get("catalog_version", "unknown"),
+            engine_count=len(catalog.get("engines", [])),
+        )
+        return catalog
 
 
 def transform_catalog_entry(engine: Dict[str, Any], registry: str) -> Dict[str, Any]:
@@ -123,6 +131,13 @@ def sync_catalog_to_db(
     updated = 0
     skipped = 0
 
+    logger.debug(
+        "[OnlineCatalog] Starting sync",
+        registry=registry,
+        catalog_version=catalog_version,
+        engine_count=len(online_catalog.get("engines", [])),
+    )
+
     for engine in online_catalog.get("engines", []):
         entry = transform_catalog_entry(engine, registry)
         entry["catalog_version"] = catalog_version
@@ -134,16 +149,29 @@ def sync_catalog_to_db(
         if existing:
             # Check source
             if existing.get("source") == "custom":
-                logger.debug(f"Skipping custom engine: {engine_name}")
+                logger.debug(
+                    "[OnlineCatalog] Merge decision: skip custom",
+                    engine=engine_name,
+                )
                 skipped += 1
                 continue
 
             # Update existing (builtin or online)
+            logger.debug(
+                "[OnlineCatalog] Merge decision: update existing",
+                engine=engine_name,
+                old_source=existing.get("source"),
+            )
             _update_catalog_entry(conn, entry)
             logger.info(f"Updated catalog entry: {engine_name}")
             updated += 1
         else:
             # Add new to catalog
+            logger.debug(
+                "[OnlineCatalog] Merge decision: add new",
+                engine=engine_name,
+                engine_type=entry["engine_type"],
+            )
             catalog_repo.add_entry(
                 base_engine_name=entry["base_engine_name"],
                 image_name=entry["image_name"],
@@ -166,6 +194,12 @@ def sync_catalog_to_db(
             logger.info(f"Added catalog entry: {engine_name}")
             added += 1
 
+    logger.debug(
+        "[OnlineCatalog] Sync complete",
+        added=added,
+        updated=updated,
+        skipped=skipped,
+    )
     return added, updated, skipped
 
 

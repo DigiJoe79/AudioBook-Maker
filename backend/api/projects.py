@@ -1,12 +1,13 @@
 """
 API endpoints for project management
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
 import sqlite3
 from loguru import logger
 
+from core.exceptions import ApplicationError
 from db.database import get_db
 from services.event_broadcaster import broadcaster, EventType, safe_broadcast
 from db.repositories import ProjectRepository, ChapterRepository, SegmentRepository
@@ -65,6 +66,7 @@ async def get_all_projects(conn: sqlite3.Connection = Depends(get_db)):
         segment_repo = SegmentRepository(conn)
 
         projects = project_repo.get_all()
+        logger.debug(f"[projects] get_all_projects: found {len(projects)} projects")
 
         # Load chapters and segments for each project
         result = []
@@ -83,11 +85,11 @@ async def get_all_projects(conn: sqlite3.Connection = Depends(get_db)):
             result.append(project_dict)
 
         return result
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to get projects: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[PROJECT_LIST_FAILED]error:{str(e)}")
+        raise ApplicationError("PROJECT_LIST_FAILED", status_code=500, error=str(e))
 
 
 @router.get("/projects/{project_id}", response_model=ProjectWithChaptersResponse)
@@ -104,7 +106,7 @@ async def get_project(project_id: str, conn: sqlite3.Connection = Depends(get_db
 
         project = project_repo.get_by_id(project_id)
         if not project:
-            raise HTTPException(status_code=404, detail=f"[PROJECT_NOT_FOUND]projectId:{project_id}")
+            raise ApplicationError("PROJECT_NOT_FOUND", status_code=404, projectId=project_id)
 
         chapters = chapter_repo.get_by_project(project_id)
 
@@ -119,11 +121,11 @@ async def get_project(project_id: str, conn: sqlite3.Connection = Depends(get_db
         project_dict['chapters'] = chapters_with_segments
 
         return project_dict
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to get project {project_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[PROJECT_GET_FAILED]projectId:{project_id};error:{str(e)}")
+        raise ApplicationError("PROJECT_GET_FAILED", status_code=500, projectId=project_id, error=str(e))
 
 
 @router.post("/projects", response_model=ProjectResponse)
@@ -155,11 +157,11 @@ async def create_project(
         # Return with empty chapters list
         new_project['chapters'] = []
         return new_project
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to create project: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[PROJECT_CREATE_FAILED]error:{str(e)}")
+        raise ApplicationError("PROJECT_CREATE_FAILED", status_code=500, error=str(e))
 
 
 @router.put("/projects/{project_id}", response_model=ProjectWithChaptersResponse)
@@ -183,7 +185,7 @@ async def update_project(
         )
 
         if not updated:
-            raise HTTPException(status_code=404, detail=f"[PROJECT_NOT_FOUND]projectId:{project_id}")
+            raise ApplicationError("PROJECT_NOT_FOUND", status_code=404, projectId=project_id)
 
         # Emit SSE event
         await safe_broadcast(
@@ -211,11 +213,11 @@ async def update_project(
 
         updated['chapters'] = chapters_with_segments
         return updated
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to update project {project_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[PROJECT_UPDATE_FAILED]projectId:{project_id};error:{str(e)}")
+        raise ApplicationError("PROJECT_UPDATE_FAILED", status_code=500, projectId=project_id, error=str(e))
 
 
 @router.delete("/projects/{project_id}", response_model=DeleteResponse)
@@ -239,7 +241,7 @@ async def delete_project(project_id: str, conn: sqlite3.Connection = Depends(get
         # Get project info before deletion (for SSE event)
         project = project_repo.get_by_id(project_id)
         if not project:
-            raise HTTPException(status_code=404, detail=f"[PROJECT_NOT_FOUND]projectId:{project_id}")
+            raise ApplicationError("PROJECT_NOT_FOUND", status_code=404, projectId=project_id)
 
         # Get all chapters to delete their audio files
         chapters = chapter_repo.get_by_project(project_id)
@@ -269,7 +271,7 @@ async def delete_project(project_id: str, conn: sqlite3.Connection = Depends(get
 
         # Delete project (CASCADE will delete chapters and segments)
         if not project_repo.delete(project_id):
-            raise HTTPException(status_code=404, detail=f"[PROJECT_NOT_FOUND]projectId:{project_id}")
+            raise ApplicationError("PROJECT_NOT_FOUND", status_code=404, projectId=project_id)
 
         # Emit SSE event
         await safe_broadcast(
@@ -291,11 +293,11 @@ async def delete_project(project_id: str, conn: sqlite3.Connection = Depends(get
             success=True,
             message=", ".join(message_parts)
         )
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to delete project {project_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[PROJECT_DELETE_FAILED]projectId:{project_id};error:{str(e)}")
+        raise ApplicationError("PROJECT_DELETE_FAILED", status_code=500, projectId=project_id, error=str(e))
 
 
 @router.post("/projects/reorder", response_model=ReorderResponse)
@@ -315,11 +317,12 @@ async def reorder_projects(
     """
     try:
         project_repo = ProjectRepository(conn)
+        logger.debug(f"[projects] reorder_projects: validating {len(data.project_ids)} project IDs")
 
         # Validate all projects exist
         for project_id in data.project_ids:
             if not project_repo.get_by_id(project_id):
-                raise HTTPException(status_code=404, detail=f"[PROJECT_NOT_FOUND]projectId:{project_id}")
+                raise ApplicationError("PROJECT_NOT_FOUND", status_code=404, projectId=project_id)
 
         # Reorder
         project_repo.reorder_batch(data.project_ids)
@@ -338,8 +341,8 @@ async def reorder_projects(
             message=f"Reordered {len(data.project_ids)} projects",
             count=len(data.project_ids)
         )
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to reorder projects: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[PROJECT_REORDER_FAILED]error:{str(e)}")
+        raise ApplicationError("PROJECT_REORDER_FAILED", status_code=500, error=str(e))

@@ -4,12 +4,13 @@ Import API Routes
 Endpoints for markdown import preview and final import.
 """
 
-from fastapi import APIRouter, UploadFile, File, Body, Form, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, Body, Form, Depends
 from typing import Optional
 import json
 import sqlite3
 from datetime import datetime
 
+from core.exceptions import ApplicationError
 from models.response_models import (
     MappingRules,
     ImportPreviewResponse,
@@ -75,16 +76,29 @@ async def get_import_preview(
         engine_max = 500  # Fallback if no engine found
 
         if default_engine:
+            logger.debug("Engine metadata retrieval", engine=default_engine)
             metadata = tts_manager.get_engine_metadata(default_engine)
             if metadata:
                 constraints = metadata.get('constraints') or {}
                 engine_max = constraints.get('max_text_length', 500)
+                logger.debug(
+                    "Engine constraints extracted",
+                    engine=default_engine,
+                    constraints=constraints,
+                    max_text_length=engine_max
+                )
+            else:
+                logger.debug("Engine metadata not found, using fallback", engine=default_engine, fallback_max=engine_max)
+        else:
+            logger.debug("No default TTS engine configured, using fallback", fallback_max=engine_max)
 
         max_length = min(user_pref, engine_max)
 
         logger.debug(
-            f"Preview segmentation limits - User pref: {user_pref}, "
-            f"Engine max ({default_engine}): {engine_max}, Using max: {max_length}"
+            "Segmentation limit determination",
+            user_pref=user_pref,
+            engine_max=engine_max,
+            selected_max=max_length
         )
 
         # Parse with segmentation
@@ -96,17 +110,33 @@ async def get_import_preview(
                 max_segment_length=max_length,
                 default_divider_duration=default_divider_duration
             )
+        except ApplicationError:
+            # Let ApplicationError pass through to global handler (no double-wrapping)
+            raise
         except ValueError as ve:
-            # Catch parsing/structure errors (missing headings, etc.)
-            logger.error(f"Markdown parsing failed: {str(ve)}")
-            raise HTTPException(status_code=400, detail=f"[IMPORT_VALIDATION_ERROR]error:{str(ve)}")
+            # Only truly unexpected ValueErrors get wrapped
+            logger.debug(
+                "Parsing failure context",
+                error_type="ValueError",
+                error_message=str(ve),
+                language=language,
+                max_segment_length=max_length,
+                file_size_chars=len(md_content)
+            )
+            logger.error(f"Unexpected parsing error: {str(ve)}")
+            raise ApplicationError("IMPORT_VALIDATION_ERROR", status_code=400, error=str(ve))
         except Exception as e:
             # Catch spaCy model loading errors or segmentation failures
-            logger.error(f"Segmentation failed: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"[IMPORT_SEGMENTATION_FAILED]error:{str(e)}"
+            logger.debug(
+                "Parsing failure context",
+                error_type=type(e).__name__,
+                error_message=str(e),
+                language=language,
+                max_segment_length=max_length,
+                file_size_chars=len(md_content)
             )
+            logger.error(f"Segmentation failed: {str(e)}")
+            raise ApplicationError("IMPORT_SEGMENTATION_FAILED", status_code=500, error=str(e))
 
         # Validate and get warnings
         validator = ImportValidator()  # Uses config defaults
@@ -181,15 +211,15 @@ async def get_import_preview(
             stats=stats
         )
 
-    except HTTPException:
-        # Re-raise HTTPExceptions without modification
+    except ApplicationError:
+        # Re-raise ApplicationErrors without modification
         raise
     except ValueError as e:
         logger.error(f"Markdown parsing error: {e}")
-        raise HTTPException(status_code=400, detail=f"[IMPORT_PREVIEW_FAILED]error:{str(e)}")
+        raise ApplicationError("IMPORT_PREVIEW_FAILED", status_code=400, error=str(e))
     except Exception as e:
         logger.exception(f"Unexpected error in import preview: {e}")
-        raise HTTPException(status_code=500, detail=f"[IMPORT_INTERNAL_ERROR]error:{str(e)}")
+        raise ApplicationError("IMPORT_INTERNAL_ERROR", status_code=500, error=str(e))
 
 
 @router.post("", response_model=ImportExecuteResponse)
@@ -237,25 +267,25 @@ async def execute_import(
             rules_dict = json.loads(mapping_rules)
             rules = MappingRules(**rules_dict)
         except (json.JSONDecodeError, ValueError) as e:
-            raise HTTPException(status_code=400, detail=f"[IMPORT_INVALID_MAPPING_JSON]error:{str(e)}")
+            raise ApplicationError("IMPORT_INVALID_MAPPING_JSON", status_code=400, error=str(e))
 
         try:
             selected_chapters_list = json.loads(selected_chapters)
         except json.JSONDecodeError as e:
-            raise HTTPException(status_code=400, detail=f"[IMPORT_INVALID_CHAPTERS_JSON]error:{str(e)}")
+            raise ApplicationError("IMPORT_INVALID_CHAPTERS_JSON", status_code=400, error=str(e))
 
         try:
             renamed_chapters_dict = json.loads(renamed_chapters)
         except json.JSONDecodeError as e:
-            raise HTTPException(status_code=400, detail=f"[IMPORT_INVALID_RENAMED_JSON]error:{str(e)}")
+            raise ApplicationError("IMPORT_INVALID_RENAMED_JSON", status_code=400, error=str(e))
 
         # Validate mode
         if mode not in ['new', 'merge']:
-            raise HTTPException(status_code=400, detail=f"[IMPORT_INVALID_MODE]mode:{mode}")
+            raise ApplicationError("IMPORT_INVALID_MODE", status_code=400, mode=mode)
 
         # Validate merge mode requirements
         if mode == 'merge' and not merge_target_id:
-            raise HTTPException(status_code=400, detail="[IMPORT_MISSING_TARGET_ID]")
+            raise ApplicationError("IMPORT_MISSING_TARGET_ID", status_code=400)
 
         # Early validation: Check merge target exists BEFORE expensive parsing
         # This gives faster feedback if the target project doesn't exist
@@ -264,17 +294,14 @@ async def execute_import(
             project_repo = ProjectRepository(conn)
             merge_target_project = project_repo.get_by_id(merge_target_id)
             if not merge_target_project:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"[IMPORT_PROJECT_NOT_FOUND]projectId:{merge_target_id}"
-                )
+                raise ApplicationError("IMPORT_PROJECT_NOT_FOUND", status_code=404, projectId=merge_target_id)
 
         # Read file content
         content = await file.read()
         md_content = content.decode('utf-8')
 
         if not md_content.strip():
-            raise HTTPException(status_code=400, detail="[IMPORT_FILE_EMPTY]")
+            raise ApplicationError("IMPORT_FILE_EMPTY", status_code=400)
 
         logger.info(f"Executing import: mode={mode}, file={file.filename}, language={language}")
 
@@ -298,10 +325,7 @@ async def execute_import(
 
         # Validate engine
         if tts_engine not in tts_manager.list_available_engines():
-            raise HTTPException(
-                status_code=400,
-                detail=f"[IMPORT_UNKNOWN_ENGINE]engine:{tts_engine}"
-            )
+            raise ApplicationError("IMPORT_UNKNOWN_ENGINE", status_code=400, engine=tts_engine)
 
         # Get engine constraints from metadata (Single Source of Truth)
         metadata = tts_manager.get_engine_metadata(tts_engine)
@@ -332,17 +356,17 @@ async def execute_import(
                 max_segment_length=max_length,
                 default_divider_duration=default_divider_duration
             )
+        except ApplicationError:
+            # Let ApplicationError pass through to global handler (no double-wrapping)
+            raise
         except ValueError as ve:
-            # Catch parsing/structure errors (missing headings, etc.)
-            logger.error(f"Markdown parsing failed during import: {str(ve)}")
-            raise HTTPException(status_code=400, detail=f"[IMPORT_VALIDATION_ERROR]error:{str(ve)}")
+            # Only truly unexpected ValueErrors get wrapped
+            logger.error(f"Unexpected parsing error during import: {str(ve)}")
+            raise ApplicationError("IMPORT_VALIDATION_ERROR", status_code=400, error=str(ve))
         except Exception as e:
             # Catch spaCy model loading errors or segmentation failures
             logger.error(f"Segmentation failed during import: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"[IMPORT_SEGMENTATION_FAILED]error:{str(e)}"
-            )
+            raise ApplicationError("IMPORT_SEGMENTATION_FAILED", status_code=500, error=str(e))
 
         # Initialize repositories
         project_repo = ProjectRepository(conn)
@@ -610,10 +634,10 @@ async def execute_import(
             segments_created=segments_created
         )
 
-    except HTTPException as http_err:
-        # Broadcast import failed event for HTTP errors
+    except ApplicationError as app_err:
+        # Broadcast import failed event for ApplicationErrors
         try:
-            error_msg = str(http_err.detail) if hasattr(http_err, 'detail') else str(http_err)
+            error_msg = str(app_err)
             await broadcaster.broadcast_import_update(
                 import_data={
                     "importId": import_id,
@@ -625,7 +649,7 @@ async def execute_import(
             )
         except Exception:
             pass  # Don't fail on error event broadcast
-        # Re-raise HTTPExceptions without modification
+        # Re-raise ApplicationErrors - global handler will convert to JSON
         raise
     except ValueError as e:
         # Broadcast import failed event for value errors
@@ -643,7 +667,7 @@ async def execute_import(
         except Exception:
             pass  # Don't fail on error event broadcast
         logger.error(f"Import execution error: {e}")
-        raise HTTPException(status_code=400, detail=f"[IMPORT_FAILED]error:{error_msg}")
+        raise ApplicationError("IMPORT_FAILED", status_code=400, error=error_msg)
     except Exception as e:
         # Broadcast import failed event for unexpected errors
         error_msg = str(e)
@@ -660,4 +684,4 @@ async def execute_import(
         except Exception:
             pass  # Don't fail on error event broadcast
         logger.exception(f"Unexpected error in import execution: {e}")
-        raise HTTPException(status_code=500, detail=f"[IMPORT_INTERNAL_ERROR]error:{error_msg}")
+        raise ApplicationError("IMPORT_INTERNAL_ERROR", status_code=500, error=error_msg)

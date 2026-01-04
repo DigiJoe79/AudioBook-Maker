@@ -20,6 +20,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from loguru import logger
 
+from core.exceptions import ApplicationError
+
 
 # Command restriction for authorized_keys
 # This limits the key to Docker operations only - no shell access
@@ -95,6 +97,7 @@ class SSHKeyService:
 
         try:
             # Generate Ed25519 key pair
+            logger.debug("Generating Ed25519 key pair", host_id=host_id)
             private_key = ed25519.Ed25519PrivateKey.generate()
             public_key = private_key.public_key()
 
@@ -116,19 +119,22 @@ class SSHKeyService:
 
             # Write private key with restrictive permissions
             private_key_path.write_bytes(private_key_bytes)
+            logger.debug("Wrote private key", path=str(private_key_path))
             # Set permissions to 600 (owner read/write only)
             if os.name != 'nt':  # chmod doesn't work the same on Windows
                 os.chmod(private_key_path, stat.S_IRUSR | stat.S_IWUSR)
+                logger.debug("Set private key permissions to 600")
 
             # Write public key
             public_key_path.write_text(public_key_str)
+            logger.debug("Wrote public key", path=str(public_key_path))
 
             logger.info(f"[SSHKeyService] Generated key pair for host {host_id}")
             return private_key_path, public_key_str
 
         except Exception as e:
             logger.error(f"[SSHKeyService] Failed to generate key pair: {e}")
-            raise RuntimeError(f"[SSH_KEY_GENERATION_FAILED]error:{e}")
+            raise ApplicationError("SSH_KEY_GENERATION_FAILED", status_code=500, error=str(e))
 
     def get_public_key(self, host_id: str) -> str | None:
         """
@@ -273,6 +279,7 @@ class SSHKeyService:
 
         known_hosts_path = self.keys_dir / "known_hosts"
         if not known_hosts_path.exists():
+            logger.debug("known_hosts file does not exist, skipping removal", path=str(known_hosts_path))
             return
 
         parsed = urlparse(ssh_url)
@@ -280,6 +287,7 @@ class SSHKeyService:
         port = parsed.port or 22
 
         if not hostname:
+            logger.debug("No hostname in SSH URL, skipping known_hosts removal", ssh_url=ssh_url)
             return
 
         # Build patterns to match in known_hosts
@@ -288,6 +296,7 @@ class SSHKeyService:
         patterns = [f"{hostname} ", f"{hostname},"]
         if port != 22:
             patterns.append(f"[{hostname}]:{port} ")
+        logger.debug("Removing known_hosts entries", hostname=hostname, port=port, patterns=patterns)
 
         try:
             lines = known_hosts_path.read_text().splitlines()
@@ -301,6 +310,8 @@ class SSHKeyService:
                 known_hosts_path.write_text("\n".join(filtered_lines) + "\n" if filtered_lines else "")
                 removed_count = len(lines) - len(filtered_lines)
                 logger.info(f"[SSHKeyService] Removed {removed_count} known_hosts entries for {hostname}")
+            else:
+                logger.debug("No matching entries found in known_hosts", hostname=hostname)
 
         except Exception as e:
             logger.warning(f"[SSHKeyService] Failed to clean known_hosts: {e}")
@@ -318,23 +329,27 @@ class SSHKeyService:
             port: SSH port (default 22)
         """
         known_hosts_path = self.keys_dir / "known_hosts"
+        logger.debug("Scanning host key", hostname=hostname, port=port)
 
         try:
             # Create socket connection to the SSH server
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(10)
+            logger.debug("Connecting to SSH server", hostname=hostname, port=port)
             sock.connect((hostname, port))
 
             # Create paramiko transport to get the host key
             transport = paramiko.Transport(sock)
             try:
                 # Start the transport - this negotiates KEX and gets host key
+                logger.debug("Starting paramiko transport for key exchange")
                 transport.connect()
                 host_key = transport.get_remote_server_key()
 
                 # Format the host key entry for known_hosts
                 key_type = host_key.get_name()
                 key_base64 = host_key.get_base64()
+                logger.debug("Received host key", key_type=key_type, hostname=hostname)
 
                 # Build the known_hosts line
                 # Format: hostname key_type key_base64
@@ -362,14 +377,21 @@ class SSHKeyService:
                 if host_entry not in existing_entries:
                     with open(known_hosts_path, "a") as f:
                         f.write(known_hosts_line)
+                    logger.debug(
+                        "Appended host key to known_hosts",
+                        path=str(known_hosts_path),
+                        host_entry=host_entry,
+                        key_type=key_type,
+                    )
                     logger.info(
                         f"[SSHKeyService] Added {key_type} host key for "
                         f"{hostname}:{port} (paramiko)"
                     )
                 else:
                     logger.debug(
-                        f"[SSHKeyService] Host key for {hostname}:{port} "
-                        "already in known_hosts"
+                        "Host key already exists in known_hosts",
+                        host_entry=host_entry,
+                        known_hosts_path=str(known_hosts_path),
                     )
 
             finally:
@@ -419,6 +441,7 @@ class SSHKeyService:
             host_id: Unique identifier for the host
             ssh_url: SSH URL (e.g., ssh://user@192.168.1.100)
         """
+        logger.debug("Updating SSH config (host key scan only)", host_id=host_id, ssh_url=ssh_url)
         # Just scan and save the host key - no ~/.ssh/config modification
         self.scan_and_save_host_key(ssh_url)
         logger.info(f"[SSHKeyService] Scanned host key for {host_id}")
@@ -435,7 +458,7 @@ class SSHKeyService:
         """
         # No-op: We no longer write to ~/.ssh/config
         # Known hosts cleanup is handled by _clean_known_hosts_for_host()
-        pass
+        logger.debug("remove_from_ssh_config is no-op (no ~/.ssh/config usage)", host_id=host_id)
 
 
     def regenerate_all_ssh_configs(self) -> int:
@@ -459,6 +482,7 @@ class SSHKeyService:
             conn = get_db_connection_simple()
             host_repo = EngineHostRepository(conn)
             docker_hosts = host_repo.get_docker_hosts()
+            logger.debug("Regenerating SSH configs for all hosts", host_count=len(docker_hosts))
 
             scanned = 0
             for host in docker_hosts:
@@ -467,12 +491,21 @@ class SSHKeyService:
 
                 # Skip docker:local (no SSH needed)
                 if host["host_type"] == "docker:local":
+                    logger.debug("Skipping docker:local host", host_id=host_id)
                     continue
 
                 # Only scan if we have keys for this host
                 if ssh_url and self.has_key_pair(host_id):
+                    logger.debug("Scanning host key", host_id=host_id, ssh_url=ssh_url)
                     self.scan_and_save_host_key(ssh_url)
                     scanned += 1
+                else:
+                    logger.debug(
+                        "Skipping host (no SSH URL or key pair)",
+                        host_id=host_id,
+                        has_ssh_url=bool(ssh_url),
+                        has_key_pair=self.has_key_pair(host_id),
+                    )
 
             if scanned > 0:
                 logger.info(

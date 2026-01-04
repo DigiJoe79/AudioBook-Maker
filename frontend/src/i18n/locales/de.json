@@ -116,7 +116,18 @@
       "deleteForbidden": "Dieser Host kann nicht gelöscht werden - er ist geschützt",
       "hasEngines": "Host mit installierten Engines kann nicht gelöscht werden. Deinstallieren Sie zuerst die Engines.",
       "notDocker": "Diese Operation erfordert einen Docker-Host",
-      "sshKeyGenerationFailed": "SSH-Schlüssel konnte nicht generiert werden: {{error}}"
+      "sshKeyGenerationFailed": "SSH-Schlüssel konnte nicht generiert werden: {{error}}",
+      "listFailed": "Engine-Hosts konnten nicht geladen werden: {{error}}",
+      "getFailed": "Host {{hostId}} konnte nicht geladen werden: {{error}}",
+      "createFailed": "Host konnte nicht erstellt werden: {{error}}",
+      "prepareFailed": "Host konnte nicht vorbereitet werden: {{error}}",
+      "testFailed": "Verbindungstest fehlgeschlagen: {{error}}",
+      "cleanupFailed": "Vorbereiteter Host konnte nicht aufgeräumt werden: {{error}}",
+      "deleteFailed": "Host konnte nicht gelöscht werden: {{error}}",
+      "ensureLocalFailed": "Lokaler Docker-Host konnte nicht erstellt werden: {{error}}",
+      "volumesGetFailed": "Volume-Konfiguration konnte nicht abgerufen werden: {{error}}",
+      "volumesUpdateFailed": "Volume-Konfiguration konnte nicht aktualisiert werden: {{error}}",
+      "publicKeyFailed": "SSH Public Key konnte nicht abgerufen werden: {{error}}"
     },
     "addHost": {
       "title": "Docker Host hinzufügen",
@@ -703,10 +714,13 @@
     "language": "Sprache",
     "errors": {
       "segmentNotFound": "Segment nicht gefunden: {{segmentId}}",
+      "chapterNotFound": "Kapitel nicht gefunden: {{chapterId}}",
       "jobNotFound": "TTS-Job nicht gefunden: {{jobId}}",
       "jobOperationFailed": "TTS-Job-Operation fehlgeschlagen: {{error}}",
       "segmentFrozen": "Eingefrorenes Segment kann nicht regeneriert werden. Bitte zuerst auftauen.",
       "missingParameters": "Segment fehlen TTS-Parameter",
+      "noSegments": "Keine Segmente zum Generieren fuer Kapitel: {{chapterId}}",
+      "jobCreateFailed": "TTS-Job fuer Kapitel {{chapterId}} konnte nicht erstellt werden: {{error}}",
       "jobListFailed": "TTS-Jobs konnten nicht geladen werden: {{error}}",
       "activeJobListFailed": "Aktive TTS-Jobs konnten nicht geladen werden: {{error}}",
       "jobGetFailed": "TTS-Job konnte nicht abgerufen werden: {{error}}",

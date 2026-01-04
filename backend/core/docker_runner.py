@@ -109,6 +109,7 @@ class DockerRunner(EngineRunner):
         # Track layer progress for aggregation
         layer_progress: Dict[str, Dict[str, int]] = {}  # layer_id -> {current, total}
         last_reported_percent = -1
+        logger.debug("Starting image pull with progress tracking", image=image, variant_id=variant_id, timeout_seconds=PULL_INACTIVITY_TIMEOUT)
 
         def calculate_overall_progress() -> int:
             """Calculate overall progress from all layers (0-100)."""
@@ -161,7 +162,10 @@ class DockerRunner(EngineRunner):
                     current = progress_detail.get("current", 0)
                     total = progress_detail.get("total", 0)
                     if total > 0:
+                        was_new = layer_id not in layer_progress
                         layer_progress[layer_id] = {"current": current, "total": total}
+                        if was_new:
+                            logger.debug("Layer progress tracking started", layer_id=layer_id, total_bytes=total, layer_count=len(layer_progress))
 
                 # Calculate and emit progress if changed significantly
                 current_percent = calculate_overall_progress()
@@ -187,6 +191,16 @@ class DockerRunner(EngineRunner):
                     logger.debug(f"[DockerRunner] Pull {current_percent}%: {status}")
 
             except asyncio.TimeoutError:
+                total_bytes = sum(lp.get("total", 0) for lp in layer_progress.values())
+                current_bytes = sum(lp.get("current", 0) for lp in layer_progress.values())
+                logger.debug(
+                    "Pull timeout triggered - no progress received",
+                    timeout_seconds=PULL_INACTIVITY_TIMEOUT,
+                    layers_tracked=len(layer_progress),
+                    current_bytes=current_bytes,
+                    total_bytes=total_bytes,
+                    last_percent=last_reported_percent
+                )
                 raise RuntimeError(
                     f"Image pull stalled - no progress for {PULL_INACTIVITY_TIMEOUT}s"
                 )
@@ -200,6 +214,7 @@ class DockerRunner(EngineRunner):
         """
         try:
             containers = self.client.containers.list(filters={'name': 'audiobook-'})
+            logger.debug("Scanning for existing audiobook containers", container_count=len(containers))
             for container in containers:
                 if container.status != 'running':
                     continue
@@ -226,7 +241,21 @@ class DockerRunner(EngineRunner):
                         )
 
                         logger.info(f"[DockerRunner] Discovered running container: {container.name} on port {host_port}")
+                        logger.debug(
+                            "Container registered from discovery",
+                            container_name=container.name,
+                            container_id=container.short_id,
+                            variant_id=variant_id,
+                            host_port=host_port,
+                            endpoint_url=f"http://{self.engine_host}:{host_port}"
+                        )
                         break  # Only one port per container
+
+            # Log discovery summary
+            if self.containers:
+                logger.debug("Container discovery complete", registered_count=len(self.containers), variants=list(self.containers.keys()))
+            else:
+                logger.debug("Container discovery complete - no running containers found")
 
         except Exception as e:
             logger.warning(f"[DockerRunner] Failed to discover existing containers: {e}")
@@ -271,6 +300,9 @@ class DockerRunner(EngineRunner):
             # Fallback: construct from prefix (for local builds)
             image = f"{self.image_prefix}/{base_engine_name}:{image_tag}"
 
+        logger.debug(
+            f"[DockerRunner] start variant_id={variant_id} port={port} gpu={gpu} image={image}"
+        )
         logger.info(f"[DockerRunner] Starting {variant_id} container (image: {image}, port: {port})")
 
         # Check if image exists locally
@@ -369,6 +401,16 @@ class DockerRunner(EngineRunner):
         }
 
         # Start container
+        logger.debug(
+            "Creating container",
+            container_name=container_name,
+            image=image,
+            port_mapping=f"{port}/tcp -> {port}",
+            volume_count=len(volumes),
+            gpu_enabled=bool(device_requests),
+            env_vars=list(container_env.keys())
+        )
+
         container = self.client.containers.run(
             image,
             detach=True,
@@ -390,6 +432,14 @@ class DockerRunner(EngineRunner):
         self.endpoints[variant_id] = endpoint
 
         logger.info(f"[DockerRunner] {variant_id} container started (ID: {container.short_id})")
+        logger.debug(
+            "Container started successfully",
+            variant_id=variant_id,
+            container_id=container.id,
+            short_id=container.short_id,
+            assigned_port=port,
+            endpoint_url=endpoint.base_url
+        )
 
         return endpoint
 

@@ -43,9 +43,8 @@ services:
       - HOST=0.0.0.0
       - PORT=8765
 
-      # Logging
-      - LOG_LEVEL=INFO
-      # - DEBUG=1                           # Uncomment for debug logging
+      # Logging (override via .env file or environment variable)
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
 
       # Engine runner mode (docker = use Docker containers for engines)
       - DEFAULT_ENGINE_RUNNER=docker

@@ -4,7 +4,8 @@ Health check and system control endpoints
 
 import asyncio
 import os
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks
+from core.exceptions import ApplicationError
 import sqlite3
 from loguru import logger
 from models.response_models import HealthResponse, RootResponse, MessageResponse
@@ -56,10 +57,7 @@ async def health_check(conn: sqlite3.Connection = Depends(get_db)):
             has_stt_engine=has_stt_engine,
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"[HEALTH_CHECK_FAILED]error:{str(e)}"
-        )
+        raise ApplicationError("HEALTH_CHECK_FAILED", status_code=500, error=str(e))
 
 
 @router.get("/", response_model=RootResponse)

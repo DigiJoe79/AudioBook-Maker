@@ -1,9 +1,10 @@
 """API endpoints for pronunciation rules management."""
 import sqlite3
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends, Query, Body
+from fastapi import APIRouter, Depends, Query, Body
 from loguru import logger
 
+from core.exceptions import ApplicationError
 from db.database import get_db
 from db.pronunciation_repository import PronunciationRulesRepository
 from core.pronunciation_transformer import PronunciationTransformer
@@ -72,7 +73,7 @@ async def create_rule(
 
     except Exception as e:
         logger.error(f"Failed to create pronunciation rule: {e}")
-        raise HTTPException(status_code=500, detail=f"[PRONUNCIATION_RULE_CREATE_FAILED]error:{str(e)}")
+        raise ApplicationError("PRONUNCIATION_RULE_CREATE_FAILED", status_code=500, error=str(e))
 
 @router.get("/rules", response_model=PronunciationRulesListResponse)
 async def get_rules(
@@ -125,7 +126,7 @@ async def get_rules(
 
     except Exception as e:
         logger.error(f"Failed to get pronunciation rules: {e}")
-        raise HTTPException(status_code=500, detail=f"[PRONUNCIATION_RULES_GET_FAILED]error:{str(e)}")
+        raise ApplicationError("PRONUNCIATION_RULES_GET_FAILED", status_code=500, error=str(e))
 
 @router.put("/rules/{rule_id}", response_model=PronunciationRuleResponse)
 async def update_rule(
@@ -138,7 +139,7 @@ async def update_rule(
         rule = repo.update(rule_id, update_data)
 
         if not rule:
-            raise HTTPException(status_code=404, detail=f"[PRONUNCIATION_RULE_NOT_FOUND]ruleId:{rule_id}")
+            raise ApplicationError("PRONUNCIATION_RULE_NOT_FOUND", status_code=404, ruleId=rule_id)
 
         # Broadcast SSE event
         await broadcaster.broadcast_pronunciation_update(
@@ -169,9 +170,11 @@ async def update_rule(
             updated_at=rule.updated_at.isoformat()
         )
 
+    except ApplicationError:
+        raise
     except Exception as e:
         logger.error(f"Failed to update pronunciation rule: {e}")
-        raise HTTPException(status_code=500, detail=f"[PRONUNCIATION_RULE_UPDATE_FAILED]ruleId:{rule_id};error:{str(e)}")
+        raise ApplicationError("PRONUNCIATION_RULE_UPDATE_FAILED", status_code=500, ruleId=rule_id, error=str(e))
 
 @router.delete("/rules/{rule_id}", response_model=MessageResponse)
 async def delete_rule(
@@ -182,7 +185,7 @@ async def delete_rule(
     try:
         rule = repo.get_by_id(rule_id)
         if not rule:
-            raise HTTPException(status_code=404, detail=f"[PRONUNCIATION_RULE_NOT_FOUND]ruleId:{rule_id}")
+            raise ApplicationError("PRONUNCIATION_RULE_NOT_FOUND", status_code=404, ruleId=rule_id)
 
         success = repo.delete(rule_id)
 
@@ -200,11 +203,13 @@ async def delete_rule(
 
             return MessageResponse(success=True, message="Rule deleted successfully")
         else:
-            raise HTTPException(status_code=500, detail=f"[PRONUNCIATION_DELETE_FAILED]ruleId:{rule_id}")
+            raise ApplicationError("PRONUNCIATION_DELETE_FAILED", status_code=500, ruleId=rule_id)
 
+    except ApplicationError:
+        raise
     except Exception as e:
         logger.error(f"Failed to delete pronunciation rule: {e}")
-        raise HTTPException(status_code=500, detail=f"[PRONUNCIATION_RULE_DELETE_FAILED]ruleId:{rule_id};error:{str(e)}")
+        raise ApplicationError("PRONUNCIATION_RULE_DELETE_FAILED", status_code=500, ruleId=rule_id, error=str(e))
 
 @router.post("/rules/test", response_model=PronunciationTestResponse)
 async def test_rules(
@@ -247,7 +252,7 @@ async def test_rules(
 
     except Exception as e:
         logger.error(f"Failed to test pronunciation rules: {e}")
-        raise HTTPException(status_code=500, detail=f"[PRONUNCIATION_TEST_FAILED]error:{str(e)}")
+        raise ApplicationError("PRONUNCIATION_TEST_FAILED", status_code=500, error=str(e))
 
 @router.get("/rules/conflicts", response_model=PronunciationConflictsResponse)
 async def get_conflicts(
@@ -283,7 +288,7 @@ async def get_conflicts(
 
     except Exception as e:
         logger.error(f"Failed to detect conflicts: {e}")
-        raise HTTPException(status_code=500, detail=f"[PRONUNCIATION_CONFLICTS_FAILED]engine:{engine};language:{language};error:{str(e)}")
+        raise ApplicationError("PRONUNCIATION_CONFLICTS_FAILED", status_code=500, engine=engine, language=language, error=str(e))
 
 @router.post("/rules/bulk", response_model=PronunciationBulkResponse)
 async def bulk_operations(
@@ -340,7 +345,7 @@ async def bulk_operations(
 
     except Exception as e:
         logger.error(f"Failed to perform bulk operation: {e}")
-        raise HTTPException(status_code=500, detail=f"[PRONUNCIATION_BULK_OPERATION_FAILED]action:{bulk_data.get('action', 'unknown')};error:{str(e)}")
+        raise ApplicationError("PRONUNCIATION_BULK_OPERATION_FAILED", status_code=500, action=bulk_data.get('action', 'unknown'), error=str(e))
 
 
 @router.get("/rules/export", response_model=List[PronunciationExportRuleResponse])
@@ -396,7 +401,7 @@ async def export_rules(
 
     except Exception as e:
         logger.error(f"Failed to export rules: {e}")
-        raise HTTPException(status_code=500, detail=f"[PRONUNCIATION_RULES_EXPORT_FAILED]error:{str(e)}")
+        raise ApplicationError("PRONUNCIATION_RULES_EXPORT_FAILED", status_code=500, error=str(e))
 
 
 @router.post("/rules/import", response_model=PronunciationImportResponse)
@@ -468,7 +473,7 @@ async def import_rules(
 
     except Exception as e:
         logger.error(f"Failed to import rules: {e}")
-        raise HTTPException(status_code=500, detail=f"[PRONUNCIATION_RULES_IMPORT_FAILED]error:{str(e)}")
+        raise ApplicationError("PRONUNCIATION_RULES_IMPORT_FAILED", status_code=500, error=str(e))
 
 
 @router.post("/rules/test-audio", response_model=PronunciationTestAudioResponse)
@@ -489,10 +494,7 @@ async def generate_test_audio(
         rule_data = test_data.get("rule")
 
         if not segment_id or not rule_data:
-            raise HTTPException(
-                status_code=400,
-                detail="[PRONUNCIATION_MISSING_PARAMS]"
-            )
+            raise ApplicationError("PRONUNCIATION_MISSING_PARAMS", status_code=400)
 
         # Get segment
         from db.repositories import SegmentRepository
@@ -500,7 +502,7 @@ async def generate_test_audio(
         segment = segment_repo.get_by_id(segment_id)
 
         if not segment:
-            raise HTTPException(status_code=404, detail=f"[PRONUNCIATION_SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+            raise ApplicationError("PRONUNCIATION_SEGMENT_NOT_FOUND", status_code=404, segmentId=segment_id)
 
         # Create temporary rule
         from datetime import datetime
@@ -535,8 +537,8 @@ async def generate_test_audio(
             message="Test transformation complete (audio generation not yet implemented)"
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to generate test audio: {e}")
-        raise HTTPException(status_code=500, detail=f"[PRONUNCIATION_TEST_AUDIO_FAILED]error:{str(e)}")
+        raise ApplicationError("PRONUNCIATION_TEST_AUDIO_FAILED", status_code=500, error=str(e))

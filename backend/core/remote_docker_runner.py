@@ -115,6 +115,13 @@ class RemoteDockerRunner(EngineRunner):
         if not client:
             raise RuntimeError(f"No client available for {host_name}")
 
+        logger.debug(
+            "RemoteDockerRunner init - verifying SSH tunnel connection",
+            host_name=host_name,
+            host_url=host_url,
+            host_id=host_id,
+            image_prefix=image_prefix,
+        )
         logger.info(
             f"[RemoteDockerRunner] Initialized for {host_name} ({host_url})"
         )
@@ -150,9 +157,18 @@ class RemoteDockerRunner(EngineRunner):
         Raises:
             RuntimeError: If reconnection fails
         """
+        logger.debug(
+            "SSH tunnel reconnect requested",
+            host_name=self.host_name,
+            host_url=self.host_url,
+        )
         logger.warning(f"[RemoteDockerRunner] Requesting reconnect for {self.host_name}")
         client = self._reconnect()
         if not client:
+            logger.debug(
+                "SSH tunnel reconnect failed - no client returned",
+                host_name=self.host_name,
+            )
             raise RuntimeError(f"Reconnection failed for {self.host_name}")
         return client
 
@@ -208,7 +224,13 @@ class RemoteDockerRunner(EngineRunner):
             Hostname portion of SSH URL
         """
         parsed = urlparse(self.host_url)
-        return parsed.hostname or 'localhost'
+        hostname = parsed.hostname or 'localhost'
+        logger.debug(
+            "Resolved network endpoint from SSH URL",
+            host_url=self.host_url,
+            resolved_hostname=hostname,
+        )
+        return hostname
 
     async def _pull_image_with_timeout(self, image: str, variant_id: str = "") -> None:
         """
@@ -389,11 +411,24 @@ class RemoteDockerRunner(EngineRunner):
 
         image = f"{self.image_prefix}/{base_engine_name}:{image_tag}"
 
+        logger.debug(
+            f"[RemoteDockerRunner] start variant_id={variant_id} host={self.host_name} "
+            f"port={port} gpu={gpu} image={image}"
+        )
         logger.info(f"[RemoteDockerRunner] Starting {variant_id} on {self.host_name} (image: {image})")
 
         # Retry loop for SSH channel failures
         for attempt in range(2):
             try:
+                logger.debug(
+                    "Starting container via SSH tunnel",
+                    attempt=attempt + 1,
+                    variant_id=variant_id,
+                    host_name=self.host_name,
+                    image=image,
+                    port=port,
+                    gpu=gpu,
+                )
                 return await self._start_container(
                     variant_id=variant_id,
                     base_engine_name=base_engine_name,
@@ -403,6 +438,12 @@ class RemoteDockerRunner(EngineRunner):
                     models_volume=models_volume,
                 )
             except ChannelException as e:
+                logger.debug(
+                    "SSH ChannelException during container start",
+                    attempt=attempt + 1,
+                    error=str(e),
+                    variant_id=variant_id,
+                )
                 if attempt == 0:
                     logger.warning(
                         "[RemoteDockerRunner] SSH channel failed on start, "
@@ -443,7 +484,17 @@ class RemoteDockerRunner(EngineRunner):
         # Pull image if not exists
         try:
             self.client.images.get(image)
+            logger.debug(
+                "Image already exists on remote host",
+                image=image,
+                host_name=self.host_name,
+            )
         except docker.errors.ImageNotFound:
+            logger.debug(
+                "Image not found on remote, initiating pull",
+                image=image,
+                host_name=self.host_name,
+            )
             logger.info(f"[RemoteDockerRunner] Pulling image {image} on {self.host_name}...")
             try:
                 await self._pull_image_with_timeout(image, variant_id)
@@ -454,12 +505,18 @@ class RemoteDockerRunner(EngineRunner):
         device_requests = []
         if gpu:
             device_requests = [DeviceRequest(count=-1, capabilities=[['gpu']])]
+            logger.debug("GPU device request configured for container")
 
         # Configure volumes
         # - external_models: For custom/user models (baked-in defaults stay in /app/models)
         volumes = {}
         if models_volume:
             volumes[models_volume] = {'bind': '/app/external_models', 'mode': 'rw'}
+            logger.debug(
+                "Volume mount configured",
+                host_path=models_volume,
+                container_path="/app/external_models",
+            )
 
         # Build environment variables for container
         # Pass through LOG_LEVEL from backend to container for consistent logging
@@ -470,6 +527,11 @@ class RemoteDockerRunner(EngineRunner):
 
         # Check for existing container with same name
         container_name = f"audiobook-{base_engine_name}"
+        logger.debug(
+            "Checking for existing container on remote",
+            container_name=container_name,
+            host_name=self.host_name,
+        )
         try:
             existing_container = self.client.containers.get(container_name)
             if existing_container.status == 'running':
@@ -505,6 +567,14 @@ class RemoteDockerRunner(EngineRunner):
             pass
 
         # Start container (name uses base_engine_name)
+        logger.debug(
+            "Creating new container on remote",
+            container_name=container_name,
+            image=image,
+            port=port,
+            environment=container_env,
+            host_name=self.host_name,
+        )
         container = self.client.containers.run(
             image,
             detach=True,
@@ -517,6 +587,12 @@ class RemoteDockerRunner(EngineRunner):
         )
 
         self.containers[variant_id] = container.id
+        logger.debug(
+            "Container created successfully",
+            container_id=container.id,
+            container_name=container_name,
+            variant_id=variant_id,
+        )
 
         # Create endpoint pointing to remote host
         host_ip = self._get_host_ip()
@@ -525,6 +601,12 @@ class RemoteDockerRunner(EngineRunner):
             container_id=container.id
         )
         self.endpoints[variant_id] = endpoint
+        logger.debug(
+            "Endpoint configured for remote container",
+            base_url=endpoint.base_url,
+            container_id=container.id,
+            variant_id=variant_id,
+        )
 
         logger.info(f"[RemoteDockerRunner] {variant_id} started on {self.host_name} (URL: {endpoint.base_url})")
 
@@ -543,6 +625,13 @@ class RemoteDockerRunner(EngineRunner):
         from paramiko.ssh_exception import ChannelException
         for attempt in range(2):
             try:
+                logger.debug(
+                    "Stopping container via SSH tunnel",
+                    attempt=attempt + 1,
+                    variant_id=variant_id,
+                    container_id=container_id,
+                    host_name=self.host_name,
+                )
                 container = self.client.containers.get(container_id)
                 container.stop(timeout=10)
                 logger.info(f"[RemoteDockerRunner] {variant_id} stopped on {self.host_name}")
@@ -550,7 +639,13 @@ class RemoteDockerRunner(EngineRunner):
             except docker.errors.NotFound:
                 logger.debug(f"[RemoteDockerRunner] {variant_id} container already removed")
                 break
-            except ChannelException:
+            except ChannelException as e:
+                logger.debug(
+                    "SSH ChannelException during container stop",
+                    attempt=attempt + 1,
+                    error=str(e),
+                    variant_id=variant_id,
+                )
                 if attempt == 0:
                     logger.warning("[RemoteDockerRunner] SSH channel failed, requesting reconnect...")
                     self._request_reconnect()
@@ -563,12 +658,30 @@ class RemoteDockerRunner(EngineRunner):
     def is_running(self, variant_id: str) -> bool:
         """Check if engine container is running on remote host."""
         if variant_id not in self.containers:
+            logger.debug(
+                "is_running check - variant not tracked",
+                variant_id=variant_id,
+                host_name=self.host_name,
+            )
             return False
 
         try:
             container = self.client.containers.get(self.containers[variant_id])
-            return container.status == 'running'
+            is_running = container.status == 'running'
+            logger.debug(
+                "is_running check - container status queried",
+                variant_id=variant_id,
+                container_id=self.containers[variant_id],
+                status=container.status,
+                is_running=is_running,
+            )
+            return is_running
         except docker.errors.NotFound:
+            logger.debug(
+                "is_running check - container not found, cleaning up",
+                variant_id=variant_id,
+                container_id=self.containers[variant_id],
+            )
             del self.containers[variant_id]
             self.endpoints.pop(variant_id, None)
             return False

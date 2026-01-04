@@ -1,7 +1,8 @@
 """
 API endpoints for chapter management
 """
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
+from core.exceptions import ApplicationError
 from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 import sqlite3
@@ -117,11 +118,11 @@ async def create_chapter(
         # Add empty segments list
         new_chapter['segments'] = []
         return new_chapter
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to create chapter: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[CHAPTER_CREATE_FAILED]error:{str(e)}")
+        raise ApplicationError("CHAPTER_CREATE_FAILED", status_code=500, error=str(e))
 
 
 @router.get("/chapters/{chapter_id}", response_model=ChapterWithSegmentsResponse)
@@ -137,17 +138,17 @@ async def get_chapter(chapter_id: str, conn: sqlite3.Connection = Depends(get_db
 
         chapter = chapter_repo.get_by_id(chapter_id)
         if not chapter:
-            raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
+            raise ApplicationError("CHAPTER_NOT_FOUND", status_code=404, chapterId=chapter_id)
 
         segments = segment_repo.get_by_chapter(chapter_id)
         chapter['segments'] = segments
 
         return chapter
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to get chapter {chapter_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[CHAPTER_GET_FAILED]chapterId:{chapter_id};error:{str(e)}")
+        raise ApplicationError("CHAPTER_GET_FAILED", status_code=500, chapterId=chapter_id, error=str(e))
 
 
 @router.put("/chapters/{chapter_id}", response_model=ChapterWithSegmentsResponse)
@@ -172,7 +173,7 @@ async def update_chapter(
         )
 
         if not updated:
-            raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
+            raise ApplicationError("CHAPTER_NOT_FOUND", status_code=404, chapterId=chapter_id)
 
         segments = segment_repo.get_by_chapter(chapter_id)
         updated['segments'] = segments
@@ -191,11 +192,11 @@ async def update_chapter(
         )
 
         return updated
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to update chapter {chapter_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[CHAPTER_UPDATE_FAILED]chapterId:{chapter_id};error:{str(e)}")
+        raise ApplicationError("CHAPTER_UPDATE_FAILED", status_code=500, chapterId=chapter_id, error=str(e))
 
 
 @router.post("/chapters/{chapter_id}/segment", response_model=TextSegmentationResponse)
@@ -219,7 +220,12 @@ async def segment_chapter_text(
 
     chapter = chapter_repo.get_by_id(chapter_id)
     if not chapter:
-        raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
+        raise ApplicationError("CHAPTER_NOT_FOUND", status_code=404, chapterId=chapter_id)
+
+    logger.debug(
+        f"[chapters] segment_chapter_text START chapter_id={chapter_id} "
+        f"text_length={len(request.text)} engine={request.tts_engine}"
+    )
 
     # Get engine constraints (lightweight - don't load model)
     tts_manager = get_tts_engine_manager()
@@ -227,9 +233,11 @@ async def segment_chapter_text(
     try:
         # Check if engine type is valid
         if request.tts_engine not in tts_manager.list_available_engines():
-            raise HTTPException(
+            raise ApplicationError(
+                "CHAPTER_UNKNOWN_ENGINE",
                 status_code=400,
-                detail=f"[CHAPTER_UNKNOWN_ENGINE]engine:{request.tts_engine};available:{','.join(tts_manager.list_available_engines())}"
+                engine=request.tts_engine,
+                available=','.join(tts_manager.list_available_engines())
             )
 
         # Get engine constraints from metadata (Single Source of Truth)
@@ -248,12 +256,13 @@ async def segment_chapter_text(
 
         logger.info(f"Segmentation limits - User pref: {user_pref}, Engine max: {engine_max}, Using: {max_length}")
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
-        raise HTTPException(
+        raise ApplicationError(
+            "CHAPTER_ENGINE_CONSTRAINTS_FAILED",
             status_code=500,
-            detail=f"[CHAPTER_ENGINE_CONSTRAINTS_FAILED]error:{str(e)}"
+            error=str(e)
         )
 
     # Get text engine manager
@@ -268,15 +277,17 @@ async def segment_chapter_text(
             text_engine_name = installed[0]
 
     if not text_engine_name:
-        raise HTTPException(status_code=400, detail="[TEXT_NO_ENGINE_AVAILABLE]")
+        raise ApplicationError("TEXT_NO_ENGINE_AVAILABLE", status_code=400)
 
     # Pass language code - engine will select appropriate model
     try:
         await text_manager.ensure_engine_ready(text_engine_name, request.language)
     except Exception as e:
-        raise HTTPException(
+        raise ApplicationError(
+            "TEXT_SEGMENTER_LOAD_FAILED",
             status_code=500,
-            detail=f"[TEXT_SEGMENTER_LOAD_FAILED]language:{request.language};error:{str(e)}"
+            language=request.language,
+            error=str(e)
         )
 
     # Perform sentence-based segmentation via TextEngineManager
@@ -315,9 +326,10 @@ async def segment_chapter_text(
                 })
 
     except Exception as e:
-        raise HTTPException(
+        raise ApplicationError(
+            "TEXT_SEGMENTATION_FAILED",
             status_code=500,
-            detail=f"[TEXT_SEGMENTATION_FAILED]error:{str(e)}"
+            error=str(e)
         )
 
     # Create segments in database
@@ -410,7 +422,7 @@ async def delete_chapter(chapter_id: str, conn: sqlite3.Connection = Depends(get
         # Get chapter info before deletion (for SSE event)
         chapter = chapter_repo.get_by_id(chapter_id)
         if not chapter:
-            raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
+            raise ApplicationError("CHAPTER_NOT_FOUND", status_code=404, chapterId=chapter_id)
 
         # Get all segments to delete their audio files
         segments = segment_repo.get_by_chapter(chapter_id)
@@ -433,7 +445,7 @@ async def delete_chapter(chapter_id: str, conn: sqlite3.Connection = Depends(get
 
         # Delete chapter (CASCADE will delete segments)
         if not chapter_repo.delete(chapter_id):
-            raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
+            raise ApplicationError("CHAPTER_NOT_FOUND", status_code=404, chapterId=chapter_id)
 
         # Emit SSE event
         await safe_broadcast(
@@ -451,11 +463,11 @@ async def delete_chapter(chapter_id: str, conn: sqlite3.Connection = Depends(get
             success=True,
             message=f"Chapter deleted (removed {deleted_files} audio files)"
         )
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to delete chapter {chapter_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[CHAPTER_DELETE_FAILED]chapterId:{chapter_id};error:{str(e)}")
+        raise ApplicationError("CHAPTER_DELETE_FAILED", status_code=500, chapterId=chapter_id, error=str(e))
 
 
 @router.post("/chapters/reorder", response_model=ReorderResponse)
@@ -475,11 +487,13 @@ async def reorder_chapters(
         for chapter_id in data.chapter_ids:
             chapter = chapter_repo.get_by_id(chapter_id)
             if not chapter:
-                raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
+                raise ApplicationError("CHAPTER_NOT_FOUND", status_code=404, chapterId=chapter_id)
             if chapter['project_id'] != data.project_id:
-                raise HTTPException(
+                raise ApplicationError(
+                    "CHAPTER_PROJECT_MISMATCH",
                     status_code=400,
-                    detail=f"[CHAPTER_PROJECT_MISMATCH]chapterId:{chapter_id};projectId:{data.project_id}"
+                    chapterId=chapter_id,
+                    projectId=data.project_id
                 )
 
         # Reorder
@@ -505,11 +519,11 @@ async def reorder_chapters(
             message=f"Reordered {len(data.chapter_ids)} chapters",
             count=len(data.chapter_ids)
         )
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to reorder chapters: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[CHAPTER_REORDER_FAILED]projectId:{data.project_id};error:{str(e)}")
+        raise ApplicationError("CHAPTER_REORDER_FAILED", status_code=500, projectId=data.project_id, error=str(e))
 
 
 @router.put("/chapters/{chapter_id}/move", response_model=ChapterWithSegmentsResponse)
@@ -532,11 +546,17 @@ async def move_chapter(
         # Validate chapter exists
         chapter = chapter_repo.get_by_id(chapter_id)
         if not chapter:
-            raise HTTPException(status_code=404, detail=f"[CHAPTER_NOT_FOUND]chapterId:{chapter_id}")
+            raise ApplicationError("CHAPTER_NOT_FOUND", status_code=404, chapterId=chapter_id)
 
         # Validate new project exists
         if not project_repo.get_by_id(data.new_project_id):
-            raise HTTPException(status_code=404, detail=f"[TARGET_PROJECT_NOT_FOUND]projectId:{data.new_project_id}")
+            raise ApplicationError("TARGET_PROJECT_NOT_FOUND", status_code=404, projectId=data.new_project_id)
+
+        logger.debug(
+            f"[chapters] move_chapter chapter_id={chapter_id} "
+            f"from_project={chapter['project_id']} to_project={data.new_project_id} "
+            f"new_order_index={data.new_order_index}"
+        )
 
         # Move chapter
         updated_chapter = chapter_repo.move_to_project(
@@ -551,8 +571,8 @@ async def move_chapter(
         updated_chapter['segments'] = segments
 
         return updated_chapter
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to move chapter {chapter_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"[CHAPTER_MOVE_FAILED]chapterId:{chapter_id};error:{str(e)}")
+        raise ApplicationError("CHAPTER_MOVE_FAILED", status_code=500, chapterId=chapter_id, error=str(e))

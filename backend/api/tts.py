@@ -2,7 +2,8 @@
 TTS (Text-to-Speech) generation endpoints
 """
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
+from core.exceptions import ApplicationError
 from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from pathlib import Path
@@ -10,7 +11,7 @@ import sqlite3
 from loguru import logger
 
 from db.database import get_db, get_db_connection_simple
-from db.repositories import SegmentRepository, TTSJobRepository
+from db.repositories import SegmentRepository, TTSJobRepository, ChapterRepository
 from db.segments_analysis_repository import SegmentsAnalysisRepository
 from models.response_models import (
     SegmentQueueResponse,
@@ -51,6 +52,16 @@ def _prepare_segments_for_regeneration(
         tts_speaker_name: Optional speaker to set on segments
         language: Optional language to set on segments
     """
+    has_override = any([tts_engine, tts_model_name, tts_speaker_name, language])
+    logger.debug(
+        "_prepare_segments_for_regeneration called",
+        segment_count=len(segment_ids),
+        has_tts_override=has_override,
+        override_engine=tts_engine,
+        override_model=tts_model_name,
+        override_speaker=tts_speaker_name,
+        override_language=language
+    )
     for segment_id in segment_ids:
         segment = segment_repo.get_by_id(segment_id)
         if not segment:
@@ -178,14 +189,21 @@ async def generate_segment_by_id(
         # Get segment from database
         segment = segment_repo.get_by_id(segment_id)
         if not segment:
-            raise HTTPException(status_code=404, detail=f"[TTS_SEGMENT_NOT_FOUND]segmentId:{segment_id}")
+            logger.debug("generate_segment_by_id validation failed", segment_id=segment_id, reason="not_found")
+            raise ApplicationError("TTS_SEGMENT_NOT_FOUND", status_code=404, segmentId=segment_id)
 
         # Check if segment is frozen
         if segment.get('is_frozen', False):
-            raise HTTPException(
-                status_code=400,
-                detail="[TTS_SEGMENT_FROZEN]"
-            )
+            logger.debug("generate_segment_by_id validation failed", segment_id=segment_id, reason="frozen")
+            raise ApplicationError("TTS_SEGMENT_FROZEN", status_code=400)
+
+        logger.debug(
+            "generate_segment_by_id validation passed",
+            segment_id=segment_id,
+            is_frozen=False,
+            segment_type=segment.get('segment_type'),
+            current_status=segment.get('status')
+        )
 
         # Use segment's stored parameters
         tts_engine = segment.get('tts_engine')
@@ -196,10 +214,7 @@ async def generate_segment_by_id(
 
         # Validate required parameters
         if not all([tts_engine, tts_model_name, tts_speaker_name, language]):
-            raise HTTPException(
-                status_code=400,
-                detail="[TTS_MISSING_PARAMETERS]"
-            )
+            raise ApplicationError("TTS_MISSING_PARAMETERS", status_code=400)
 
         # Create segment job
         job = job_repo.create_segment_job(
@@ -239,11 +254,11 @@ async def generate_segment_by_id(
             message="Segment queued for regeneration - worker will process asynchronously"
         )
 
-    except HTTPException:
+    except ApplicationError:
         raise
     except Exception as e:
         logger.error(f"Failed to queue segment {segment_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"[TTS_GENERATION_FAILED]error:{str(e)}")
+        raise ApplicationError("TTS_GENERATION_FAILED", status_code=500, error=str(e))
 
 
 @router.post("/generate-chapter", response_model=ChapterGenerationStartResponse)
@@ -258,152 +273,217 @@ async def generate_chapter(
     """
     chapter_id = request.chapter_id
 
-    # Get database connection
-    conn = get_db_connection_simple()
-    job_repo = TTSJobRepository(conn)
-    segment_repo = SegmentRepository(conn)
-    analysis_repo = SegmentsAnalysisRepository(conn)
+    try:
+        # Get database connection
+        conn = get_db_connection_simple()
+        job_repo = TTSJobRepository(conn)
+        segment_repo = SegmentRepository(conn)
+        analysis_repo = SegmentsAnalysisRepository(conn)
+        chapter_repo = ChapterRepository(conn)
 
-    # Check if job already running (database is single source of truth)
-    active_jobs = job_repo.get_active_jobs_for_chapter(chapter_id)
-    if active_jobs:
-        # If force_regenerate is True, cancel existing job and continue
+        # Validate chapter exists
+        chapter = chapter_repo.get_by_id(chapter_id)
+        if not chapter:
+            raise ApplicationError("TTS_CHAPTER_NOT_FOUND", status_code=404, chapterId=chapter_id)
+
+        # Check if job already running (database is single source of truth)
+        active_jobs = job_repo.get_active_jobs_for_chapter(chapter_id)
+        logger.debug(
+            "generate_chapter entry",
+            chapter_id=chapter_id,
+            force_regenerate=request.force_regenerate,
+            override_segment_settings=request.override_segment_settings,
+            active_jobs_count=len(active_jobs) if active_jobs else 0
+        )
+        if active_jobs:
+            # If force_regenerate is True, cancel existing job and continue
+            if request.force_regenerate:
+                logger.debug(
+                    "generate_chapter decision: cancelling existing jobs due to force_regenerate",
+                    chapter_id=chapter_id,
+                    jobs_to_cancel=len(active_jobs)
+                )
+                logger.warning(f"Force regenerate: Cancelling existing job for chapter {chapter_id}")
+                for job in active_jobs:
+                    job_repo.request_cancellation(job['id'])
+            else:
+                logger.debug(
+                    "generate_chapter decision: returning already_running (force_regenerate=False)",
+                    chapter_id=chapter_id,
+                    existing_job_id=active_jobs[0]['id']
+                )
+                logger.warning(f"Job already running for chapter {chapter_id}")
+                job = active_jobs[0]  # Get first active job
+                progress = (job.get("processed_segments", 0) / job.get("total_segments", 1)) * 100 if job.get("total_segments") else 0
+                return ChapterGenerationStartResponse(
+                    status="already_running",
+                    chapter_id=chapter_id,
+                    engine=job.get("tts_engine"),  # Use existing job's engine
+                    message=f"Generation already in progress (Job ID: {job['id']})",
+                    progress=progress
+                )
+
+        # Get segments count
+        segments = segment_repo.get_by_chapter(chapter_id)
+
+        # Calculate skip counts for detailed logging
+        divider_count = sum(1 for s in segments if s.get('segment_type') == 'divider')
+        frozen_count = sum(1 for s in segments if s.get('is_frozen', False))
+        completed_count = sum(1 for s in segments if s.get('status') == 'completed')
+
+        # Filter segments based on force_regenerate flag
+        # This is where force_regenerate is evaluated - Worker just processes segment_ids!
         if request.force_regenerate:
-            logger.warning(f"Force regenerate: Cancelling existing job for chapter {chapter_id}")
-            for job in active_jobs:
-                job_repo.request_cancellation(job['id'])
-        else:
-            logger.warning(f"Job already running for chapter {chapter_id}")
-            job = active_jobs[0]  # Get first active job
-            progress = (job.get("processed_segments", 0) / job.get("total_segments", 1)) * 100 if job.get("total_segments") else 0
-            return ChapterGenerationStartResponse(
-                status="already_running",
+            # Regenerate ALL segments (even completed ones), except dividers and frozen
+            segments_to_process = [
+                s for s in segments
+                if s.get('segment_type') != 'divider'
+                and not s.get('is_frozen', False)  # Skip frozen segments
+            ]
+            logger.debug(
+                "generate_chapter segment filtering (force_regenerate=True)",
                 chapter_id=chapter_id,
-                engine=job.get("tts_engine"),  # Use existing job's engine
-                message=f"Generation already in progress (Job ID: {job['id']})",
-                progress=progress
+                total_segments=len(segments),
+                dividers_skipped=divider_count,
+                frozen_skipped=frozen_count,
+                completed_included=completed_count,
+                segments_to_process=len(segments_to_process)
+            )
+        else:
+            # Only generate pending segments (and not frozen)
+            segments_to_process = [
+                s for s in segments
+                if s.get('segment_type') != 'divider'
+                and s.get('status') != 'completed'
+                and not s.get('is_frozen', False)  # Skip frozen segments
+            ]
+            logger.debug(
+                "generate_chapter segment filtering (force_regenerate=False)",
+                chapter_id=chapter_id,
+                total_segments=len(segments),
+                dividers_skipped=divider_count,
+                frozen_skipped=frozen_count,
+                completed_skipped=completed_count,
+                segments_to_process=len(segments_to_process)
             )
 
-    # Get segments count
-    segments = segment_repo.get_by_chapter(chapter_id)
+        segment_ids = [s['id'] for s in segments_to_process]
+        total_segments = len(segment_ids)
 
-    # Filter segments based on force_regenerate flag
-    # This is where force_regenerate is evaluated - Worker just processes segment_ids!
-    if request.force_regenerate:
-        # Regenerate ALL segments (even completed ones), except dividers and frozen
-        segments_to_process = [
-            s for s in segments
-            if s.get('segment_type') != 'divider'
-            and not s.get('is_frozen', False)  # Skip frozen segments
-        ]
-    else:
-        # Only generate pending segments (and not frozen)
-        segments_to_process = [
-            s for s in segments
-            if s.get('segment_type') != 'divider'
-            and s.get('status') != 'completed'
-            and not s.get('is_frozen', False)  # Skip frozen segments
-        ]
+        if total_segments == 0:
+            raise ApplicationError("TTS_NO_SEGMENTS", status_code=400, chapterId=chapter_id)
 
-    segment_ids = [s['id'] for s in segments_to_process]
-    total_segments = len(segment_ids)
+        # Determine TTS parameters for job metadata
+        # If override_segment_settings=True: use request parameters
+        # If override_segment_settings=False: use first segment's parameters (for logging only)
+        if request.override_segment_settings:
+            job_engine = request.tts_engine
+            job_model = request.tts_model_name
+            job_speaker = request.tts_speaker_name
+            job_language = request.language
+            logger.debug(
+                "generate_chapter TTS params from request (override_segment_settings=True)",
+                chapter_id=chapter_id,
+                job_engine=job_engine,
+                job_model=job_model,
+                job_speaker=job_speaker,
+                job_language=job_language
+            )
+        else:
+            # Use first segment's parameters as job metadata (worker reads from each segment)
+            first_segment = segments_to_process[0]
+            job_engine = first_segment.get('tts_engine')
+            job_model = first_segment.get('tts_model_name')
+            job_speaker = first_segment.get('tts_speaker_name')
+            job_language = first_segment.get('language')
+            logger.debug(
+                "generate_chapter TTS params from first segment (override_segment_settings=False)",
+                chapter_id=chapter_id,
+                first_segment_id=first_segment.get('id'),
+                job_engine=job_engine,
+                job_model=job_model,
+                job_speaker=job_speaker,
+                job_language=job_language
+            )
 
-    if total_segments == 0:
-        return ChapterGenerationStartResponse(
-            status="error",
+        # Create job in database (status='pending')
+        # Store segment_ids for resume support (especially important for force_regenerate jobs)
+        # Note: Job-level TTS parameters are only metadata for logging (worker reads from segments)
+        job = job_repo.create(
             chapter_id=chapter_id,
-            progress=0,
-            message="No segments found for chapter"
+            tts_engine=job_engine,  # Metadata only
+            tts_model_name=job_model,  # Metadata only
+            tts_speaker_name=job_speaker,  # Metadata only
+            language=job_language,  # Metadata only
+            force_regenerate=request.force_regenerate,
+            total_segments=total_segments,
+            segment_ids=segment_ids
         )
 
-    # Determine TTS parameters for job metadata
-    # If override_segment_settings=True: use request parameters
-    # If override_segment_settings=False: use first segment's parameters (for logging only)
-    if request.override_segment_settings:
-        job_engine = request.tts_engine
-        job_model = request.tts_model_name
-        job_speaker = request.tts_speaker_name
-        job_language = request.language
-    else:
-        # Use first segment's parameters as job metadata (worker reads from each segment)
-        first_segment = segments_to_process[0]
-        job_engine = first_segment.get('tts_engine')
-        job_model = first_segment.get('tts_model_name')
-        job_speaker = first_segment.get('tts_speaker_name')
-        job_language = first_segment.get('language')
+        # Immediately prepare segments for regeneration
+        # (Delete audio, segment analyses, set status to 'queued')
+        # If override_segment_settings=True, also update segment TTS parameters
+        if request.override_segment_settings:
+            _prepare_segments_for_regeneration(
+                segment_ids,
+                segment_repo,
+                analysis_repo,
+                tts_engine=request.tts_engine,
+                tts_model_name=request.tts_model_name,
+                tts_speaker_name=request.tts_speaker_name,
+                language=request.language
+            )
+            logger.debug(
+                f"Prepared {len(segment_ids)} segments for regeneration "
+                f"(audio deleted, status set to queued, TTS parameters OVERRIDDEN with: "
+                f"engine={request.tts_engine}, model={request.tts_model_name}, "
+                f"speaker={request.tts_speaker_name}, language={request.language})"
+            )
+        else:
+            # Don't override segment parameters - use existing segment settings
+            _prepare_segments_for_regeneration(
+                segment_ids,
+                segment_repo,
+                analysis_repo
+            )
+            logger.debug(
+                f"Prepared {len(segment_ids)} segments for regeneration "
+                f"(audio deleted, status set to queued, segment TTS parameters PRESERVED)"
+            )
 
-    # Create job in database (status='pending')
-    # Store segment_ids for resume support (especially important for force_regenerate jobs)
-    # Note: Job-level TTS parameters are only metadata for logging (worker reads from segments)
-    job = job_repo.create(
-        chapter_id=chapter_id,
-        tts_engine=job_engine,  # Metadata only
-        tts_model_name=job_model,  # Metadata only
-        tts_speaker_name=job_speaker,  # Metadata only
-        language=job_language,  # Metadata only
-        force_regenerate=request.force_regenerate,
-        total_segments=total_segments,
-        segment_ids=segment_ids
-    )
+        # Emit job.created event for immediate UI feedback
+        # Convert segment_ids to format expected by SSE: [{"id": "...", "job_status": "pending"}]
+        segment_objs = [{"id": sid, "job_status": "pending"} for sid in segment_ids]
+        try:
+            await emit_job_created(
+                job['id'],
+                chapter_id,
+                total_segments,
+                segment_objs,
+                tts_engine=job_engine,
+                tts_model_name=job_model,
+                tts_speaker_name=job_speaker
+            )
+            logger.debug(f"Emitted job.created event for job {job['id']}")
+        except Exception as e:
+            logger.error(f"Failed to emit job.created event: {e}")
 
-    # Immediately prepare segments for regeneration
-    # (Delete audio, segment analyses, set status to 'queued')
-    # If override_segment_settings=True, also update segment TTS parameters
-    if request.override_segment_settings:
-        _prepare_segments_for_regeneration(
-            segment_ids,
-            segment_repo,
-            analysis_repo,
-            tts_engine=request.tts_engine,
-            tts_model_name=request.tts_model_name,
-            tts_speaker_name=request.tts_speaker_name,
-            language=request.language
-        )
-        logger.debug(
-            f"Prepared {len(segment_ids)} segments for regeneration "
-            f"(audio deleted, status set to queued, TTS parameters OVERRIDDEN with: "
-            f"engine={request.tts_engine}, model={request.tts_model_name}, "
-            f"speaker={request.tts_speaker_name}, language={request.language})"
-        )
-    else:
-        # Don't override segment parameters - use existing segment settings
-        _prepare_segments_for_regeneration(
-            segment_ids,
-            segment_repo,
-            analysis_repo
-        )
-        logger.debug(
-            f"Prepared {len(segment_ids)} segments for regeneration "
-            f"(audio deleted, status set to queued, segment TTS parameters PRESERVED)"
+        # NOTE: Worker will pick up job from database automatically
+        # The TTS worker polls the database every 1s for pending jobs
+        logger.info(f"Created TTS job {job['id']} for chapter {chapter_id} ({total_segments} segments, engine={job_engine})")
+
+        return ChapterGenerationStartResponse(
+            status="started",
+            chapter_id=chapter_id,
+            engine=job_engine,
+            message="Job queued for processing by TTS worker"
         )
 
-    # Emit job.created event for immediate UI feedback
-    # Convert segment_ids to format expected by SSE: [{"id": "...", "job_status": "pending"}]
-    segment_objs = [{"id": sid, "job_status": "pending"} for sid in segment_ids]
-    try:
-        await emit_job_created(
-            job['id'],
-            chapter_id,
-            total_segments,
-            segment_objs,
-            tts_engine=job_engine,
-            tts_model_name=job_model,
-            tts_speaker_name=job_speaker
-        )
-        logger.debug(f"Emitted job.created event for job {job['id']}")
+    except ApplicationError:
+        raise
     except Exception as e:
-        logger.error(f"Failed to emit job.created event: {e}")
-
-    # NOTE: Worker will pick up job from database automatically
-    # The TTS worker polls the database every 1s for pending jobs
-    logger.info(f"Created TTS job {job['id']} for chapter {chapter_id} ({total_segments} segments, engine={job_engine})")
-
-    return ChapterGenerationStartResponse(
-        status="started",
-        chapter_id=chapter_id,
-        engine=job_engine,
-        message="Job queued for processing by TTS worker"
-    )
+        logger.error(f"Failed to create TTS job for chapter {chapter_id}: {e}")
+        raise ApplicationError("TTS_JOB_CREATE_FAILED", status_code=500, chapterId=chapter_id, error=str(e))
 
 
 # ============================================================================

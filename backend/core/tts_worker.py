@@ -74,11 +74,24 @@ def retry_on_db_lock(func: Callable[..., T], max_retries: int = None, initial_de
 
     for attempt in range(max_retries):
         try:
-            return func()
+            result = func()
+            if attempt > 0:
+                logger.debug(
+                    "[TTSWorker] DB lock retry succeeded",
+                    attempt=attempt + 1,
+                    total_retries=max_retries
+                )
+            return result
         except sqlite3.OperationalError as e:
             if "database is locked" in str(e).lower():
                 last_error = e
                 if attempt < max_retries - 1:
+                    logger.debug(
+                        "[TTSWorker] DB lock detected, scheduling retry",
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        delay_seconds=delay
+                    )
                     logger.warning(
                         f"[TTSWorker] Database locked attempt={attempt + 1}/{max_retries} "
                         f"retrying_in={delay:.2f}s"
@@ -235,7 +248,18 @@ class TTSWorker:
                 job = retry_on_db_lock(get_next_job, max_retries=5, initial_delay=0.1)
 
                 if job:
+                    logger.debug(
+                        "[TTSWorker] Job polling result: found",
+                        job_id=job['id'],
+                        chapter_id=job['chapter_id'],
+                        status=job.get('status'),
+                        total_segments=job.get('total_segments', 0)
+                    )
                     self.current_job_id = job['id']
+                    logger.debug(
+                        f"[TTSWorker] Job found job_id={job['id']} chapter_id={job['chapter_id']} "
+                        f"total_segments={job.get('total_segments', 0)} engine={job.get('tts_engine')}"
+                    )
                     logger.info(f"[TTSWorker] Processing job job_id={job['id']} chapter_id={job['chapter_id']}")
 
                     # Process job (now async via HTTP)
@@ -244,6 +268,10 @@ class TTSWorker:
                     self.current_job_id = None
                 else:
                     # No pending jobs, sleep
+                    logger.debug(
+                        "[TTSWorker] Job polling result: none found",
+                        poll_interval=self.poll_interval
+                    )
                     time.sleep(self.poll_interval)
 
             except KeyboardInterrupt:
@@ -269,6 +297,11 @@ class TTSWorker:
         if self._event_loop is None:
             logger.error("[TTSWorker] Cannot process job: no event loop available")
             return
+
+        logger.debug(
+            f"[TTSWorker] _process_job_sync START job_id={job['id']} "
+            f"status={job.get('status')} processed={job.get('processed_segments', 0)}/{job.get('total_segments', 0)}"
+        )
 
         # Run async job processing on the event loop
         future = asyncio.run_coroutine_threadsafe(
@@ -298,14 +331,37 @@ class TTSWorker:
             segment_ids_to_process: List of segment IDs that were in this job
             segment_repo: Segment repository instance
         """
+        logger.debug(
+            "[TTSWorker] Starting cancellation cleanup",
+            segment_count=len(segment_ids_to_process)
+        )
+        reset_count = 0
+        skipped_count = 0
         for seg_id in segment_ids_to_process:
             try:
                 seg = segment_repo.get_by_id(seg_id)
                 if seg and seg['status'] in ('queued', 'processing'):
                     segment_repo.update(seg_id, status='pending')
-                    logger.debug(f"[TTSWorker] Reset segment to pending segment_id={seg_id} reason=job_cancelled")
+                    reset_count += 1
+                    logger.debug(
+                        "[TTSWorker] Reset segment to pending",
+                        segment_id=seg_id,
+                        previous_status=seg['status']
+                    )
+                else:
+                    skipped_count += 1
+                    logger.debug(
+                        "[TTSWorker] Segment not reset (already final state)",
+                        segment_id=seg_id,
+                        status=seg['status'] if seg else 'not_found'
+                    )
             except Exception as e:
                 logger.error(f"[TTSWorker] Failed to reset segment on cancellation segment_id={seg_id} error={e}")
+        logger.debug(
+            "[TTSWorker] Cancellation cleanup completed",
+            reset_count=reset_count,
+            skipped_count=skipped_count
+        )
 
     async def _generate_with_pronunciation(
         self,
@@ -349,6 +405,13 @@ class TTSWorker:
                 language=language,
                 project_id=project_id
             )
+            logger.debug(
+                "[TTSWorker] Pronunciation rules fetched",
+                engine=engine_name,
+                language=language,
+                project_id=project_id,
+                rule_count=len(rules)
+            )
         finally:
             conn.close()
 
@@ -373,11 +436,20 @@ class TTSWorker:
         )
 
         logger.debug(
-            f"[TTSWorker] Text transformation length_before={transform_result.length_before} "
-            f"length_after={transform_result.length_after} "
-            f"rules_applied={len(transform_result.rules_applied)} "
-            f"chunks={len(chunks)}"
+            "[TTSWorker] Text transformation complete",
+            length_before=transform_result.length_before,
+            length_after=transform_result.length_after,
+            rules_applied=len(transform_result.rules_applied),
+            chunk_count=len(chunks),
+            max_length=max_length
         )
+        if transform_result.rules_applied:
+            for i, rule_name in enumerate(transform_result.rules_applied):
+                logger.debug(
+                    "[TTSWorker] Rule applied",
+                    rule_index=i + 1,
+                    rule_name=rule_name
+                )
 
         # If single chunk, generate normally
         if len(chunks) == 1:
@@ -390,10 +462,19 @@ class TTSWorker:
             )
 
         # Multiple chunks - generate each and merge
+        logger.debug(
+            "[TTSWorker] Multi-chunk generation starting",
+            total_chunks=len(chunks)
+        )
         audio_chunks = []
 
         for i, chunk in enumerate(chunks):
-            logger.debug(f"[TTSWorker] Generating chunk [{i+1}/{len(chunks)}]")
+            logger.debug(
+                "[TTSWorker] Generating chunk",
+                chunk_index=i + 1,
+                total_chunks=len(chunks),
+                chunk_length=len(chunk)
+            )
 
             try:
                 audio_data = await tts_manager.generate_with_engine(
@@ -404,6 +485,11 @@ class TTSWorker:
                     parameters=parameters
                 )
                 audio_chunks.append(audio_data)
+                logger.debug(
+                    "[TTSWorker] Chunk generated",
+                    chunk_index=i + 1,
+                    audio_bytes=len(audio_data)
+                )
 
             except Exception as e:
                 logger.error(f"[TTSWorker] Failed to generate chunk chunk_num={i+1} error={e}")
@@ -486,6 +572,11 @@ class TTSWorker:
                 if seg_obj.get('job_status') == 'pending'
             ]
 
+            logger.debug(
+                f"[TTSWorker] Segment filtering total_in_job={len(segment_data)} "
+                f"pending_to_process={len(segment_ids_to_process)}"
+            )
+
             # 2. Load segments from database
             segments_to_process = []
             for seg_id in segment_ids_to_process:
@@ -496,6 +587,11 @@ class TTSWorker:
                     logger.warning(f"Segment {seg_id} not found in database")
 
             total = len(segments_to_process)
+
+            logger.debug(
+                f"[TTSWorker] Segments loaded from DB count={total} "
+                f"project_id={project_id}"
+            )
 
             if total == 0:
                 logger.warning(f"No segments to process for job {job['id']}")
@@ -515,8 +611,21 @@ class TTSWorker:
             tts_manager = get_tts_engine_manager()
 
             try:
+                import time as timing_module
+                engine_start_time = timing_module.time()
+                logger.debug(
+                    "[TTSWorker] Engine startup initiated",
+                    engine=job['tts_engine'],
+                    model=job['tts_model_name']
+                )
                 logger.info(f"[TTSWorker] Ensuring engine ready engine={job['tts_engine']} model={job['tts_model_name']}")
                 await tts_manager.ensure_engine_ready(job['tts_engine'], job['tts_model_name'])
+                engine_elapsed = timing_module.time() - engine_start_time
+                logger.debug(
+                    "[TTSWorker] Engine ready",
+                    engine=job['tts_engine'],
+                    startup_time_seconds=round(engine_elapsed, 2)
+                )
             except Exception as e:
                 error_msg = f"Failed to start engine {job['tts_engine']}: {e}"
                 logger.error(f"[TTSWorker] {error_msg}")
@@ -549,6 +658,11 @@ class TTSWorker:
                 logger.error(f"Failed to emit job started event: {e}")
 
             for idx, segment in enumerate(segments_to_process):
+                logger.debug(
+                    f"[TTSWorker] Processing segment [{idx + 1}/{total}] segment_id={segment['id']} "
+                    f"text_length={len(segment.get('text', ''))} speaker={segment.get('tts_speaker_name')}"
+                )
+
                 # Check if worker should stop (graceful shutdown)
                 if not self.running:
                     logger.warning(f"Worker stopping, job {job['id']} incomplete")
@@ -575,10 +689,15 @@ class TTSWorker:
 
                     return
 
-                # ⚠️ SAFETY CHECK: Re-fetch segment from DB to verify frozen status and get latest TTS parameters
+                # SAFETY CHECK: Re-fetch segment from DB to verify frozen status and get latest TTS parameters
                 # This prevents processing frozen segments even if they somehow made it into the job
                 current_segment = segment_repo.get_by_id(segment['id'])
                 if current_segment and current_segment.get('is_frozen', False):
+                    logger.debug(
+                        "[TTSWorker] Frozen segment detected - skipping",
+                        segment_id=segment['id'],
+                        job_id=job['id']
+                    )
                     logger.warning(f"Skipping frozen segment {segment['id']} (job: {job['id']})")
 
                     # Mark segment as completed in job (so it won't be re-processed on resume)
@@ -632,7 +751,7 @@ class TTSWorker:
                     if not validation['is_valid']:
                         # Text too long - skip generation and mark as failed
                         error_msg = validation['error_message']
-                        logger.warning(f"✗ Segment {segment['id']} skipped: {error_msg}")
+                        logger.warning(f"[SKIP] Segment {segment['id']} skipped: {error_msg}")
 
                         # Mark segment as failed in DB
                         segment_repo.update(segment['id'], status='failed')
@@ -712,7 +831,7 @@ class TTSWorker:
                             logger.error(f"Failed to update job progress for {job['id']}: {e}")
                             # Continue anyway - progress update failure shouldn't stop processing
 
-                        # Update segment status: queued → processing
+                        # Update segment status: queued -> processing
                         segment_repo.update(segment['id'], status='processing')
 
                         # Emit segment started event (only on first attempt)
@@ -766,6 +885,11 @@ class TTSWorker:
                         engine_parameters = engine.get("parameters", {}) if engine else {}
 
                         # Generate audio with pronunciation rules applied (use segment's TTS parameters)
+                        logger.debug(
+                            f"[TTSWorker] Generating audio segment_id={segment['id']} "
+                            f"engine={segment['tts_engine']} language={segment['language']} "
+                            f"speaker_samples={len(speaker_filenames) if isinstance(speaker_filenames, list) else (1 if speaker_filenames else 0)}"
+                        )
                         audio_bytes = await self._generate_with_pronunciation(
                             text=segment['text'],
                             engine_name=segment['tts_engine'],
@@ -773,6 +897,11 @@ class TTSWorker:
                             project_id=project_id,
                             speaker_wav=speaker_filenames,
                             parameters=engine_parameters
+                        )
+
+                        logger.debug(
+                            f"[TTSWorker] Audio generated segment_id={segment['id']} "
+                            f"bytes={len(audio_bytes)}"
                         )
 
                         # Write audio bytes to file
@@ -858,7 +987,13 @@ class TTSWorker:
                         # - SpeakerSampleNotFoundError: speaker sample file missing
                         # - EngineClientError: 400/404 - request invalid (text too long, model not found, etc.)
                         error_type = "Speaker sample not found" if isinstance(e, SpeakerSampleNotFoundError) else "Client error"
-                        logger.error(f"[TTSWorker] ✗ {error_type} segment_id={segment['id']} error={e}")
+                        logger.debug(
+                            "[TTSWorker] Retry decision: NO RETRY (client error)",
+                            segment_id=segment['id'],
+                            error_type=error_type,
+                            reason="non_retryable"
+                        )
+                        logger.error(f"[TTSWorker] [FAIL] {error_type} segment_id={segment['id']} error={e}")
                         segment_repo.update(segment['id'], status='failed')
                         job_repo.mark_segment_completed(job['id'], segment['id'])
                         failed += 1
@@ -886,9 +1021,15 @@ class TTSWorker:
                         # 503 - Engine is loading model, wait and retry WITHOUT restart
                         # Don't count as server_attempt - just wait and retry
                         loading_wait_total += 1
+                        logger.debug(
+                            "[TTSWorker] Retry decision: WAIT (engine loading)",
+                            segment_id=segment['id'],
+                            loading_wait_total=loading_wait_total,
+                            max_loading_wait=max_loading_wait_seconds
+                        )
                         if loading_wait_total >= max_loading_wait_seconds:
                             # Timeout waiting for model to load
-                            logger.error(f"[TTSWorker] ✗ Timeout waiting for engine to load segment_id={segment['id']} waited={loading_wait_total}s")
+                            logger.error(f"[TTSWorker] [FAIL] Timeout waiting for engine to load segment_id={segment['id']} waited={loading_wait_total}s")
                             segment_repo.update(segment['id'], status='failed')
                             job_repo.mark_segment_completed(job['id'], segment['id'])
                             failed += 1
@@ -908,7 +1049,14 @@ class TTSWorker:
                     except EngineServerError as e:
                         # 500 or connection error - restart engine and retry
                         server_attempt += 1
-                        logger.error(f"[TTSWorker] ✗ Server error segment_id={segment['id']} attempt={server_attempt}/{max_server_attempts} error={e}")
+                        logger.debug(
+                            "[TTSWorker] Retry decision: RESTART ENGINE (server error)",
+                            segment_id=segment['id'],
+                            server_attempt=server_attempt,
+                            max_server_attempts=max_server_attempts,
+                            will_retry=server_attempt < max_server_attempts
+                        )
+                        logger.error(f"[TTSWorker] [FAIL] Server error segment_id={segment['id']} attempt={server_attempt}/{max_server_attempts} error={e}")
 
                         if server_attempt < max_server_attempts:
                             logger.warning(f"[TTSWorker] Restarting engine for retry engine={job['tts_engine']}")
@@ -919,7 +1067,7 @@ class TTSWorker:
                                 logger.error(f"[TTSWorker] Engine restart failed error={restart_err}")
                         else:
                             # Last attempt failed - mark segment as failed
-                            logger.error(f"[TTSWorker] ✗ Segment failed after {max_server_attempts} attempts segment_id={segment['id']}")
+                            logger.error(f"[TTSWorker] [FAIL] Segment failed after {max_server_attempts} attempts segment_id={segment['id']}")
                             segment_repo.update(segment['id'], status='failed')
                             job_repo.mark_segment_completed(job['id'], segment['id'])
                             failed += 1
@@ -945,7 +1093,15 @@ class TTSWorker:
                     except Exception as e:
                         # Unexpected error - treat like server error
                         server_attempt += 1
-                        logger.error(f"[TTSWorker] ✗ Unexpected error segment_id={segment['id']} attempt={server_attempt}/{max_server_attempts} error={e}")
+                        logger.debug(
+                            "[TTSWorker] Retry decision: RESTART ENGINE (unexpected error)",
+                            segment_id=segment['id'],
+                            server_attempt=server_attempt,
+                            max_server_attempts=max_server_attempts,
+                            error_type=type(e).__name__,
+                            will_retry=server_attempt < max_server_attempts
+                        )
+                        logger.error(f"[TTSWorker] [FAIL] Unexpected error segment_id={segment['id']} attempt={server_attempt}/{max_server_attempts} error={e}")
 
                         if server_attempt < max_server_attempts:
                             logger.warning(f"[TTSWorker] Restarting engine for retry engine={job['tts_engine']}")
@@ -956,7 +1112,7 @@ class TTSWorker:
                                 logger.error(f"[TTSWorker] Engine restart failed error={restart_err}")
                         else:
                             # Last attempt failed - mark segment as failed
-                            logger.error(f"[TTSWorker] ✗ Segment failed after {max_server_attempts} attempts segment_id={segment['id']}")
+                            logger.error(f"[TTSWorker] [FAIL] Segment failed after {max_server_attempts} attempts segment_id={segment['id']}")
                             segment_repo.update(segment['id'], status='failed')
                             job_repo.mark_segment_completed(job['id'], segment['id'])
                             failed += 1
@@ -1055,7 +1211,7 @@ class TTSWorker:
 
                     if auto_analyze_enabled:
                         # Quality job type is based on NUMBER of segments, not TTS job type
-                        # Single segment → 'segment' job, Multiple segments → 'chapter' job
+                        # Single segment -> 'segment' job, Multiple segments -> 'chapter' job
                         quality_job_type = 'segment' if len(segments_with_audio) == 1 else 'chapter'
                         trigger_source = f'auto_{"segment" if is_tts_segment_job else "chapter"}'
 
@@ -1142,7 +1298,7 @@ class TTSWorker:
             # Note: Old warm-keeping logic removed - now handled by keepRunning setting
 
         except Exception as e:
-            logger.error(f"✗ Job {job['id']} failed: {e}", exc_info=True)
+            logger.error(f"[FAIL] Job {job['id']} failed: {e}", exc_info=True)
             job_repo.mark_failed(job['id'], str(e))
 
             # Emit job failed event
